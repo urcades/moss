@@ -1,0 +1,14 @@
+.DS_Store
+*.DS_Store
+
+# Swift build products and local package state
+messages-codex-bridge-mac/.build/
+messages-codex-bridge-mac/.swiftpm/
+
+# Keep legacy archives outside this repo. This guard avoids accidental re-adds.
+archive/
+
+# Editor and scratch noise
+*.swp
+*.tmp
+*.log
