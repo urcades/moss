@@ -1,6 +1,6 @@
 # Release Checklist
 
-Manual validation for the v0.1.0 source-build release candidate.
+Manual validation for the v0.2.0 source-build release.
 
 ## Automated Checks
 
@@ -29,7 +29,7 @@ before cutting a release.
 ```
 
 2. Confirm the menubar process runs from `~/Applications/MessagesCodexBridge.app`.
-3. Confirm the menu header shows `Messages Codex Bridge 0.1.0`.
+3. Confirm the menu header shows `Messages Codex Bridge 0.2.0`.
 4. Open `Trusted Senders...`.
 5. Add a test sender.
 6. Remove the test sender, or replace it with the real trusted sender.
@@ -62,21 +62,24 @@ launchctl print "gui/$(id -u)/com.moss.MessagesCodexBridge.PermissionBroker"
 
 15. After a logout/login or restart, confirm the helper is still loaded and
     `/status` still works.
+16. Confirm uninstall instructions in `docs/UNINSTALL.md` match the installed
+    files and LaunchAgent labels.
 
 ## Release Steps
 
 After the automated checks and smoke test are green:
 
-1. Push `experiments/app-server-exec`.
-2. Open a PR into `main` titled `Promote Swift bridge v0.1.0 baseline`.
-3. Merge the PR.
-4. Update local `main`.
-5. Create the annotated tag:
+1. Ensure `main` is up to date and clean.
+2. Push `main`.
+3. Confirm the GitHub repo description and topics are set.
+4. Create the annotated tag:
 
 ```sh
-git tag -a v0.1.0 -m "Messages Codex Bridge v0.1.0"
-git push origin v0.1.0
+git tag -a v0.2.0 -m "Messages Codex Bridge v0.2.0"
+git push origin v0.2.0
 ```
+
+5. Create a GitHub release from `v0.2.0` with source-build instructions.
 
 ## Deferred Work
 

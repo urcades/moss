@@ -1,6 +1,8 @@
-# Messages Codex Bridge Mac
+# Messages Codex Bridge
 
-Native Swift/macOS bridge for using Apple Messages as a prompt channel for Codex.
+Messages Codex Bridge is a native macOS menu-bar app that lets trusted Apple
+Messages send prompts to Codex on your Mac and receive replies back in
+Messages.
 
 This repository currently distributes as a source build. You clone it, build the
 menu-bar app locally, open the app, add one or more trusted senders, grant the
@@ -8,7 +10,7 @@ macOS permissions the Doctor reports, and then send prompts from Messages.
 
 ## Current Distribution Mode
 
-The v0.1.0 release candidate is source-build only:
+The v0.2.0 release is source-build only:
 
 - Local build from this Swift package.
 - Local code signing identity when available.
@@ -27,6 +29,9 @@ The v0.1.0 release candidate is source-build only:
 ```sh
 /Applications/Codex.app/Contents/Resources/codex
 ```
+
+The bridge uses `codex app-server --listen stdio://` through that CLI. It does
+not use the legacy `codex exec` backend.
 
 ## Fresh Mac Source Build
 
@@ -80,7 +85,7 @@ To create the local signing identity first:
 When the menu-bar app opens, its menu header should read:
 
 ```text
-Messages Codex Bridge 0.1.0
+Messages Codex Bridge 0.2.0
 ```
 
 Use the menu in this order:
@@ -127,6 +132,23 @@ Important runtime files:
 - `state.json`: active session/job state.
 - `messages-bridge-swift.log`: helper logs.
 
+## Security And Privacy
+
+This app runs locally on your Mac. After you grant permissions, it can read the
+local Messages database, send replies through Messages, and invoke Codex on
+prompts sent by trusted senders.
+
+The standard safety profile keeps outgoing attachments restricted and leaves
+permission broker auto-clicking off. The permissive profile is available for
+personal dogfooding and should be treated as a broad local-automation mode.
+
+See `SECURITY.md` for the security policy and `docs/KNOWN_LIMITATIONS.md` for
+current limitations.
+
+## Uninstall
+
+See `docs/UNINSTALL.md` for the teardown path.
+
 ## Permissions
 
 Do not edit TCC databases directly. Use `Run Doctor`, `Computer Use Probe`, and
@@ -168,5 +190,8 @@ swift run codexmsgctl-swift configure --safety standard
 swift run codexmsgctl-swift doctor
 ./BuildSupport/build-app.zsh
 ```
+
+The runtime backend is app-server only. If you are debugging Codex behavior,
+start from `CodexAppServerBackend` and `CodexAppServerSupport.swift`.
 
 The release validation checklist lives in `RELEASE_CHECKLIST.md`.
