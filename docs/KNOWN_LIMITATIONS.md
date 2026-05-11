@@ -1,7 +1,7 @@
 # Known Limitations
 
-- Distribution is source-build only. There is no signed/notarized public zip yet.
-- The app uses a generic icon.
+- Binary distribution is a notarized zip, not a polished DMG.
+- Notarized releases require the maintainer to run the local packaging script.
 - Setup still requires macOS privacy permissions through System Settings.
 - Apple Messages must already be signed in and healthy on the Mac.
 - Codex.app and its bundled CLI are required.

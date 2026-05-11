@@ -1,6 +1,6 @@
 # Release Checklist
 
-Manual validation for the v0.2.0 source-build release.
+Manual validation for the v0.3.0 source-build release.
 
 ## Automated Checks
 
@@ -11,6 +11,8 @@ swift test
 swift run BridgeCoreSelfTest
 swift run BridgeCoreTests
 zsh -n BuildSupport/install-local-app.zsh
+zsh -n BuildSupport/uninstall-local-app.zsh
+zsh -n BuildSupport/package-release.zsh
 swift run codexmsgctl-swift configure --help
 ./BuildSupport/build-app.zsh
 swift run codexmsgctl-swift doctor
@@ -29,7 +31,7 @@ before cutting a release.
 ```
 
 2. Confirm the menubar process runs from `~/Applications/MessagesCodexBridge.app`.
-3. Confirm the menu header shows `Messages Codex Bridge 0.2.0`.
+3. Confirm the menu header shows `Messages Codex Bridge 0.3.0`.
 4. Open `Trusted Senders...`.
 5. Add a test sender.
 6. Remove the test sender, or replace it with the real trusted sender.
@@ -64,6 +66,8 @@ launchctl print "gui/$(id -u)/com.moss.MessagesCodexBridge.PermissionBroker"
     `/status` still works.
 16. Confirm uninstall instructions in `docs/UNINSTALL.md` match the installed
     files and LaunchAgent labels.
+17. Confirm the app bundle contains `MessagesCodexBridge.icns` and Info.plist
+    includes `CFBundleIconFile`.
 
 ## Release Steps
 
@@ -75,13 +79,13 @@ After the automated checks and smoke test are green:
 4. Create the annotated tag:
 
 ```sh
-git tag -a v0.2.0 -m "Messages Codex Bridge v0.2.0"
-git push origin v0.2.0
+git tag -a v0.3.0 -m "Messages Codex Bridge v0.3.0"
+git push origin v0.3.0
 ```
 
-5. Create a GitHub release from `v0.2.0` with source-build instructions.
+5. Create a GitHub release from `v0.3.0` with source-build instructions.
 
 ## Deferred Work
 
 - Signed and notarized zipped app distribution.
-- Custom app icon and final bundle artwork.
+- DMG distribution.

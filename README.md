@@ -4,19 +4,21 @@ Messages Codex Bridge is a native macOS menu-bar app that lets trusted Apple
 Messages send prompts to Codex on your Mac and receive replies back in
 Messages.
 
-This repository currently distributes as a source build. You clone it, build the
-menu-bar app locally, open the app, add one or more trusted senders, grant the
-macOS permissions the Doctor reports, and then send prompts from Messages.
+This repository supports source builds and maintainer-produced notarized zip
+releases. For source builds, clone it, build the menu-bar app locally, open the
+app, add one or more trusted senders, grant the macOS permissions the Doctor
+reports, and then send prompts from Messages.
 
 ## Current Distribution Mode
 
-The v0.2.0 release is source-build only:
+The v0.3.0 release supports:
 
 - Local build from this Swift package.
 - Local code signing identity when available.
 - Ad hoc signing fallback for development/build verification.
-- Zipped/notarized binary distribution is future work.
-- A custom app icon is future work.
+- Signed and notarized zip distribution is supported for maintainers with a
+  Developer ID certificate.
+- The app bundle includes a generated moss icon.
 
 ## Prerequisites
 
@@ -85,7 +87,7 @@ To create the local signing identity first:
 When the menu-bar app opens, its menu header should read:
 
 ```text
-Messages Codex Bridge 0.2.0
+Messages Codex Bridge 0.3.0
 ```
 
 Use the menu in this order:
@@ -147,7 +149,8 @@ current limitations.
 
 ## Uninstall
 
-See `docs/UNINSTALL.md` for the teardown path.
+Run `./BuildSupport/uninstall-local-app.zsh --dry-run` to preview the teardown
+path. See `docs/UNINSTALL.md` for details.
 
 ## Permissions
 
@@ -164,6 +167,12 @@ The bridge may need:
 
 Permissions are not auto-granted by the app. The app opens the relevant System
 Settings panes and reports missing permissions through Doctor.
+
+More help:
+
+- `docs/TROUBLESHOOTING.md`
+- `docs/PRIVACY_AND_SECURITY_FAQ.md`
+- `docs/SIGNING_AND_NOTARIZATION.md`
 
 ## Control Commands
 
