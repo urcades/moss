@@ -54,6 +54,10 @@ struct BridgeCoreSelfTest {
         var config = defaultBridgeConfig(paths: paths)
         try expect(config.allowedSender.isEmpty, "fresh default has no personal allowed sender")
         try expect(config.effectiveTrustedSenders.isEmpty, "fresh default has no trusted senders")
+        try expect(config.effectiveOutgoingAttachmentMode == "restricted", "fresh default restricts outgoing attachments")
+        try expect(config.effectiveOutgoingAttachmentRoots == defaultOutgoingAttachmentRoots(homeAccessRoot: paths.homeDir.path), "fresh default uses home and temp attachment roots")
+        try expect(config.effectiveOutgoingAttachmentExtensions == defaultOutgoingAttachmentExtensions(), "fresh default uses image and PDF attachment extensions")
+        try expect(!config.effectivePermissionBroker.enabled, "fresh default leaves broker auto-clicking off")
         var legacyConfig = config
         legacyConfig.allowedSender = "+1 (520) 609-9095"
         legacyConfig.trustedSenders = nil
@@ -64,6 +68,21 @@ struct BridgeCoreSelfTest {
         multiSenderConfig.syncTrustedSenders(["+1 (520) 609-9095", "Moss@Example.COM", "15206099095"])
         try expect(multiSenderConfig.trustedSenders == ["+1 (520) 609-9095", "Moss@Example.COM"], "multi sender config de-duplicates")
         try expect(multiSenderConfig.allowedSender == "+1 (520) 609-9095", "allowed sender syncs to first trusted sender")
+        var standardConfig = multiSenderConfig
+        applySafetyProfile(.standard, to: &standardConfig)
+        try expect(standardConfig.trustedSenders == multiSenderConfig.trustedSenders, "standard safety preserves trusted senders")
+        try expect(standardConfig.effectiveOutgoingAttachmentMode == "restricted", "standard safety uses restricted attachments")
+        try expect(!standardConfig.effectivePermissionBroker.enabled, "standard safety disables broker auto-clicking")
+        var permissiveConfig = multiSenderConfig
+        applySafetyProfile(.permissive, to: &permissiveConfig)
+        try expect(permissiveConfig.trustedSenders == multiSenderConfig.trustedSenders, "permissive safety preserves trusted senders")
+        try expect(permissiveConfig.effectiveOutgoingAttachmentMode == "fullAccess", "permissive safety uses full attachment access")
+        try expect(permissiveConfig.effectiveOutgoingAttachmentRoots == ["/"], "permissive safety uses root attachment access")
+        try expect(permissiveConfig.effectiveOutgoingAttachmentExtensions == ["*"], "permissive safety allows all attachment extensions")
+        try expect(permissiveConfig.effectivePermissionBroker.enabled, "permissive safety enables broker auto-clicking")
+        var preservedConfig = permissiveConfig
+        applySafetyProfile(.preserve, to: &preservedConfig)
+        try expect(preservedConfig == permissiveConfig, "preserve safety leaves existing safety fields untouched")
         config.codex.command = "/bin/echo"
         config.codex.model = "gpt-5.5"
         config.codex.reasoningEffort = "low"
@@ -84,7 +103,9 @@ struct BridgeCoreSelfTest {
             buttonLabels: ["Don’t Allow", "Allow"]
         )
         let decision = permissionBrokerDecision(for: trustedPrompt, config: config.effectivePermissionBroker)
-        try expect(decision.shouldClick && decision.buttonLabel == "Allow", "permission broker auto-allows trusted prompt")
+        try expect(!decision.shouldClick, "standard permission broker does not auto-allow trusted prompt")
+        let permissiveDecision = permissionBrokerDecision(for: trustedPrompt, config: permissiveConfig.effectivePermissionBroker)
+        try expect(permissiveDecision.shouldClick && permissiveDecision.buttonLabel == "Allow", "permissive permission broker auto-allows trusted prompt")
         let unknownPrompt = PermissionPromptSnapshot(
             ownerName: "SecurityAgent",
             ownerBundleId: "com.apple.SecurityAgent",

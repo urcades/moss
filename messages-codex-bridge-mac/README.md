@@ -35,11 +35,30 @@ Clone the repository and build the app:
 ```sh
 git clone https://github.com/urcades/moss.git
 cd moss/messages-codex-bridge-mac
-./BuildSupport/build-app.zsh
-open .build/app/MessagesCodexBridge.app
+./BuildSupport/install-local-app.zsh
 ```
 
-The build script creates:
+The installer builds the app, asks for a runtime safety profile, copies the app
+to `~/Applications/MessagesCodexBridge.app`, and opens that installed copy.
+
+Safety profiles:
+
+- `standard`: recommended for source-build installs. Outgoing attachments are
+  restricted to normal image/PDF files under home or temp paths, and permission
+  broker auto-clicking is off.
+- `permissive`: personal dogfooding mode. Outgoing attachments have full file
+  access, and permission broker auto-clicking is on.
+- `preserve`: keep existing safety settings while migrating or creating config.
+
+For non-interactive installs:
+
+```sh
+./BuildSupport/install-local-app.zsh --safety standard
+./BuildSupport/install-local-app.zsh --safety permissive
+./BuildSupport/install-local-app.zsh --safety preserve
+```
+
+The lower-level build script still creates:
 
 - `.build/app/MessagesCodexBridge.app`
 - A bundled login helper at `Contents/Library/LoginItems/MessagesCodexBridgeHelper.app`
@@ -53,8 +72,7 @@ To create the local signing identity first:
 
 ```sh
 ./BuildSupport/create-local-signing-identity.zsh
-./BuildSupport/build-app.zsh
-open .build/app/MessagesCodexBridge.app
+./BuildSupport/install-local-app.zsh
 ```
 
 ## First Run
@@ -146,6 +164,7 @@ swift test
 swift run BridgeCoreSelfTest
 swift run BridgeCoreTests
 swift run codexmsgctl-swift status
+swift run codexmsgctl-swift configure --safety standard
 swift run codexmsgctl-swift doctor
 ./BuildSupport/build-app.zsh
 ```

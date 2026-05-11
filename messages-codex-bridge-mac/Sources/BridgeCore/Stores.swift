@@ -37,9 +37,9 @@ public func defaultBridgeConfig(paths: RuntimePaths, codexCommand: String? = nil
             stylePrompt: BridgeConstants.defaultStylePrompt,
             extraArgs: []
         ),
-        outgoingAttachmentMode: "fullAccess",
-        outgoingAttachmentRoots: ["/"],
-        outgoingAttachmentExtensions: ["*"],
+        outgoingAttachmentMode: "restricted",
+        outgoingAttachmentRoots: defaultOutgoingAttachmentRoots(homeAccessRoot: paths.homeDir.path),
+        outgoingAttachmentExtensions: defaultOutgoingAttachmentExtensions(),
         longTaskProgressIntervalMs: BridgeConstants.defaultLongTaskProgressIntervalMs,
         longTaskMilestoneMinIntervalMs: BridgeConstants.defaultLongTaskMilestoneMinIntervalMs,
         activeJobAckEnabled: true,
@@ -52,9 +52,18 @@ public func defaultOutgoingAttachmentExtensions() -> [String] {
     ["png", "jpg", "jpeg", "gif", "heic", "tif", "tiff", "bmp", "webp", "pdf"]
 }
 
+public func defaultOutgoingAttachmentRoots(homeAccessRoot: String) -> [String] {
+    [
+        homeAccessRoot,
+        NSTemporaryDirectory(),
+        "/tmp",
+        "/private/tmp"
+    ]
+}
+
 public func defaultPermissionBrokerConfig() -> PermissionBrokerConfig {
     PermissionBrokerConfig(
-        enabled: true,
+        enabled: false,
         mode: "broadAuto",
         scanIntervalMs: BridgeConstants.defaultPermissionBrokerScanIntervalMs,
         recoveryTimeoutMs: BridgeConstants.defaultPermissionBrokerRecoveryTimeoutMs,
@@ -87,6 +96,34 @@ public func defaultPermissionBrokerConfig() -> PermissionBrokerConfig {
         positiveButtonLabels: ["Allow", "OK", "Continue", "Always Allow", "Open System Settings"],
         ignoredButtonLabels: ["Don't Allow", "Don’t Allow", "Deny", "Cancel", "Not Now", "Later"]
     )
+}
+
+public enum SafetyProfile: String, Sendable {
+    case standard
+    case permissive
+    case preserve
+}
+
+public func applySafetyProfile(_ profile: SafetyProfile, to config: inout BridgeConfig) {
+    switch profile {
+    case .standard:
+        config.outgoingAttachmentMode = "restricted"
+        config.outgoingAttachmentRoots = defaultOutgoingAttachmentRoots(homeAccessRoot: config.homeAccessRoot)
+        config.outgoingAttachmentExtensions = defaultOutgoingAttachmentExtensions()
+        var broker = config.effectivePermissionBroker
+        broker.enabled = false
+        config.permissionBroker = broker
+    case .permissive:
+        config.outgoingAttachmentMode = "fullAccess"
+        config.outgoingAttachmentRoots = ["/"]
+        config.outgoingAttachmentExtensions = ["*"]
+        var broker = config.effectivePermissionBroker
+        broker.enabled = true
+        broker.mode = "broadAuto"
+        config.permissionBroker = broker
+    case .preserve:
+        return
+    }
 }
 
 public func defaultBridgeState() -> BridgeState {
@@ -132,11 +169,11 @@ public extension BridgeConfig {
     var effectiveActiveJobAckEnabled: Bool { activeJobAckEnabled ?? true }
     var effectiveActiveJobAckText: String { activeJobAckText ?? BridgeConstants.defaultActiveJobAckText }
     var effectivePermissionBroker: PermissionBrokerConfig { permissionBroker ?? defaultPermissionBrokerConfig() }
-    var effectiveOutgoingAttachmentMode: String { outgoingAttachmentMode ?? "fullAccess" }
+    var effectiveOutgoingAttachmentMode: String { outgoingAttachmentMode ?? "restricted" }
     var effectiveOutgoingAttachmentRoots: [String] {
-        outgoingAttachmentRoots ?? ["/"]
+        outgoingAttachmentRoots ?? defaultOutgoingAttachmentRoots(homeAccessRoot: homeAccessRoot)
     }
-    var effectiveOutgoingAttachmentExtensions: [String] { outgoingAttachmentExtensions ?? ["*"] }
+    var effectiveOutgoingAttachmentExtensions: [String] { outgoingAttachmentExtensions ?? defaultOutgoingAttachmentExtensions() }
 
     mutating func syncTrustedSenders(_ senders: [String]) {
         let normalized = normalizedTrustedSenderList(senders)

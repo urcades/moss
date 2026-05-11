@@ -19,9 +19,24 @@ struct CodexMsgCtlSwift {
           codexmsgctl-swift start
           codexmsgctl-swift stop
           codexmsgctl-swift status
+          codexmsgctl-swift configure --safety standard|permissive|preserve
+          codexmsgctl-swift configure --preserve-safety
           codexmsgctl-swift doctor [--probe-computer-use]
           codexmsgctl-swift broker start|stop|status|doctor|events|dry-run-scan
           codexmsgctl-swift reset
+        """)
+    }
+
+    private static func configureUsage() {
+        print("""
+        Usage:
+          codexmsgctl-swift configure --safety standard|permissive|preserve
+          codexmsgctl-swift configure --preserve-safety
+
+        Safety profiles:
+          standard    Restricted outgoing attachments and broker auto-clicking off.
+          permissive  Full outgoing attachment access and broad broker auto-clicking on.
+          preserve    Create/migrate config without changing existing safety fields.
         """)
     }
 
@@ -93,6 +108,8 @@ struct CodexMsgCtlSwift {
             let snapshot = await cachedCodexCapabilities(command: config.codex.command, paths: paths)
             print(formatCodexCapabilityCacheLine(snapshot))
             print(formatCodexCapabilityLines(snapshot.capabilities).joined(separator: "\n"))
+        case "configure":
+            try configure(rest, paths: paths, stores: stores)
         case "doctor":
             let report = await Doctor(paths: paths).run(includeComputerUseProbe: rest.contains("--probe-computer-use"))
             print(Doctor(paths: paths).format(report))
@@ -110,6 +127,43 @@ struct CodexMsgCtlSwift {
         default:
             throw StoreError.validation("Unknown command: \(command)")
         }
+    }
+
+    private static func configure(_ args: [String], paths: RuntimePaths, stores: RuntimeStores) throws {
+        if args.contains("--help") || args.contains("-h") {
+            configureUsage()
+            return
+        }
+        let profile = try configureSafetyProfile(args)
+        try ensureRuntimeDirectories(paths)
+        var config = (try? stores.config.load()) ?? defaultBridgeConfig(paths: paths)
+        migrateTrustedSenders(&config)
+        applySafetyProfile(profile, to: &config)
+        try validateConfig(config)
+        try stores.config.save(config)
+        print("Config updated: \(paths.configPath.path)")
+        print("Safety profile: \(profile.rawValue)")
+        print("Outgoing attachments: \(config.effectiveOutgoingAttachmentMode), roots: \(config.effectiveOutgoingAttachmentRoots.joined(separator: ", ")), extensions: \(config.effectiveOutgoingAttachmentExtensions.joined(separator: ", "))")
+        let broker = config.effectivePermissionBroker
+        print("Permission broker auto-clicking: \(broker.enabled ? "on" : "off"), mode: \(broker.mode)")
+        print("Trusted senders: \(config.effectiveTrustedSenders.isEmpty ? "none" : config.effectiveTrustedSenders.joined(separator: ", "))")
+    }
+
+    private static func configureSafetyProfile(_ args: [String]) throws -> SafetyProfile {
+        if args.contains("--preserve-safety") {
+            return .preserve
+        }
+        if let index = args.firstIndex(of: "--safety") {
+            let valueIndex = args.index(after: index)
+            guard valueIndex < args.endIndex else {
+                throw StoreError.validation("--safety requires standard, permissive, or preserve.")
+            }
+            guard let profile = SafetyProfile(rawValue: args[valueIndex]) else {
+                throw StoreError.validation("Unknown safety profile: \(args[valueIndex])")
+            }
+            return profile
+        }
+        return .standard
     }
 
     private static func runBrokerCommand(_ args: [String], paths: RuntimePaths) async throws {
