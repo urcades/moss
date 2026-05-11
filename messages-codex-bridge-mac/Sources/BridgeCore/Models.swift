@@ -331,10 +331,12 @@ public struct BridgeState: Codable, Equatable, Sendable {
 public struct PromptRequest: Equatable, Sendable {
     public var promptText: String
     public var attachments: [AttachmentRef]
+    public var threadName: String?
 
-    public init(promptText: String, attachments: [AttachmentRef]) {
+    public init(promptText: String, attachments: [AttachmentRef], threadName: String? = nil) {
         self.promptText = promptText
         self.attachments = attachments
+        self.threadName = threadName
     }
 }
 

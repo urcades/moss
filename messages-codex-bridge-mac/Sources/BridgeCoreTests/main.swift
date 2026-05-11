@@ -22,6 +22,7 @@ struct BridgeCoreFocusedTests {
         try await testAppServerClientRpcErrorAndCleanup()
         try await testAppServerClientInvalidResultAndTimeout()
         try await testAppServerBackendStartsThreadAndReturnsFinalAnswer()
+        try await testAppServerBackendNamesNewThreadFromPrompt()
         try await testAppServerBackendResumesThreadAndIgnoresMalformedNotifications()
         try await testAppServerBackendErrorNotificationThrowsBridgeFailure()
         try testCodexProgressSummaryHandlesAppServerNotifications()
@@ -153,6 +154,33 @@ struct BridgeCoreFocusedTests {
             return false
         }, "completed app-server items do not become permission blockers")
         try expect(fake.closed, "app-server backend closes connection")
+    }
+
+    private static func testAppServerBackendNamesNewThreadFromPrompt() async throws {
+        let fake = FakeCodexAppServerConnection(lines: [
+            #"{"id":1,"result":{"ok":true}}"#,
+            #"{"id":2,"result":{"thread":{"id":"thread-new","path":"/tmp/thread.jsonl"}}}"#,
+            #"{"id":3,"result":{"ok":true}}"#,
+            #"{"id":4,"result":{"turn":{"id":"turn-new"}}}"#,
+            #"{"method":"item/completed","params":{"threadId":"thread-new","turnId":"turn-new","item":{"type":"agentMessage","id":"item-1","phase":"final_answer","text":"named"}}}"#,
+            #"{"method":"turn/completed","params":{"threadId":"thread-new","turn":{"id":"turn-new","status":"completed","error":null}}}"#
+        ])
+        var config = defaultBridgeConfig(paths: testPaths(), codexCommand: "/bin/echo")
+        config.timeoutMs = 1_000
+        let backend = CodexAppServerBackend(config: config, paths: testPaths()) { fake }
+        let request = PromptRequest(
+            promptText: "These Apple Messages arrived within one short window.\n\nMessage 1:\nCan you make the bridge title threads more clearly?",
+            attachments: [],
+            threadName: "Can you make the bridge title threads more clearly?"
+        )
+
+        _ = try await backend.invoke(request, sessionId: nil, onEvent: nil)
+
+        try expect(fake.sentMethods == ["initialize", "initialized", "thread/start", "thread/name/set", "turn/start"], "new app-server thread is named before turn start")
+        let nameRequest = fake.sentMessages.first { $0["method"] as? String == "thread/name/set" }
+        let params = nameRequest?["params"] as? [String: Any]
+        try expect(params?["threadId"] as? String == "thread-new", "thread name request targets new thread")
+        try expect(params?["name"] as? String == "Can you make the bridge title threads more clearly?", "thread name comes from message text")
     }
 
     private static func testAppServerBackendResumesThreadAndIgnoresMalformedNotifications() async throws {
@@ -336,6 +364,7 @@ private final class FakeCodexAppServerConnection: CodexAppServerConnection, @unc
     private var lines: [String]
     private let diagnosticsText: String
     private(set) var sentMethods: [String] = []
+    private(set) var sentMessages: [[String: Any]] = []
     private(set) var closed = false
 
     init(lines: [String], diagnostics: String = "") {
@@ -350,6 +379,7 @@ private final class FakeCodexAppServerConnection: CodexAppServerConnection, @unc
 
     func send(_ message: [String: Any]) throws {
         sentMethods.append(message["method"] as? String ?? "")
+        sentMessages.append(message)
     }
 
     func readLine(deadline: Date) throws -> String? {

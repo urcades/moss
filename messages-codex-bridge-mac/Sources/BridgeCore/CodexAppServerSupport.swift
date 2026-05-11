@@ -171,6 +171,9 @@ public final class CodexAppServerBackend: CodexBackend, @unchecked Sendable {
                         blockedText: nil
                     )
                 }
+                if sessionId == nil, let threadName = appServerThreadName(from: request) {
+                    _ = try? rpc.request(method: "thread/name/set", params: appServerThreadNameParams(threadId: threadId, name: threadName))
+                }
                 collector.setThreadId(threadId)
                 onEvent?(.sessionStarted(threadId))
 
@@ -504,6 +507,13 @@ private func appServerThreadResumeParams(config: BridgeConfig, threadId: String)
     return params
 }
 
+private func appServerThreadNameParams(threadId: String, name: String) -> [String: Any] {
+    [
+        "threadId": threadId,
+        "name": name
+    ]
+}
+
 private func appServerTurnStartParams(config: BridgeConfig, request: PromptRequest, threadId: String) -> [String: Any] {
     [
         "threadId": threadId,
@@ -528,6 +538,18 @@ private func appServerInputItems(from request: PromptRequest) -> [[String: Any]]
         }
     }
     return items
+}
+
+private func appServerThreadName(from request: PromptRequest) -> String? {
+    request.threadName.flatMap(cleanThreadNameCandidate)
+}
+
+private func cleanThreadNameCandidate(_ value: String) -> String? {
+    let text = value
+        .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return nil }
+    return truncateForMessages(text, limit: 80)
 }
 
 private func bridgeDeveloperInstructions(config: BridgeConfig) -> String? {

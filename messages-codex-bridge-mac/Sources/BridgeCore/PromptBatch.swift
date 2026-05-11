@@ -29,7 +29,7 @@ public func buildPromptRequest(from batch: PendingBatch) -> PromptRequest {
         }
     }
 
-    return PromptRequest(promptText: lines.joined(separator: "\n"), attachments: attachments)
+    return PromptRequest(promptText: lines.joined(separator: "\n"), attachments: attachments, threadName: buildBatchPreview(batch))
 }
 
 private func refreshAttachment(_ attachment: AttachmentRef) -> AttachmentRef {

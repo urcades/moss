@@ -194,6 +194,7 @@ struct BridgeCoreSelfTest {
         try expect(request.promptText.contains("Message 2:\nsecond"), "prompt contains second message")
         try expect(request.promptText.contains("Image attachments are passed in as Codex image inputs"), "prompt explains inbound attachment handling")
         try expect(request.attachments.count == 1, "prompt carries attachment")
+        try expect(request.threadName == "first / second", "prompt carries thread title preview")
         let outgoingDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches/MessagesLLMBridgeSelfTest/with space")
         try FileManager.default.createDirectory(at: outgoingDir, withIntermediateDirectories: true)
         let outgoingImage = outgoingDir.appendingPathComponent("test image.png")
