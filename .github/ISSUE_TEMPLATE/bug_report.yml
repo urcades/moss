@@ -1,0 +1,36 @@
+name: Bug Report
+description: Report a reproducible bridge bug.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps To Reproduce
+      description: Include the exact message or command when possible.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor Output
+      description: Paste `swift run codexmsgctl-swift doctor` output.
+      render: text
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: macOS version, Codex version, install path, and safety profile.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: Redact phone numbers, Apple IDs, and message contents.
+      render: text

@@ -3,7 +3,28 @@
 Messages Codex Bridge installs source-build artifacts under your home directory
 and uses user LaunchAgents. It does not install system-wide files.
 
-## Stop Running Services
+## Scripted Uninstall
+
+Preview the uninstall:
+
+```sh
+./BuildSupport/uninstall-local-app.zsh --dry-run
+```
+
+Remove installed apps and LaunchAgents while preserving runtime config, state,
+and logs:
+
+```sh
+./BuildSupport/uninstall-local-app.zsh
+```
+
+Also remove runtime config, state, and logs:
+
+```sh
+./BuildSupport/uninstall-local-app.zsh --purge-state
+```
+
+## Manual: Stop Running Services
 
 ```sh
 launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.moss.MessagesCodexBridge.Helper.plist" 2>/dev/null || true

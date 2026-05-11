@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  swiftpm:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check scripts
+        run: zsh -n BuildSupport/*.zsh
+      - name: Swift tests
+        run: swift test
+      - name: Bridge core self-test
+        run: swift run BridgeCoreSelfTest
+      - name: Bridge core focused tests
+        run: swift run BridgeCoreTests
+      - name: Build app bundle
+        run: ./BuildSupport/build-app.zsh
