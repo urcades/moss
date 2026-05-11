@@ -238,9 +238,9 @@ struct BridgeCoreSelfTest {
             attachmentRoots: [],
             attachmentExtensions: ["*"]
         )
-        try expect(fullAccessMentionedReply.attachments == [fullAccessFile.path], "full access attachment mode detects mentioned regular files outside default roots")
+        try expect(fullAccessMentionedReply.attachments.isEmpty, "plain mentioned file paths are not auto-attached")
         let mentionedReply = prepareOutgoingReply("Screenshot saved here:\n\(outgoingImage.path)", homeAccessRoot: NSHomeDirectory())
-        try expect(mentionedReply.attachments == [outgoingImage.path], "plain mentioned image path with spaces is attached")
+        try expect(mentionedReply.attachments.isEmpty, "plain mentioned image paths are not auto-attached")
         let attachmentScript = appleMessagesAttachmentScriptLines().joined(separator: "\n")
         try expect(attachmentScript.contains("as alias"), "attachment AppleScript coerces POSIX file to alias")
         try expect(attachmentScript.contains("send attachmentFile to targetChat"), "attachment AppleScript falls back to chat send")

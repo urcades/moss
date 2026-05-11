@@ -397,7 +397,7 @@ public final class BridgeService: @unchecked Sendable {
             while true {
                 do {
                     let response = try await invokeCodexWithRecovery(config: config, request: currentRequest, jobId: jobId, replySink: replySink, recipient: batch.handleId, service: batch.service)
-                    try await sendOutgoingReply(response, replySink: replySink, recipient: batch.handleId, service: batch.service, config: config)
+                    try await sendOutgoingReply(response, replySink: replySink, recipient: batch.handleId, service: batch.service, config: config, request: currentRequest)
                     break
                 } catch let error as CodexBackendFailure where shouldAttemptPermissionRecovery(error, config: config, attempts: recoveryAttempts) {
                     recoveryAttempts += 1
@@ -480,21 +480,26 @@ public final class BridgeService: @unchecked Sendable {
         return result.text
     }
 
-    private func sendOutgoingReply(_ text: String, replySink: ReplySink, recipient: String, service: String, config: BridgeConfig) async throws {
+    private func sendOutgoingReply(_ text: String, replySink: ReplySink, recipient: String, service: String, config: BridgeConfig, request: PromptRequest) async throws {
         let safeText = safeUserVisibleText(text)
         let outgoing = prepareOutgoingReply(safeText, config: config)
+        let attachmentsRequested = outgoingAttachmentsWereRequested(in: request.promptText)
         if !outgoing.text.isEmpty {
             try await replySink.sendReply(recipient: recipient, service: service, text: outgoing.text)
         }
-        for attachment in outgoing.attachments {
-            do {
-                try await replySink.sendAttachment(recipient: recipient, service: service, filePath: attachment)
-            } catch {
-                throw StoreError.validation("Could not send attachment \(attachment): \(error)")
+        if attachmentsRequested {
+            for attachment in outgoing.attachments {
+                do {
+                    try await replySink.sendAttachment(recipient: recipient, service: service, filePath: attachment)
+                } catch {
+                    throw StoreError.validation("Could not send attachment \(attachment): \(error)")
+                }
             }
         }
         if outgoing.text.isEmpty && outgoing.attachments.isEmpty {
             try await replySink.sendReply(recipient: recipient, service: service, text: safeText)
+        } else if outgoing.text.isEmpty && !outgoing.attachments.isEmpty && !attachmentsRequested {
+            try await replySink.sendReply(recipient: recipient, service: service, text: "Done.")
         }
     }
 
@@ -749,4 +754,30 @@ public func usesLongTaskTimeout(_ promptText: String) -> Bool {
         "after you"
     ]
     return longTaskHints.contains { text.contains($0) }
+}
+
+public func outgoingAttachmentsWereRequested(in promptText: String) -> Bool {
+    let text = promptText.lowercased()
+    let attachmentRequestHints = [
+        "send me ",
+        "send back",
+        "send it back",
+        "send the file",
+        "send a file",
+        "send an attachment",
+        "send the attachment",
+        "send the image",
+        "send an image",
+        "send a screenshot",
+        "attach ",
+        "as an attachment",
+        "return an attachment",
+        "return the attachment",
+        "return the file",
+        "return it as a file",
+        "text me the file",
+        "share the file",
+        "share it back"
+    ]
+    return attachmentRequestHints.contains { text.contains($0) }
 }

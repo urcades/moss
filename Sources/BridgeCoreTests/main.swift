@@ -26,6 +26,7 @@ struct BridgeCoreFocusedTests {
         try await testAppServerBackendResumesThreadAndIgnoresMalformedNotifications()
         try await testAppServerBackendErrorNotificationThrowsBridgeFailure()
         try testCodexProgressSummaryHandlesAppServerNotifications()
+        try testOutgoingAttachmentIntentGate()
         try await testProgressEventsUpdateStateWithoutSendingSms()
         try await testOrdinaryTextDuringActiveJobQueuesNextBatchWhileCodexStatusCutsThrough()
         print("BridgeCoreTests passed.")
@@ -230,6 +231,13 @@ struct BridgeCoreFocusedTests {
         let parser = CodexStreamParser()
         let events = parser.consume(#"{"method":"item/completed","params":{"item":{"type":"command_execution","command":"swift test","status":"completed"}}}"# + "\n", stream: .stdout)
         try expect(events == [.progress("Completed swift test (completed)")], "parser emits app-server progress")
+    }
+
+    private static func testOutgoingAttachmentIntentGate() throws {
+        try expect(!outgoingAttachmentsWereRequested(in: "Sending you an App Store Connect api key, can you move it over to your Developer folder?"), "incoming file transfer is not an outgoing attachment request")
+        try expect(!outgoingAttachmentsWereRequested(in: "Create an article from this page and save it to disk"), "save-to-disk request is not an outgoing attachment request")
+        try expect(outgoingAttachmentsWereRequested(in: "Can you send me the generated PNG when you're done?"), "send me asks for outgoing attachment")
+        try expect(outgoingAttachmentsWereRequested(in: "Please return the file as an attachment"), "return as attachment asks for outgoing attachment")
     }
 
     private static func testProgressEventsUpdateStateWithoutSendingSms() async throws {

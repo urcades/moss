@@ -262,7 +262,6 @@ public func prepareOutgoingReply(
             }
         } else {
             lines.append(line)
-            attachments += attachmentPathsMentioned(in: line, homeAccessRoot: homeAccessRoot, attachmentMode: attachmentMode, attachmentRoots: attachmentRoots, attachmentExtensions: attachmentExtensions)
         }
     }
 
