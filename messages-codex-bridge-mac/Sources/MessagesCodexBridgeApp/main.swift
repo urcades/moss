@@ -220,15 +220,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @MainActor
-final class TrustedSendersWindowController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate {
-    private let paths: RuntimePaths
+final class TrustedSendersWindowController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     private let stores: RuntimeStores
     private var window: NSWindow?
     private var tableView: NSTableView?
     private var senders: [String] = []
 
     init(paths: RuntimePaths) {
-        self.paths = paths
         self.stores = RuntimeStores(paths: paths)
         super.init()
     }
@@ -259,10 +257,6 @@ final class TrustedSendersWindowController: NSObject, NSTableViewDataSource, NST
         }
         field.stringValue = senders[row]
         return field
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        window?.orderOut(nil)
     }
 
     private func buildWindow() {
@@ -308,7 +302,6 @@ final class TrustedSendersWindowController: NSObject, NSTableViewDataSource, NST
         newWindow.minSize = NSSize(width: 360, height: 210)
         newWindow.contentView = content
         newWindow.center()
-        newWindow.delegate = self
         self.tableView = table
         self.window = newWindow
     }

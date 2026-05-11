@@ -124,7 +124,6 @@ public final class CodexAppServerClient: @unchecked Sendable {
 
 public final class CodexAppServerBackend: CodexBackend, @unchecked Sendable {
     private let config: BridgeConfig
-    private let paths: RuntimePaths
     private let makeConnection: @Sendable () throws -> CodexAppServerConnection
 
     public convenience init(config: BridgeConfig, paths: RuntimePaths) {
@@ -133,9 +132,8 @@ public final class CodexAppServerBackend: CodexBackend, @unchecked Sendable {
         }
     }
 
-    public init(config: BridgeConfig, paths: RuntimePaths, makeConnection: @escaping @Sendable () throws -> CodexAppServerConnection) {
+    public init(config: BridgeConfig, paths _: RuntimePaths, makeConnection: @escaping @Sendable () throws -> CodexAppServerConnection) {
         self.config = config
-        self.paths = paths
         self.makeConnection = makeConnection
     }
 
