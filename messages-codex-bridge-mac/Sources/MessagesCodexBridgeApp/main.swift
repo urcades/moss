@@ -8,10 +8,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let paths = RuntimePaths.current()
     private var doctorWindow: NSWindow?
+    private var trustedSendersWindow: TrustedSendersWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.title = "CodexMsg"
         rebuildMenu()
+        Task { await bootstrapQuietly() }
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 
     private func rebuildMenu() {
@@ -20,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Run Doctor", action: #selector(runDoctor), keyEquivalent: "d"))
         menu.addItem(NSMenuItem(title: "Computer Use Probe", action: #selector(runComputerUseProbe), keyEquivalent: "p"))
+        menu.addItem(NSMenuItem(title: "Trusted Senders...", action: #selector(showTrustedSenders), keyEquivalent: "t"))
         menu.addItem(NSMenuItem(title: "Permission Broker Status", action: #selector(showPermissionBrokerStatus), keyEquivalent: "b"))
         menu.addItem(NSMenuItem(title: "Permission Broker Dry-Run Scan", action: #selector(runPermissionBrokerDryRun), keyEquivalent: "y"))
         menu.addItem(NSMenuItem(title: "Open Full Disk Access Settings", action: #selector(openFullDiskAccessSettings), keyEquivalent: "f"))
@@ -43,6 +50,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func runComputerUseProbe() {
         Task { await showDoctor(probe: true) }
+    }
+
+    @objc private func showTrustedSenders() {
+        if trustedSendersWindow == nil {
+            trustedSendersWindow = TrustedSendersWindowController(paths: paths)
+        }
+        trustedSendersWindow?.show()
+    }
+
+    private func bootstrapQuietly() async {
+        do {
+            let hadConfig = FileManager.default.fileExists(atPath: paths.configPath.path)
+            _ = try Migration(paths: paths).migrateFromExistingRuntime(backup: false)
+            if let appBundle = runningAppBundleURL() {
+                try await ServiceLifecycle(paths: paths).startHelperLaunchAgent(appBundle: appBundle)
+            }
+            let config = try RuntimeStores(paths: paths).config.load()
+            if !hadConfig && config.effectiveTrustedSenders.isEmpty {
+                await MainActor.run { showTrustedSenders() }
+            }
+        } catch {
+            await MainActor.run {
+                alert("Bridge setup needs attention.", "\(error)\n\nRun Doctor or Open Logs for details.")
+            }
+        }
+    }
+
+    private func runningAppBundleURL() -> URL? {
+        let url = Bundle.main.bundleURL
+        return url.pathExtension == "app" ? url : nil
     }
 
     @objc private func showPermissionBrokerStatus() {
@@ -179,6 +216,160 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.messageText = title
         alert.informativeText = message
         alert.runModal()
+    }
+}
+
+@MainActor
+final class TrustedSendersWindowController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate {
+    private let paths: RuntimePaths
+    private let stores: RuntimeStores
+    private var window: NSWindow?
+    private var tableView: NSTableView?
+    private var senders: [String] = []
+
+    init(paths: RuntimePaths) {
+        self.paths = paths
+        self.stores = RuntimeStores(paths: paths)
+        super.init()
+    }
+
+    func show() {
+        loadSenders()
+        if window == nil {
+            buildWindow()
+        }
+        tableView?.reloadData()
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        senders.count
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let identifier = NSUserInterfaceItemIdentifier("TrustedSenderCell")
+        let field: NSTextField
+        if let reused = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTextField {
+            field = reused
+        } else {
+            field = NSTextField(labelWithString: "")
+            field.identifier = identifier
+            field.lineBreakMode = .byTruncatingMiddle
+        }
+        field.stringValue = senders[row]
+        return field
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        window?.orderOut(nil)
+    }
+
+    private func buildWindow() {
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 270))
+
+        let scroll = NSScrollView(frame: NSRect(x: 14, y: 46, width: 432, height: 210))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        scroll.autoresizingMask = [.width, .height]
+
+        let table = NSTableView(frame: scroll.bounds)
+        table.headerView = nil
+        table.usesAlternatingRowBackgroundColors = false
+        table.allowsMultipleSelection = true
+        table.delegate = self
+        table.dataSource = self
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("sender"))
+        column.title = "Sender"
+        column.width = 420
+        table.addTableColumn(column)
+        scroll.documentView = table
+
+        let addButton = NSButton(title: "+", target: self, action: #selector(addSender))
+        addButton.frame = NSRect(x: 14, y: 12, width: 28, height: 24)
+        addButton.bezelStyle = .rounded
+
+        let removeButton = NSButton(title: "-", target: self, action: #selector(removeSelectedSenders))
+        removeButton.frame = NSRect(x: 46, y: 12, width: 28, height: 24)
+        removeButton.bezelStyle = .rounded
+
+        content.addSubview(scroll)
+        content.addSubview(addButton)
+        content.addSubview(removeButton)
+
+        let newWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 270),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        newWindow.title = "Trusted Senders"
+        newWindow.isReleasedWhenClosed = false
+        newWindow.minSize = NSSize(width: 360, height: 210)
+        newWindow.contentView = content
+        newWindow.center()
+        newWindow.delegate = self
+        self.tableView = table
+        self.window = newWindow
+    }
+
+    @objc private func addSender() {
+        let alert = NSAlert()
+        alert.messageText = "Add Trusted Sender"
+        alert.informativeText = "Enter a phone number or Apple ID email."
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.placeholderString = "+1 555 555 5555 or name@example.com"
+        alert.accessoryView = field
+
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+        let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        let next = normalizedTrustedSenderList(senders + [value])
+        guard next.count != senders.count else {
+            NSSound.beep()
+            return
+        }
+        senders = next
+        saveSenders()
+    }
+
+    @objc private func removeSelectedSenders() {
+        guard let tableView else { return }
+        let selected = tableView.selectedRowIndexes
+        guard !selected.isEmpty else { return }
+        senders = senders.enumerated().filter { !selected.contains($0.offset) }.map(\.element)
+        saveSenders()
+    }
+
+    private func loadSenders() {
+        do {
+            var config = try stores.config.load()
+            migrateTrustedSenders(&config)
+            try stores.config.save(config)
+            senders = config.effectiveTrustedSenders
+        } catch {
+            senders = []
+        }
+    }
+
+    private func saveSenders() {
+        do {
+            var config = try stores.config.load()
+            config.syncTrustedSenders(senders)
+            try validateConfig(config)
+            try stores.config.save(config)
+            senders = config.effectiveTrustedSenders
+            tableView?.reloadData()
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Could not save trusted senders."
+            alert.informativeText = "\(error)"
+            alert.runModal()
+        }
     }
 }
 

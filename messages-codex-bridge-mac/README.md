@@ -45,6 +45,10 @@ To create the local signing identity:
 
 Use the app menu to register the helper and run the Computer Use probe.
 
+Use `Trusted Senders...` in the app menu to choose which phone numbers or Apple ID
+emails may send prompts to the bridge. Fresh installs start with no trusted
+senders until one is added.
+
 ## Apple Messages control commands
 
 Send these exact messages from the configured sender to control the Swift bridge without forwarding the text to Codex:
