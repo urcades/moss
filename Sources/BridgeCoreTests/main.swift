@@ -324,7 +324,7 @@ struct BridgeCoreFocusedTests {
             stores: stores,
             makeSource: { _ in source },
             makeReplySink: { _ in sink },
-            makeCodex: { CodexExecAdapter(config: $0, paths: paths) },
+            makeCodex: { _ in FakeProgressCodexBackend(events: [], response: "unused") },
             now: { Date(timeIntervalSince1970: 1_777_777_777) }
         )
 

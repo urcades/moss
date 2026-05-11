@@ -115,15 +115,6 @@ struct BridgeCoreSelfTest {
         )
         try expect(!permissionBrokerDecision(for: unknownPrompt, config: config.effectivePermissionBroker).shouldClick, "permission broker ignores unknown requester")
         try expect(isRecoverablePermissionBlock("Apple event error -1743: Unknown error"), "recoverable TCC blocker")
-        let fresh = buildCodexExecArgs(config: config, outputPath: "/tmp/out", sessionId: nil, imagePaths: ["/tmp/a.png"])
-        try expect(Array(fresh.prefix(2)) == ["exec", "--json"], "fresh codex args prefix")
-        try expect(fresh.contains("--cd"), "fresh codex args include cwd")
-        try expect(fresh.contains("model_reasoning_effort=\"low\""), "fresh codex args include effort")
-        try expect(fresh.contains("/tmp/a.png"), "fresh codex args include image")
-        let resume = buildCodexExecArgs(config: config, outputPath: "/tmp/out", sessionId: "sess-1", imagePaths: [])
-        try expect(Array(resume.prefix(2)) == ["exec", "resume"], "resume codex args prefix")
-        try expect(!resume.contains("--cd"), "resume codex args omit cwd")
-        try expect(resume.contains("sess-1"), "resume codex args include session")
         try expect(permissionBlock(in: "Apple event error -10005: cgWindowNotFound")?.contains("cgWindowNotFound") == true, "Computer Use window lookup blocker")
         try expect(permissionBlock(in: "Could not create a session: You must enable 'Allow remote automation' in Safari Settings") != nil, "Safari remote automation blocker")
         try expect(codexThreadDeepLink("thread-1") == "codex://threads/thread-1", "codex thread deep link")
@@ -265,7 +256,7 @@ struct BridgeCoreSelfTest {
             paths: paths,
             makeSource: { _ in SQLiteMessageSource(dbPath: "/tmp/fake.db", allowedSender: "+1") },
             makeReplySink: { _ in AppleMessagesReplySink(osascriptCommand: "/usr/bin/osascript", chunkSize: 1200, messagesDbPath: "/tmp/fake.db") },
-            makeCodex: { CodexExecAdapter(config: $0, paths: paths) }
+            makeCodex: { CodexAppServerBackend(config: $0, paths: paths) }
         )
         try expect(statusHelpService.runLocalCommand("/help").contains("/codex history"), "help lists codex control commands")
         try expect(chunkMessageText("hello world", chunkSize: 20) == ["hello world"], "short chunking")
