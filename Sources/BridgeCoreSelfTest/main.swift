@@ -51,6 +51,9 @@ struct BridgeCoreSelfTest {
         try expect(classifyAttachment(mimeType: "text/plain", uti: nil, absolutePath: "/tmp/a.txt") == "unsupported", "unsupported attachment classification")
 
         let paths = RuntimePaths.current(projectRoot: URL(fileURLWithPath: "/tmp/MessagesCodexBridgeMac"))
+        let diagnostics = runtimeDiagnosticChecks(paths: paths)
+        try expect(diagnostics.contains { $0.name == "Installed runtime app path" }, "doctor diagnostics include installed app path")
+        try expect(diagnostics.contains { $0.name == "Installed app signing" }, "doctor diagnostics include signing summary")
         var config = defaultBridgeConfig(paths: paths)
         try expect(config.allowedSender.isEmpty, "fresh default has no personal allowed sender")
         try expect(config.effectiveTrustedSenders.isEmpty, "fresh default has no trusted senders")

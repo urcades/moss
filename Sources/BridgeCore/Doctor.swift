@@ -35,6 +35,7 @@ public final class Doctor: @unchecked Sendable {
         let stores = RuntimeStores(paths: paths)
         let config = (try? stores.config.load()) ?? defaultBridgeConfig(paths: paths)
         var checks: [DoctorCheck] = []
+        checks.append(contentsOf: runtimeDiagnosticChecks(paths: paths))
         checks.append(checkCodex(config))
         checks.append(contentsOf: await checkCodexCapabilities(config))
         checks.append(checkTrustedSenders(config))
@@ -62,7 +63,7 @@ public final class Doctor: @unchecked Sendable {
     private func checkCodex(_ config: BridgeConfig) -> DoctorCheck {
         FileManager.default.isExecutableFile(atPath: config.codex.command)
             ? DoctorCheck(name: "Codex CLI available", ok: true, detail: config.codex.command)
-            : DoctorCheck(name: "Codex CLI available", ok: false, detail: "Unable to execute \(config.codex.command)")
+            : DoctorCheck(name: "Codex CLI available", ok: false, detail: "Unable to execute \(config.codex.command). Install Codex.app or update config.json to the bundled Codex CLI path.")
     }
 
     private func checkCodexCapabilities(_ config: BridgeConfig) async -> [DoctorCheck] {
@@ -105,7 +106,7 @@ public final class Doctor: @unchecked Sendable {
             let result = try await runner.run(config.osascriptCommand, ["-e", script])
             return DoctorCheck(name: "Messages automation reachable", ok: true, detail: result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
         } catch {
-            return DoctorCheck(name: "Messages automation reachable", ok: false, detail: String(describing: error))
+            return DoctorCheck(name: "Messages automation reachable", ok: false, detail: "macOS Automation is likely blocking Messages access. Open Automation Settings from the menu, then allow Messages access for Messages Codex Bridge. Detail: \(error)")
         }
     }
 
@@ -187,6 +188,70 @@ public final class Doctor: @unchecked Sendable {
             return DoctorCheck(name: "Computer Use probe", ok: false, detail: String(describing: error))
         }
     }
+}
+
+public func runtimeDiagnosticChecks(paths: RuntimePaths = .current()) -> [DoctorCheck] {
+    [
+        DoctorCheck(name: "Running bundle path", ok: true, detail: Bundle.main.bundleURL.path),
+        DoctorCheck(name: "Built app path", ok: true, detail: paths.builtAppPath.path),
+        DoctorCheck(name: "Installed runtime app path", ok: true, detail: paths.installedAppPath.path),
+        DoctorCheck(name: "Installed helper path", ok: true, detail: paths.installedHelperExecutablePath.path),
+        DoctorCheck(name: "Installed permission broker path", ok: true, detail: paths.installedPermissionBrokerExecutablePath.path),
+        DoctorCheck(name: "Config path", ok: true, detail: paths.configPath.path),
+        DoctorCheck(name: "State path", ok: true, detail: paths.statePath.path),
+        DoctorCheck(name: "Running bundle version", ok: true, detail: bundleShortVersion(at: Bundle.main.bundleURL) ?? "unknown"),
+        DoctorCheck(name: "Installed app version", ok: true, detail: bundleShortVersion(at: paths.installedAppPath) ?? "unknown"),
+        DoctorCheck(name: "Installed helper version", ok: true, detail: bundleShortVersion(at: installedHelperBundlePath(paths: paths)) ?? "unknown"),
+        DoctorCheck(name: "Installed permission broker version", ok: true, detail: bundleShortVersion(at: installedPermissionBrokerBundlePath(paths: paths)) ?? "unknown"),
+        DoctorCheck(name: "Installed app signing", ok: true, detail: codeSigningSummary(at: paths.installedAppPath)),
+        DoctorCheck(name: "Installed helper signing", ok: true, detail: codeSigningSummary(at: installedHelperBundlePath(paths: paths))),
+        DoctorCheck(name: "Installed permission broker signing", ok: true, detail: codeSigningSummary(at: installedPermissionBrokerBundlePath(paths: paths)))
+    ]
+}
+
+public func installedHelperBundlePath(paths: RuntimePaths) -> URL {
+    paths.installedAppPath.appendingPathComponent("Contents/Library/LoginItems/MessagesCodexBridgeHelper.app")
+}
+
+public func installedPermissionBrokerBundlePath(paths: RuntimePaths) -> URL {
+    paths.installedAppPath.appendingPathComponent("Contents/Library/LoginItems/MessagesCodexPermissionBroker.app")
+}
+
+public func bundleShortVersion(at bundleURL: URL) -> String? {
+    let infoPath = bundleURL.appendingPathComponent("Contents/Info.plist")
+    guard let info = NSDictionary(contentsOf: infoPath) as? [String: Any] else { return nil }
+    return info["CFBundleShortVersionString"] as? String
+}
+
+public func codeSigningSummary(at url: URL) -> String {
+    guard FileManager.default.fileExists(atPath: url.path) else { return "missing" }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+    process.arguments = ["-dv", "--verbose=2", url.path]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    do {
+        try process.run()
+        process.waitUntilExit()
+    } catch {
+        return "codesign unavailable: \(error.localizedDescription)"
+    }
+    let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    if output.localizedCaseInsensitiveContains("Signature=adhoc") {
+        return "ad hoc"
+    }
+    let authorities = output
+        .components(separatedBy: .newlines)
+        .filter { $0.hasPrefix("Authority=") }
+        .map { String($0.dropFirst("Authority=".count)) }
+    if !authorities.isEmpty {
+        return authorities.joined(separator: " > ")
+    }
+    if let team = output.components(separatedBy: .newlines).first(where: { $0.hasPrefix("TeamIdentifier=") }) {
+        return team
+    }
+    return process.terminationStatus == 0 ? "signed" : "unsigned or invalid"
 }
 
 public extension ProcessRunner {
