@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Added a public Homebrew tap for source-building installs.
+
 ## v0.3.0
 
 - Source-build public release.

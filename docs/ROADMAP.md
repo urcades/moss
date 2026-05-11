@@ -4,7 +4,6 @@ These are useful follow-ups, not blockers for the public source-build release.
 
 ## Later Distribution Work
 
-- Homebrew tap or formula after source builds have had more public use.
 - Notarized binary releases when Developer ID notarization is working smoothly.
 
 ## Later App Polish

@@ -6,14 +6,15 @@ Messages.
 
 ![Messages Codex Bridge menu with Maintenance submenu open](docs/assets/menubar-maintenance.png)
 
-Source build is the supported public install path today. Maintainer tooling for
-signed/notarized zip packaging exists in the repo, but notarized binary releases
-are not the default public artifact yet.
+Source-built installs are supported through the Homebrew tap or the local build
+script. Maintainer tooling for signed/notarized zip packaging exists in the
+repo, but notarized binary releases are not the default public artifact yet.
 
 ## Current Distribution Mode
 
 The v0.3.0 release is source-build first:
 
+- Homebrew tap: `brew tap urcades/moss && brew install moss`.
 - Local build from this Swift package.
 - Local code signing identity when available.
 - Ad hoc signing fallback for development/build verification.
@@ -36,7 +37,37 @@ The v0.3.0 release is source-build first:
 The bridge uses `codex app-server --listen stdio://` through that CLI. It does
 not use the legacy `codex exec` backend.
 
-## Fresh Mac Source Build
+## Homebrew Source Build
+
+The easiest source-build install is the Homebrew tap:
+
+```sh
+brew tap urcades/moss
+brew install moss
+```
+
+Then finish first-run setup:
+
+```sh
+cd ~
+mossctl configure --safety standard
+moss-open
+mossctl doctor
+```
+
+`moss-open` launches the menu-bar app from Homebrew's install prefix.
+`mossctl` is the bridge control CLI for status, Doctor, safety configuration,
+and maintenance commands.
+
+If you want fresh runtime config to default Codex sessions to a specific working
+directory, run `mossctl configure` from that directory before `moss-open`, or
+launch with:
+
+```sh
+MOSS_CODEX_CWD=/path/to/workspace moss-open
+```
+
+## Local Source Build
 
 Clone the repository and build the app:
 
@@ -147,8 +178,15 @@ current limitations.
 
 ## Uninstall
 
-Run `./BuildSupport/uninstall-local-app.zsh --dry-run` to preview the teardown
-path. See `docs/UNINSTALL.md` for details.
+For Homebrew installs:
+
+```sh
+brew uninstall moss
+```
+
+For local source builds, run `./BuildSupport/uninstall-local-app.zsh --dry-run`
+to preview the teardown path. See `docs/UNINSTALL.md` for full runtime cleanup
+details.
 
 ## Permissions
 
@@ -171,6 +209,7 @@ More help:
 - `docs/TROUBLESHOOTING.md`
 - `docs/PRIVACY_AND_SECURITY_FAQ.md`
 - `docs/SIGNING_AND_NOTARIZATION.md`
+- `docs/HOMEBREW.md`
 - `docs/ARCHITECTURE.md`
 - `docs/ROADMAP.md`
 

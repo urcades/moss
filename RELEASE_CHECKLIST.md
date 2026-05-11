@@ -22,6 +22,14 @@ All commands should complete successfully. Doctor may report missing macOS
 permissions on a fresh machine; grant the requested permissions and rerun Doctor
 before cutting a release.
 
+For the Homebrew tap, validate the matching formula in `urcades/homebrew-moss`:
+
+```sh
+brew audit --strict --online urcades/moss/moss
+brew reinstall --build-from-source urcades/moss/moss
+brew test urcades/moss/moss
+```
+
 ## App Smoke Test
 
 1. Open the built app:
@@ -85,6 +93,7 @@ git push origin v0.3.0
 
 5. Create a source-build GitHub release from `v0.3.0` without binary artifacts
    unless a notarized zip has been produced separately.
+6. Update and push `urcades/homebrew-moss` for the new release tag.
 
 ## Deferred Work
 
