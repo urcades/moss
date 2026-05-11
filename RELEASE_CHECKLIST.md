@@ -1,6 +1,6 @@
 # Release Checklist
 
-Manual validation for the v0.3.0 source-build release.
+Manual validation for the current source-build release.
 
 ## Automated Checks
 
@@ -39,7 +39,7 @@ brew test urcades/moss/moss
 ```
 
 2. Confirm the menubar process runs from `~/Applications/MessagesCodexBridge.app`.
-3. Confirm the menu header shows `Messages Codex Bridge 0.3.0`.
+3. Confirm the menu header shows the release version.
 4. Open `Trusted Senders...`.
 5. Add a test sender.
 6. Remove the test sender, or replace it with the real trusted sender.
@@ -87,11 +87,11 @@ After the automated checks and smoke test are green:
 4. Create the annotated tag:
 
 ```sh
-git tag -a v0.3.0 -m "Messages Codex Bridge v0.3.0"
-git push origin v0.3.0
+git tag -a vX.Y.Z -m "Messages Codex Bridge vX.Y.Z"
+git push origin vX.Y.Z
 ```
 
-5. Create a source-build GitHub release from `v0.3.0` without binary artifacts
+5. Create a source-build GitHub release from `vX.Y.Z` without binary artifacts
    unless a notarized zip has been produced separately.
 6. Update and push `urcades/homebrew-moss` for the new release tag.
 

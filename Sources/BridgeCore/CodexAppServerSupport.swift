@@ -260,7 +260,7 @@ private final class CodexAppServerRPC {
             "clientInfo": [
                 "name": "messages_codex_bridge_swift",
                 "title": "Messages Codex Bridge",
-                "version": "0.3.0"
+                "version": "0.3.1"
             ],
             "capabilities": [
                 "experimentalApi": true

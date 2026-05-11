@@ -2,7 +2,14 @@
 
 ## Unreleased
 
-- Added a public Homebrew tap for source-building installs.
+## v0.3.1
+
+- Added and documented the public Homebrew tap for source-building installs.
+- Clarified the public security/trust model for trusted senders, Codex
+  approval behavior, attachment handling, runtime paths, and Homebrew uninstall.
+- Changed outgoing attachment behavior so replies attach files only when the
+  bridge output explicitly requests an attachment.
+- Fixed local signing identity detection for source-build signing.
 
 ## v0.3.0
 

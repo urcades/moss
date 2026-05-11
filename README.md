@@ -14,9 +14,7 @@ repo, but notarized binary releases are not the default public artifact yet.
 
 The current public release line is source-build first:
 
-- Homebrew tap: `brew tap urcades/moss && brew install moss`. The tap builds
-  from tagged source releases; these tap docs will be included in the next tag
-  after `v0.3.0`.
+- Homebrew tap: `brew tap urcades/moss && brew install moss`.
 - Local build from this Swift package.
 - Local code signing identity when available.
 - Ad hoc signing fallback for development/build verification.
@@ -123,7 +121,7 @@ To create the local signing identity first:
 When the menu-bar app opens, its menu header should read:
 
 ```text
-Messages Codex Bridge 0.3.0
+Messages Codex Bridge 0.3.1
 ```
 
 Use the menu in this order:

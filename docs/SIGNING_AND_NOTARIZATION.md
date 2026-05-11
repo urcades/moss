@@ -56,7 +56,7 @@ The script:
 After the script succeeds, attach the final zip to the release:
 
 ```sh
-gh release upload v0.3.0 .build/dist/MessagesCodexBridge-0.3.0.zip
+gh release upload vX.Y.Z .build/dist/MessagesCodexBridge-X.Y.Z.zip
 ```
 
 ## Troubleshooting

@@ -40,8 +40,8 @@ fi
 /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string MessagesCodexBridge" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundlePackageType string APPL" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string MessagesCodexBridge" "$APP/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 0.3.0" "$APP/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string 3" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 0.3.1" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string 4" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :NSAppleEventsUsageDescription string Messages Codex Bridge sends Apple Events to Messages and Codex Computer Use at your request." "$APP/Contents/Info.plist"
 
@@ -50,8 +50,8 @@ fi
 /usr/libexec/PlistBuddy -c "Add :CFBundleName string Messages Codex Bridge Helper" "$HELPER/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string MessagesCodexBridgeHelper" "$HELPER/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundlePackageType string APPL" "$HELPER/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 0.3.0" "$HELPER/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string 3" "$HELPER/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 0.3.1" "$HELPER/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string 4" "$HELPER/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$HELPER/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :NSAppleEventsUsageDescription string Messages Codex Bridge Helper sends Apple Events to Messages and Codex Computer Use at your request." "$HELPER/Contents/Info.plist"
 
@@ -60,8 +60,8 @@ fi
 /usr/libexec/PlistBuddy -c "Add :CFBundleName string Messages Codex Permission Broker" "$BROKER/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string MessagesCodexPermissionBroker" "$BROKER/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundlePackageType string APPL" "$BROKER/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 0.3.0" "$BROKER/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string 3" "$BROKER/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 0.3.1" "$BROKER/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string 4" "$BROKER/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$BROKER/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :NSAppleEventsUsageDescription string Messages Codex Permission Broker handles local macOS permission prompts for bridge-triggered Codex automation at your request." "$BROKER/Contents/Info.plist"
 
