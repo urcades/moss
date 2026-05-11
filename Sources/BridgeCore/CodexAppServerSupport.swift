@@ -163,7 +163,7 @@ public final class CodexAppServerBackend: CodexBackend, @unchecked Sendable {
                     threadId = appServerThreadId(from: start, fallback: nil)
                 }
                 guard !threadId.isEmpty else {
-                    throw CodexExecFailure(
+                    throw CodexBackendFailure(
                         message: "Codex app-server did not return a thread id.",
                         stdout: "",
                         stderr: connection.diagnostics,
@@ -188,7 +188,7 @@ public final class CodexAppServerBackend: CodexBackend, @unchecked Sendable {
                     return collector.isFinished
                 })
                 if !completed {
-                    throw CodexExecFailure(
+                    throw CodexBackendFailure(
                         message: "Timed out waiting for Codex app-server turn to finish.",
                         stdout: "",
                         stderr: connection.diagnostics,
@@ -200,7 +200,7 @@ public final class CodexAppServerBackend: CodexBackend, @unchecked Sendable {
                     throw failure
                 }
                 guard let finalText = collector.finalAnswer else {
-                    throw CodexExecFailure(
+                    throw CodexBackendFailure(
                         message: "Codex app-server completed without a final reply.",
                         stdout: "",
                         stderr: connection.diagnostics,
@@ -216,10 +216,10 @@ public final class CodexAppServerBackend: CodexBackend, @unchecked Sendable {
                     args: ["app-server", "--listen", "stdio://"],
                     outputPath: collector.outputPath ?? ""
                 )
-            } catch let error as CodexExecFailure {
+            } catch let error as CodexBackendFailure {
                 throw error
             } catch let error as CodexAppServerError {
-                throw CodexExecFailure(
+                throw CodexBackendFailure(
                     message: "Codex app-server error: \(error.description)",
                     stdout: "",
                     stderr: connection.diagnostics,
@@ -230,7 +230,7 @@ public final class CodexAppServerBackend: CodexBackend, @unchecked Sendable {
                     blockedText: permissionBlock(in: error.description + "\n" + connection.diagnostics)
                 )
             } catch {
-                throw CodexExecFailure(
+                throw CodexBackendFailure(
                     message: "Codex app-server error: \(error)",
                     stdout: "",
                     stderr: connection.diagnostics,
@@ -385,12 +385,12 @@ private final class CodexAppServerTurnCollector: @unchecked Sendable {
         lock.unlock()
     }
 
-    func failure(diagnostics: String) -> CodexExecFailure? {
+    func failure(diagnostics: String) -> CodexBackendFailure? {
         lock.lock()
         let text = errorText
         lock.unlock()
         guard let text, !text.isEmpty else { return nil }
-        return CodexExecFailure(
+        return CodexBackendFailure(
             message: text,
             stdout: "",
             stderr: diagnostics,

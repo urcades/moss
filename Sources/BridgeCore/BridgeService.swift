@@ -399,7 +399,7 @@ public final class BridgeService: @unchecked Sendable {
                     let response = try await invokeCodexWithRecovery(config: config, request: currentRequest, jobId: jobId, replySink: replySink, recipient: batch.handleId, service: batch.service)
                     try await sendOutgoingReply(response, replySink: replySink, recipient: batch.handleId, service: batch.service, config: config)
                     break
-                } catch let error as CodexExecFailure where shouldAttemptPermissionRecovery(error, config: config, attempts: recoveryAttempts) {
+                } catch let error as CodexBackendFailure where shouldAttemptPermissionRecovery(error, config: config, attempts: recoveryAttempts) {
                     recoveryAttempts += 1
                     let recovered = await waitForPermissionBrokerRecovery(
                         error: error,
@@ -420,7 +420,7 @@ public final class BridgeService: @unchecked Sendable {
             }
             state.codexSession.lastCompletedAt = DateCodec.iso(now())
             state.codexSession.lastErrorAt = nil
-        } catch let error as CodexExecFailure {
+        } catch let error as CodexBackendFailure {
             if activeJobStatus(jobId: jobId) == "canceling" {
                 clearActiveJob(jobId: jobId)
                 return
@@ -454,7 +454,7 @@ public final class BridgeService: @unchecked Sendable {
         }
         do {
             return try await invokeCodex(config: config, request: request, sessionId: expired ? nil : state.codexSession.sessionId, jobId: jobId, replySink: replySink, recipient: recipient, service: service)
-        } catch let error as CodexExecFailure {
+        } catch let error as CodexBackendFailure {
             if error.blockedText != nil || expired || state.codexSession.sessionId == nil {
                 throw error
             }
@@ -498,14 +498,14 @@ public final class BridgeService: @unchecked Sendable {
         }
     }
 
-    private func shouldAttemptPermissionRecovery(_ error: CodexExecFailure, config: BridgeConfig, attempts: Int) -> Bool {
+    private func shouldAttemptPermissionRecovery(_ error: CodexBackendFailure, config: BridgeConfig, attempts: Int) -> Bool {
         let broker = config.effectivePermissionBroker
         guard broker.enabled, attempts < broker.maxRecoveryAttempts else { return false }
         guard let blocked = error.blockedText ?? Optional(error.message) else { return false }
         return isRecoverablePermissionBlock(blocked)
     }
 
-    private func waitForPermissionBrokerRecovery(error: CodexExecFailure, jobId: String, config: BridgeConfig, replySink: ReplySink, recipient: String, service: String, attempt: Int) async -> Bool {
+    private func waitForPermissionBrokerRecovery(error: CodexBackendFailure, jobId: String, config: BridgeConfig, replySink: ReplySink, recipient: String, service: String, attempt: Int) async -> Bool {
         let start = now()
         let blocked = error.blockedText ?? error.message
         updateActiveJob(jobId: jobId) { job in
@@ -709,7 +709,7 @@ private func localCommandName(_ text: String) -> String? {
     bridgeLocalCommandName(text)
 }
 
-private func failureText(_ error: CodexExecFailure) -> String {
+private func failureText(_ error: CodexBackendFailure) -> String {
     if let blocked = error.blockedText {
         let safeBlocked = safeUserVisibleBlockerText(blocked) ?? "The bridge suppressed an unsafe internal diagnostic instead of texting it."
         return "Codex was blocked by a local permission or automation request:\n\(safeBlocked)"

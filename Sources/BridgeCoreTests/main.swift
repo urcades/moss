@@ -218,7 +218,7 @@ struct BridgeCoreFocusedTests {
         do {
             _ = try await backend.invoke(PromptRequest(promptText: "fail", attachments: []), sessionId: nil, onEvent: nil)
             throw TestFailure(description: "Expected app-server backend failure")
-        } catch let error as CodexExecFailure {
+        } catch let error as CodexBackendFailure {
             try expect(error.message.contains("boom"), "app-server error notification text")
             try expect(error.stderr == "stderr details", "app-server error diagnostics")
         }

@@ -181,7 +181,7 @@ public final class Doctor: @unchecked Sendable {
             let response = try await CodexAppServerBackend(config: config, paths: paths).invoke(request, sessionId: nil, onEvent: nil)
             let ok = response.text.localizedCaseInsensitiveContains("SUCCESS")
             return DoctorCheck(name: "Computer Use probe", ok: ok, detail: response.text)
-        } catch let error as CodexExecFailure {
+        } catch let error as CodexBackendFailure {
             return DoctorCheck(name: "Computer Use probe", ok: false, detail: error.blockedText ?? error.message)
         } catch {
             return DoctorCheck(name: "Computer Use probe", ok: false, detail: String(describing: error))
