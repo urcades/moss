@@ -1,7 +1,8 @@
 # Known Limitations
 
-- Binary distribution is a notarized zip, not a polished DMG.
-- Notarized releases require the maintainer to run the local packaging script.
+- Source build is the supported public install path.
+- Notarized zip packaging exists for maintainers, but binary releases are not
+  the default public artifact yet.
 - Setup still requires macOS privacy permissions through System Settings.
 - Apple Messages must already be signed in and healthy on the Mac.
 - Codex.app and its bundled CLI are required.

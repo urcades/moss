@@ -34,3 +34,8 @@ body:
       label: Relevant Logs
       description: Redact phone numbers, Apple IDs, and message contents.
       render: text
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag in screenshots of the menu, Trusted Senders window, Doctor report, or permission prompt if useful.

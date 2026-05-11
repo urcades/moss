@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(menuItem("Trusted Senders...", action: #selector(showTrustedSenders), key: "t"))
         menu.addItem(submenuItem("Diagnostics", items: [
             menuItem("Computer Use Probe", action: #selector(runComputerUseProbe), key: "p"),
+            menuItem("Copy Doctor Report", action: #selector(copyDoctorReport)),
             menuItem("Permission Broker Status", action: #selector(showPermissionBrokerStatus), key: "b"),
             menuItem("Permission Broker Dry-Run Scan", action: #selector(runPermissionBrokerDryRun), key: "y")
         ]))
@@ -74,6 +75,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func runComputerUseProbe() {
         Task { await showDoctor(probe: true) }
+    }
+
+    @objc private func copyDoctorReport() {
+        Task {
+            let doctor = Doctor(paths: paths)
+            let report = await doctor.run(includeComputerUseProbe: false)
+            let body = doctor.format(report)
+            await MainActor.run {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(body, forType: .string)
+                alert("Doctor report copied.", "Paste it into an issue or troubleshooting note.")
+            }
+        }
     }
 
     @objc private func showTrustedSenders() {

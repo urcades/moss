@@ -2,11 +2,13 @@
 
 ## v0.3.0
 
+- Source-build public release.
 - Added a generated moss app icon and bundle icon metadata.
 - Added Developer ID signing and notarized zip packaging script.
 - Added signing/notarization, troubleshooting, privacy, and contributing docs.
 - Added uninstall script, issue templates, and GitHub Actions CI.
 - Added Doctor/status diagnostics for install paths, versions, and signing.
+- Added grouped menubar submenus and Copy Doctor Report.
 
 ## v0.2.0
 

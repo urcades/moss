@@ -6,20 +6,19 @@ Messages.
 
 ![Messages Codex Bridge menu with Maintenance submenu open](docs/assets/menubar-maintenance.png)
 
-This repository supports source builds and maintainer-produced notarized zip
-releases. For source builds, clone it, build the menu-bar app locally, open the
-app, add one or more trusted senders, grant the macOS permissions the Doctor
-reports, and then send prompts from Messages.
+Source build is the supported public install path today. Maintainer tooling for
+signed/notarized zip packaging exists in the repo, but notarized binary releases
+are not the default public artifact yet.
 
 ## Current Distribution Mode
 
-The v0.3.0 release supports:
+The v0.3.0 release is source-build first:
 
 - Local build from this Swift package.
 - Local code signing identity when available.
 - Ad hoc signing fallback for development/build verification.
-- Signed and notarized zip distribution is supported for maintainers with a
-  Developer ID certificate.
+- Signed/notarized zip packaging exists for maintainers with a Developer ID
+  certificate, but source build remains the recommended public path.
 - The app bundle includes a generated moss icon.
 
 ## Prerequisites
@@ -110,7 +109,7 @@ The app intentionally stays small. The menu contains the operational controls:
 
 - `Run Doctor`
 - `Trusted Senders...`
-- `Diagnostics`: Computer Use probe and permission broker status/actions.
+- `Diagnostics`: Computer Use probe, Doctor report copy, and permission broker status/actions.
 - `Permissions`: System Settings shortcuts for required macOS privacy grants.
 - `Maintenance`: login helper registration and Codex session reset.
 - `Open Logs`
@@ -172,6 +171,8 @@ More help:
 - `docs/TROUBLESHOOTING.md`
 - `docs/PRIVACY_AND_SECURITY_FAQ.md`
 - `docs/SIGNING_AND_NOTARIZATION.md`
+- `docs/ARCHITECTURE.md`
+- `docs/ROADMAP.md`
 
 ## Control Commands
 

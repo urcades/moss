@@ -34,3 +34,8 @@ body:
         - label: Accessibility
         - label: Screen Recording
         - label: Computer Use Automation
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag in screenshots of Doctor, System Settings permissions, or visible macOS prompts if useful.

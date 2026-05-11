@@ -6,6 +6,9 @@ Start with the menu item `Run Doctor`, or run:
 swift run codexmsgctl-swift doctor
 ```
 
+To share diagnostics in an issue, use `Diagnostics > Copy Doctor Report` from
+the menu-bar app or paste the CLI Doctor output.
+
 ## Full Disk Access
 
 Symptom: Doctor reports the Messages database is not readable.

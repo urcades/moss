@@ -83,9 +83,9 @@ git tag -a v0.3.0 -m "Messages Codex Bridge v0.3.0"
 git push origin v0.3.0
 ```
 
-5. Create a GitHub release from `v0.3.0` with source-build instructions.
+5. Create a source-build GitHub release from `v0.3.0` without binary artifacts
+   unless a notarized zip has been produced separately.
 
 ## Deferred Work
 
 - Signed and notarized zipped app distribution.
-- DMG distribution.
