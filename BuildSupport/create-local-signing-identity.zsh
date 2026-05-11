@@ -5,7 +5,9 @@ IDENTITY_NAME="${IDENTITY_NAME:-Messages Codex Bridge Local Code Signing}"
 KEYCHAIN="${KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
 P12_PASSWORD="${P12_PASSWORD:-mcb-local-signing}"
 
-if security find-identity -v -p codesigning -s "$IDENTITY_NAME" "$KEYCHAIN" 2>/dev/null | grep -q 'valid identities found'; then
+if security find-identity -v -p codesigning -s "$IDENTITY_NAME" "$KEYCHAIN" 2>/dev/null \
+  | grep -E '^[[:space:]]*[0-9]+\)' \
+  | grep -Fq "\"$IDENTITY_NAME\""; then
   echo "$IDENTITY_NAME"
   exit 0
 fi

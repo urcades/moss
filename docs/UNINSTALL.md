@@ -3,6 +3,18 @@
 Messages Codex Bridge installs source-build artifacts under your home directory
 and uses user LaunchAgents. It does not install system-wide files.
 
+For Homebrew installs, stop the runtime LaunchAgents before uninstalling the
+formula:
+
+```sh
+mossctl stop --remove-plist
+brew uninstall moss
+```
+
+Homebrew removes only formula-managed files. Runtime config, state, logs, and
+the app-support runtime app copy are preserved unless you remove the runtime
+directories below.
+
 ## Scripted Uninstall
 
 Preview the uninstall:

@@ -3,6 +3,12 @@
 Start with the menu item `Run Doctor`, or run:
 
 ```sh
+mossctl doctor
+```
+
+From a local source checkout, you can also run:
+
+```sh
 swift run codexmsgctl-swift doctor
 ```
 
@@ -51,6 +57,12 @@ Fix:
 ```sh
 ./BuildSupport/install-local-app.zsh --safety standard
 swift run codexmsgctl-swift status
+```
+
+For Homebrew installs, use:
+
+```sh
+mossctl status
 ```
 
 For a deeper check:

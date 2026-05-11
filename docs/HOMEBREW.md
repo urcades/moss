@@ -36,15 +36,35 @@ install a notarized binary artifact.
 
 ## Working Directory
 
-Runtime config stores the Codex working directory. For a fresh install, run
-`mossctl configure` from the directory you want Codex to use, or set
-`MOSS_CODEX_CWD` when launching:
+Runtime config stores the Codex working directory. If runtime config does not
+exist yet, run `mossctl configure` from the directory you want Codex to use, or
+set `MOSS_CODEX_CWD` when launching the Homebrew wrapper:
 
 ```sh
 MOSS_CODEX_CWD=/path/to/workspace moss-open
 ```
 
 Existing runtime config is preserved unless you edit or recreate it.
+
+## Uninstall
+
+Stop the runtime LaunchAgents before removing the formula:
+
+```sh
+mossctl stop --remove-plist
+brew uninstall moss
+```
+
+Homebrew removes the formula-managed app, `mossctl`, and `moss-open`. Runtime
+config, state, logs, and the app-support runtime app copy are preserved at:
+
+```text
+~/Library/Application Support/MessagesLLMBridge/
+~/Library/Logs/MessagesLLMBridge/
+```
+
+Remove those directories manually only if you want to delete trusted senders,
+state, permission-broker events, and logs.
 
 ## Maintainer Update Checklist
 

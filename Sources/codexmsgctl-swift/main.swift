@@ -17,7 +17,7 @@ struct CodexMsgCtlSwift {
         Usage:
           codexmsgctl-swift install [--probe-computer-use]
           codexmsgctl-swift start
-          codexmsgctl-swift stop
+          codexmsgctl-swift stop [--remove-plist]
           codexmsgctl-swift status
           codexmsgctl-swift configure --safety standard|permissive|preserve
           codexmsgctl-swift configure --preserve-safety

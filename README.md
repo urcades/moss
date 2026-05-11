@@ -12,9 +12,11 @@ repo, but notarized binary releases are not the default public artifact yet.
 
 ## Current Distribution Mode
 
-The v0.3.0 release is source-build first:
+The current public release line is source-build first:
 
-- Homebrew tap: `brew tap urcades/moss && brew install moss`.
+- Homebrew tap: `brew tap urcades/moss && brew install moss`. The tap builds
+  from tagged source releases; these tap docs will be included in the next tag
+  after `v0.3.0`.
 - Local build from this Swift package.
 - Local code signing identity when available.
 - Ad hoc signing fallback for development/build verification.
@@ -59,9 +61,9 @@ mossctl doctor
 `mossctl` is the bridge control CLI for status, Doctor, safety configuration,
 and maintenance commands.
 
-If you want fresh runtime config to default Codex sessions to a specific working
-directory, run `mossctl configure` from that directory before `moss-open`, or
-launch with:
+If runtime config does not exist yet and you want Codex sessions to default to a
+specific working directory, run `mossctl configure` from that directory before
+`moss-open`, or launch the Homebrew wrapper with:
 
 ```sh
 MOSS_CODEX_CWD=/path/to/workspace moss-open
@@ -79,6 +81,8 @@ cd moss
 
 The installer builds the app, asks for a runtime safety profile, copies the app
 to `~/Applications/MessagesCodexBridge.app`, and opens that installed copy.
+When the app starts, it also copies the running bundle to a stable runtime app
+copy under Application Support for the helper and permission broker LaunchAgents.
 
 Safety profiles:
 
@@ -160,14 +164,18 @@ The Swift bridge preserves the existing runtime locations:
 Important runtime files:
 
 - `config.json`: trusted senders, Codex paths, bridge options.
-- `state.json`: active session/job state.
-- `messages-bridge-swift.log`: helper logs.
+- `state/state.json`: active session/job state.
+- `state/permission-broker/`: permission broker status and event log.
+- `Applications/MessagesCodexBridge.app`: runtime-managed app copy used by LaunchAgents.
+- `messages-bridge-swift.log`: helper logs in the logs directory.
 
 ## Security And Privacy
 
 This app runs locally on your Mac. After you grant permissions, it can read the
 local Messages database, send replies through Messages, and invoke Codex on
-prompts sent by trusted senders.
+prompts sent by trusted senders. The bridge starts Codex turns with no Codex
+approval prompts and danger-full-access sandboxing, so trusted senders should be
+treated as people allowed to trigger broad local Codex automation on your Mac.
 
 The standard safety profile keeps outgoing attachments restricted and leaves
 permission broker auto-clicking off. The permissive profile is available for
@@ -181,8 +189,13 @@ current limitations.
 For Homebrew installs:
 
 ```sh
+mossctl stop --remove-plist
 brew uninstall moss
 ```
+
+Homebrew removes the formula-managed app and `mossctl`. Runtime config, state,
+logs, and the app-support runtime copy are preserved under the runtime paths
+above unless you remove them manually.
 
 For local source builds, run `./BuildSupport/uninstall-local-app.zsh --dry-run`
 to preview the teardown path. See `docs/UNINSTALL.md` for full runtime cleanup
@@ -221,8 +234,15 @@ Send these exact messages from a trusted sender:
 - `/codex status`: active Codex thread id/link, active job state, progress, and capability status.
 - `/codex open`: open the active Codex thread in Codex.app.
 - `/codex history`: summarize the last loaded turns from the active Codex thread.
+- `/cancel`: stop the active Codex job.
+- `/reset` or `/new`: start a fresh Codex session for the next prompt.
+- `/permissions status`: show permission broker status.
+- `/permissions events`: show recent permission broker events.
+- `/permissions auto on` or `/permissions auto off`: enable or disable broker auto-clicking.
+- `/help`: list local bridge commands.
 
-All other text from a trusted sender is treated as a prompt for Codex.
+Other text from a trusted sender is treated as a prompt for Codex. Unsupported
+local slash commands receive a local error reply.
 
 ## Development And Validation
 

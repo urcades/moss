@@ -32,6 +32,10 @@ It starts or resumes Codex threads, sends turns, names new threads from message
 text, reads thread history for `/codex history`, and reports app-server
 capabilities through Doctor and `/status`.
 
+Bridge-started Codex turns use approval prompts disabled and broad local sandbox
+access. The trusted sender allowlist is therefore the main remote-trigger trust
+boundary.
+
 ## Runtime State
 
 Runtime config and state live outside the repository:

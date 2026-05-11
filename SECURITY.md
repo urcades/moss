@@ -18,6 +18,10 @@ Messages database after Full Disk Access is granted, send replies through
 Messages after Automation is granted, and invoke Codex for prompts received
 from trusted senders.
 
-The permission broker is disabled in the standard safety profile. In permissive
-mode it can auto-click trusted local macOS permission prompts. Only enable
-permissive mode on machines where that matches your personal trust model.
+Codex turns are started with Codex approval prompts disabled and broad local
+sandbox access. Treat the trusted sender allowlist as the main remote trigger
+boundary: a trusted sender can cause local Codex automation to run on your Mac.
+
+Permission broker auto-clicking is disabled in the standard safety profile. In
+permissive mode it can auto-click trusted local macOS permission prompts. Only
+enable permissive mode on machines where that matches your personal trust model.
