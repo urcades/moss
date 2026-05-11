@@ -4,7 +4,7 @@ Manual validation for the v0.1.0 source-build release candidate.
 
 ## Automated Checks
 
-Run from `messages-codex-bridge-mac`:
+Run from the repository root:
 
 ```sh
 swift test

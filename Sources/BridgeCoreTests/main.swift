@@ -488,7 +488,7 @@ private func testPaths() -> RuntimePaths {
     let logs = root.appendingPathComponent("logs")
     let launchAgents = root.appendingPathComponent("launch-agents")
     return RuntimePaths.current(
-        projectRoot: root.appendingPathComponent("messages-codex-bridge-mac"),
+        projectRoot: root,
         environment: [
             "MESSAGES_LLM_BRIDGE_HOME": appSupport.path,
             "MESSAGES_LLM_BRIDGE_LOG_DIR": logs.path,

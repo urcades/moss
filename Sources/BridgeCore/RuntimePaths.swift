@@ -34,7 +34,7 @@ public struct RuntimePaths: Equatable, Sendable {
         return RuntimePaths(
             homeDir: home,
             projectRoot: root,
-            defaultCodexCwd: root.deletingLastPathComponent(),
+            defaultCodexCwd: root,
             appSupportDir: appSupport,
             stateDir: state,
             tmpDir: appSupport.appendingPathComponent("tmp"),

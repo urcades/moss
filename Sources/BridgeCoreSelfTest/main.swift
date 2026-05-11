@@ -50,7 +50,7 @@ struct BridgeCoreSelfTest {
         try expect(classifyAttachment(mimeType: nil, uti: "com.adobe.pdf", absolutePath: nil) == "pdf", "PDF UTI classification")
         try expect(classifyAttachment(mimeType: "text/plain", uti: nil, absolutePath: "/tmp/a.txt") == "unsupported", "unsupported attachment classification")
 
-        let paths = RuntimePaths.current(projectRoot: URL(fileURLWithPath: "/tmp/messages-codex-bridge-mac"))
+        let paths = RuntimePaths.current(projectRoot: URL(fileURLWithPath: "/tmp/MessagesCodexBridgeMac"))
         var config = defaultBridgeConfig(paths: paths)
         try expect(config.allowedSender.isEmpty, "fresh default has no personal allowed sender")
         try expect(config.effectiveTrustedSenders.isEmpty, "fresh default has no trusted senders")
