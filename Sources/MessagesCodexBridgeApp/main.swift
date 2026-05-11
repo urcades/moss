@@ -27,24 +27,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Messages Codex Bridge \(appVersion)", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Run Doctor", action: #selector(runDoctor), keyEquivalent: "d"))
-        menu.addItem(NSMenuItem(title: "Computer Use Probe", action: #selector(runComputerUseProbe), keyEquivalent: "p"))
-        menu.addItem(NSMenuItem(title: "Trusted Senders...", action: #selector(showTrustedSenders), keyEquivalent: "t"))
-        menu.addItem(NSMenuItem(title: "Permission Broker Status", action: #selector(showPermissionBrokerStatus), keyEquivalent: "b"))
-        menu.addItem(NSMenuItem(title: "Permission Broker Dry-Run Scan", action: #selector(runPermissionBrokerDryRun), keyEquivalent: "y"))
-        menu.addItem(NSMenuItem(title: "Open Full Disk Access Settings", action: #selector(openFullDiskAccessSettings), keyEquivalent: "f"))
-        menu.addItem(NSMenuItem(title: "Open Accessibility Settings", action: #selector(openAccessibilitySettings), keyEquivalent: "a"))
-        menu.addItem(NSMenuItem(title: "Open Screen Recording Settings", action: #selector(openScreenRecordingSettings), keyEquivalent: "c"))
-        menu.addItem(NSMenuItem(title: "Open Automation Settings", action: #selector(openAutomationSettings), keyEquivalent: "m"))
+        menu.addItem(menuItem("Run Doctor", action: #selector(runDoctor), key: "d"))
+        menu.addItem(menuItem("Trusted Senders...", action: #selector(showTrustedSenders), key: "t"))
+        menu.addItem(submenuItem("Diagnostics", items: [
+            menuItem("Computer Use Probe", action: #selector(runComputerUseProbe), key: "p"),
+            menuItem("Permission Broker Status", action: #selector(showPermissionBrokerStatus), key: "b"),
+            menuItem("Permission Broker Dry-Run Scan", action: #selector(runPermissionBrokerDryRun), key: "y")
+        ]))
+        menu.addItem(submenuItem("Permissions", items: [
+            menuItem("Open Full Disk Access Settings", action: #selector(openFullDiskAccessSettings), key: "f"),
+            menuItem("Open Accessibility Settings", action: #selector(openAccessibilitySettings), key: "a"),
+            menuItem("Open Screen Recording Settings", action: #selector(openScreenRecordingSettings), key: "c"),
+            menuItem("Open Automation Settings", action: #selector(openAutomationSettings), key: "m")
+        ]))
+        menu.addItem(submenuItem("Maintenance", items: [
+            menuItem("Register Login Helper", action: #selector(registerHelper), key: "r"),
+            menuItem("Unregister Login Helper", action: #selector(unregisterHelper), key: "u"),
+            menuItem("Reset Codex Session", action: #selector(resetSession), key: "n")
+        ]))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Register Login Helper", action: #selector(registerHelper), keyEquivalent: "r"))
-        menu.addItem(NSMenuItem(title: "Unregister Login Helper", action: #selector(unregisterHelper), keyEquivalent: "u"))
-        menu.addItem(NSMenuItem(title: "Reset Codex Session", action: #selector(resetSession), keyEquivalent: "n"))
-        menu.addItem(NSMenuItem(title: "Open Logs", action: #selector(openLogs), keyEquivalent: "l"))
+        menu.addItem(menuItem("Open Logs", action: #selector(openLogs), key: "l"))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
-        for item in menu.items { item.target = self }
+        menu.addItem(menuItem("Quit", action: #selector(quit), key: "q"))
         statusItem.menu = menu
+    }
+
+    private func menuItem(_ title: String, action: Selector, key: String = "") -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.target = self
+        return item
+    }
+
+    private func submenuItem(_ title: String, items: [NSMenuItem]) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: title)
+        for child in items {
+            submenu.addItem(child)
+        }
+        item.submenu = submenu
+        return item
     }
 
     @objc private func runDoctor() {

@@ -4,6 +4,8 @@ Messages Codex Bridge is a native macOS menu-bar app that lets trusted Apple
 Messages send prompts to Codex on your Mac and receive replies back in
 Messages.
 
+![Messages Codex Bridge menu with Maintenance submenu open](docs/assets/menubar-maintenance.png)
+
 This repository supports source builds and maintainer-produced notarized zip
 releases. For source builds, clone it, build the menu-bar app locally, open the
 app, add one or more trusted senders, grant the macOS permissions the Doctor
@@ -107,13 +109,10 @@ but it ignores inbound Messages until you add at least one trusted sender.
 The app intentionally stays small. The menu contains the operational controls:
 
 - `Run Doctor`
-- `Computer Use Probe`
 - `Trusted Senders...`
-- `Permission Broker Status`
-- `Permission Broker Dry-Run Scan`
-- Permission settings shortcuts
-- Login helper controls
-- `Reset Codex Session`
+- `Diagnostics`: Computer Use probe and permission broker status/actions.
+- `Permissions`: System Settings shortcuts for required macOS privacy grants.
+- `Maintenance`: login helper registration and Codex session reset.
 - `Open Logs`
 - `Quit`
 
