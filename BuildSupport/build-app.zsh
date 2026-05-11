@@ -12,7 +12,7 @@ HELPER="$APP/Contents/Library/LoginItems/MessagesCodexBridgeHelper.app"
 BROKER="$APP/Contents/Library/LoginItems/MessagesCodexPermissionBroker.app"
 
 if [[ -z "$SIGN_IDENTITY" ]]; then
-  if security find-identity -v -p codesigning -s "$LOCAL_SIGNING_IDENTITY" 2>/dev/null | grep -Fq "\"$LOCAL_SIGNING_IDENTITY\""; then
+  if security find-identity -v -p codesigning -s "$LOCAL_SIGNING_IDENTITY" 2>/dev/null | grep -E '^[[:space:]]*[0-9]+\)' | grep -Fq "\"$LOCAL_SIGNING_IDENTITY\""; then
     SIGN_IDENTITY="$LOCAL_SIGNING_IDENTITY"
   else
     SIGN_IDENTITY="-"
