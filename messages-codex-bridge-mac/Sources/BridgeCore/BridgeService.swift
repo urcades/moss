@@ -5,7 +5,7 @@ public final class BridgeService: @unchecked Sendable {
     private let stores: RuntimeStores
     private let makeSource: (BridgeConfig) -> MessageSource
     private let makeReplySink: (BridgeConfig) -> ReplySink
-    private let makeCodex: (BridgeConfig) -> CodexExecAdapter
+    private let makeCodex: (BridgeConfig) -> any CodexBackend
     private let now: () -> Date
     private var state: BridgeState
     private var stopped = false
@@ -18,7 +18,7 @@ public final class BridgeService: @unchecked Sendable {
         stores: RuntimeStores? = nil,
         makeSource: @escaping (BridgeConfig) -> MessageSource,
         makeReplySink: @escaping (BridgeConfig) -> ReplySink,
-        makeCodex: @escaping (BridgeConfig) -> CodexExecAdapter,
+        makeCodex: @escaping (BridgeConfig) -> any CodexBackend,
         now: @escaping () -> Date = Date.init
     ) {
         self.paths = paths
@@ -33,18 +33,19 @@ public final class BridgeService: @unchecked Sendable {
     public convenience init(paths: RuntimePaths = .current()) {
         self.init(
             paths: paths,
-            makeSource: { SQLiteMessageSource(dbPath: $0.messagesDbPath, allowedSender: $0.allowedSender) },
+            makeSource: { SQLiteMessageSource(dbPath: $0.messagesDbPath, trustedSenders: $0.effectiveTrustedSenders) },
             makeReplySink: { AppleMessagesReplySink(osascriptCommand: $0.osascriptCommand, chunkSize: $0.chunkSize, messagesDbPath: $0.messagesDbPath) },
-            makeCodex: { CodexExecAdapter(config: $0, paths: paths) }
+            makeCodex: { CodexAppServerBackend(config: $0, paths: paths) }
         )
     }
 
     public func initialize() async throws {
         try ensureRuntimeDirectories(paths)
-        _ = try stores.config.ensureExists()
+        var config = try stores.config.ensureExists()
+        migrateTrustedSenders(&config)
+        try stores.config.save(config)
         state = try stores.state.load()
         recoverActiveJobOnStartup()
-        let config = try stores.config.load()
         try validateConfig(config)
         var cursorState = state
         try await makeSource(config).initializeCursor(state: &cursorState)
@@ -209,7 +210,7 @@ public final class BridgeService: @unchecked Sendable {
     private func codexStatusText(capabilitySnapshot: CodexCapabilitySnapshot? = nil) -> String {
         var lines = [
             "Codex bridge status:",
-            "Active backend: codex exec",
+            "Active backend: codex app-server",
             "Codex thread id: \(state.codexSession.sessionId ?? "none")"
         ]
         if let threadId = state.codexSession.sessionId, !threadId.isEmpty {
@@ -224,7 +225,8 @@ public final class BridgeService: @unchecked Sendable {
             "Active job status: \(state.activeJob?.status ?? "none")",
             "Latest Codex progress: \(state.activeJob?.lastObservedSummary ?? "none")",
             "Latest Codex progress at: \(state.activeJob?.lastProgressAt ?? "none")",
-            "Active job turn/thread: \(state.activeJob?.codexSessionId ?? state.codexSession.sessionId ?? "none")",
+            "Active job thread: \(state.activeJob?.codexSessionId ?? state.codexSession.sessionId ?? "none")",
+            "Active job turn: \(state.activeJob?.codexTurnId ?? "none")",
             "Active approval: \(activeApprovalStatusText())"
         ]
         if let capabilitySnapshot {
@@ -359,6 +361,7 @@ public final class BridgeService: @unchecked Sendable {
             lastEventAt: nil,
             codexPid: nil,
             codexSessionId: nil,
+            codexTurnId: nil,
             outputPath: nil,
             sessionLogPath: nil,
             status: "starting",
@@ -564,6 +567,13 @@ public final class BridgeService: @unchecked Sendable {
             state.codexSession.sessionId = sessionId
             try? stores.state.save(state)
             return
+        case .turnStarted(let turnId):
+            updateActiveJob(jobId: jobId) { job in
+                job.codexTurnId = turnId
+                job.lastEventAt = DateCodec.iso(now())
+                job.lastObservedSummary = "Codex turn started."
+            }
+            return
         case .progress(let text):
             message = text
             immediate = false
@@ -600,16 +610,11 @@ public final class BridgeService: @unchecked Sendable {
     }
 
     private func shouldSendProgress(jobId: String, config: BridgeConfig, immediate: Bool) -> Bool {
-        if immediate { return true }
-        guard let job = state.activeJob, job.jobId == jobId else { return false }
-        guard let lastSent = DateCodec.parse(job.lastUserUpdateAt) else { return true }
-        return now().timeIntervalSince(lastSent) * 1000 >= Double(config.effectiveLongTaskProgressIntervalMs)
+        immediate
     }
 
     private func shouldSendMilestone(jobId: String, config: BridgeConfig) -> Bool {
-        guard let job = state.activeJob, job.jobId == jobId else { return false }
-        guard let lastSent = DateCodec.parse(job.lastUserUpdateAt) else { return true }
-        return now().timeIntervalSince(lastSent) * 1000 >= Double(config.effectiveLongTaskMilestoneMinIntervalMs)
+        false
     }
 
     private func updateActiveJob(jobId: String, _ update: (inout ActiveJob) -> Void) {

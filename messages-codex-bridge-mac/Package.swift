@@ -43,6 +43,10 @@ let package = Package(
         .executableTarget(
             name: "BridgeCoreTests",
             dependencies: ["BridgeCore"]
+        ),
+        .testTarget(
+            name: "BridgeCoreUnitTests",
+            dependencies: ["BridgeCore"]
         )
     ]
 )

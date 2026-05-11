@@ -10,7 +10,11 @@ public struct CodexExecFailure: Error, CustomStringConvertible {
     public var description: String { message }
 }
 
-public final class CodexExecAdapter {
+public protocol CodexBackend: AnyObject, Sendable {
+    func invoke(_ request: PromptRequest, sessionId: String?, onEvent: (@Sendable (CodexStreamEvent) -> Void)?) async throws -> CodexResponse
+}
+
+public final class CodexExecAdapter: CodexBackend {
     private let config: BridgeConfig
     private let paths: RuntimePaths
     private let runner: ProcessRunner
@@ -77,6 +81,7 @@ public final class CodexExecAdapter {
 public enum CodexStreamEvent: Equatable, Sendable {
     case processStarted(Int32)
     case sessionStarted(String)
+    case turnStarted(String)
     case progress(String)
     case milestone(String)
     case blocker(String)

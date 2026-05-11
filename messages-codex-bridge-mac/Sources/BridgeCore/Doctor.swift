@@ -37,6 +37,7 @@ public final class Doctor: @unchecked Sendable {
         var checks: [DoctorCheck] = []
         checks.append(checkCodex(config))
         checks.append(contentsOf: await checkCodexCapabilities(config))
+        checks.append(checkTrustedSenders(config))
         checks.append(checkMessagesDb(config))
         checks.append(await checkMessagesAutomation(config))
         checks.append(checkTCC("Full Disk Access", services: ["kTCCServiceSystemPolicyAllFiles"], clients: bridgeClients(), missingDetail: "Grant Full Disk Access to Messages Codex Bridge so it can read Messages DB."))
@@ -77,6 +78,14 @@ public final class Doctor: @unchecked Sendable {
         ]
         checks += capabilities.warnings.map { DoctorCheck(name: "Codex capability warning", ok: true, detail: $0) }
         return checks
+    }
+
+    private func checkTrustedSenders(_ config: BridgeConfig) -> DoctorCheck {
+        let senders = config.effectiveTrustedSenders
+        guard !senders.isEmpty else {
+            return DoctorCheck(name: "Trusted senders configured", ok: false, detail: "No trusted senders configured.")
+        }
+        return DoctorCheck(name: "Trusted senders configured", ok: true, detail: "\(senders.count) sender(s)")
     }
 
     private func checkMessagesDb(_ config: BridgeConfig) -> DoctorCheck {
@@ -169,7 +178,7 @@ public final class Doctor: @unchecked Sendable {
         let prompt = "Use Computer Use to inspect Safari. First call list_apps, then get_app_state for Safari. Do not navigate or click. Reply only with SUCCESS and the Safari window title, or BLOCKED and the exact blocker text."
         let request = PromptRequest(promptText: prompt, attachments: [])
         do {
-            let response = try await CodexExecAdapter(config: config, paths: paths).invoke(request)
+            let response = try await CodexAppServerBackend(config: config, paths: paths).invoke(request, sessionId: nil, onEvent: nil)
             let ok = response.text.localizedCaseInsensitiveContains("SUCCESS")
             return DoctorCheck(name: "Computer Use probe", ok: ok, detail: response.text)
         } catch let error as CodexExecFailure {

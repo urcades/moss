@@ -86,6 +86,7 @@ public protocol CodexAppServerConnection: AnyObject, Sendable {
     func send(_ message: [String: Any]) throws
     func readLine(deadline: Date) throws -> String?
     func close()
+    var processIdentifier: Int32? { get }
     var diagnostics: String { get }
 }
 
@@ -121,14 +122,135 @@ public final class CodexAppServerClient: @unchecked Sendable {
     }
 }
 
+public final class CodexAppServerBackend: CodexBackend, @unchecked Sendable {
+    private let config: BridgeConfig
+    private let paths: RuntimePaths
+    private let makeConnection: @Sendable () throws -> CodexAppServerConnection
+
+    public convenience init(config: BridgeConfig, paths: RuntimePaths) {
+        self.init(config: config, paths: paths) {
+            ProcessCodexAppServerConnection(command: config.codex.command)
+        }
+    }
+
+    public init(config: BridgeConfig, paths: RuntimePaths, makeConnection: @escaping @Sendable () throws -> CodexAppServerConnection) {
+        self.config = config
+        self.paths = paths
+        self.makeConnection = makeConnection
+    }
+
+    public func invoke(_ request: PromptRequest, sessionId: String?, onEvent: (@Sendable (CodexStreamEvent) -> Void)?) async throws -> CodexResponse {
+        let config = config
+        let makeConnection = makeConnection
+        return try await Task.detached {
+            let collector = CodexAppServerTurnCollector(onEvent: onEvent)
+            let connection = try makeConnection()
+            let rpc = CodexAppServerRPC(connection: connection, timeoutMs: config.timeoutMs, onNotification: { message in
+                collector.handleNotification(message)
+            })
+            defer { rpc.close() }
+
+            do {
+                try rpc.initialize()
+                if let pid = connection.processIdentifier {
+                    onEvent?(.processStarted(pid))
+                }
+
+                let threadId: String
+                if let sessionId, !sessionId.isEmpty {
+                    let resume = try rpc.request(method: "thread/resume", params: appServerThreadResumeParams(config: config, threadId: sessionId))
+                    threadId = appServerThreadId(from: resume, fallback: sessionId)
+                } else {
+                    let start = try rpc.request(method: "thread/start", params: appServerThreadStartParams(config: config))
+                    threadId = appServerThreadId(from: start, fallback: nil)
+                }
+                guard !threadId.isEmpty else {
+                    throw CodexExecFailure(
+                        message: "Codex app-server did not return a thread id.",
+                        stdout: "",
+                        stderr: connection.diagnostics,
+                        timedOut: false,
+                        blockedText: nil
+                    )
+                }
+                collector.setThreadId(threadId)
+                onEvent?(.sessionStarted(threadId))
+
+                let turn = try rpc.request(method: "turn/start", params: appServerTurnStartParams(config: config, request: request, threadId: threadId))
+                if let turnId = appServerTurnId(from: turn) {
+                    collector.setTurnId(turnId)
+                    onEvent?(.turnStarted(turnId))
+                }
+
+                let completed = try rpc.readNotifications(until: { message in
+                    collector.handleNotification(message)
+                    return collector.isFinished
+                })
+                if !completed {
+                    throw CodexExecFailure(
+                        message: "Timed out waiting for Codex app-server turn to finish.",
+                        stdout: "",
+                        stderr: connection.diagnostics,
+                        timedOut: true,
+                        blockedText: permissionBlock(in: connection.diagnostics)
+                    )
+                }
+                if let failure = collector.failure(diagnostics: connection.diagnostics) {
+                    throw failure
+                }
+                guard let finalText = collector.finalAnswer else {
+                    throw CodexExecFailure(
+                        message: "Codex app-server completed without a final reply.",
+                        stdout: "",
+                        stderr: connection.diagnostics,
+                        timedOut: false,
+                        blockedText: permissionBlock(in: connection.diagnostics)
+                    )
+                }
+                return CodexResponse(
+                    text: finalText,
+                    sessionId: threadId,
+                    stdout: "",
+                    stderr: connection.diagnostics,
+                    args: ["app-server", "--listen", "stdio://"],
+                    outputPath: collector.outputPath ?? ""
+                )
+            } catch let error as CodexExecFailure {
+                throw error
+            } catch let error as CodexAppServerError {
+                throw CodexExecFailure(
+                    message: "Codex app-server error: \(error.description)",
+                    stdout: "",
+                    stderr: connection.diagnostics,
+                    timedOut: {
+                        if case .timedOut = error { return true }
+                        return false
+                    }(),
+                    blockedText: permissionBlock(in: error.description + "\n" + connection.diagnostics)
+                )
+            } catch {
+                throw CodexExecFailure(
+                    message: "Codex app-server error: \(error)",
+                    stdout: "",
+                    stderr: connection.diagnostics,
+                    timedOut: String(describing: error).localizedCaseInsensitiveContains("timed out"),
+                    blockedText: permissionBlock(in: String(describing: error) + "\n" + connection.diagnostics)
+                )
+            }
+        }.value
+    }
+}
+
 private final class CodexAppServerRPC {
     private let connection: CodexAppServerConnection
     private let timeoutMs: Int
+    private let onNotification: (([String: Any]) -> Void)?
     private var nextId = 1
 
-    init(connection: CodexAppServerConnection, timeoutMs: Int) {
+    init(connection: CodexAppServerConnection, timeoutMs: Int, onNotification: (([String: Any]) -> Void)? = nil) {
         self.connection = connection
         self.timeoutMs = timeoutMs
+        self.onNotification = onNotification
     }
 
     func initialize() throws {
@@ -167,11 +289,7 @@ private final class CodexAppServerRPC {
         }
         defer { finished.set(true) }
         while Date() < deadline {
-            guard let line = try connection.readLine(deadline: deadline) else { break }
-            guard let data = line.data(using: .utf8) else { continue }
-            guard let message = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-                continue
-            }
+            guard let message = try readMessage(deadline: deadline) else { break }
             if let responseId = jsonRpcId(message["id"]), responseId == id {
                 if let error = message["error"] as? [String: Any] {
                     throw CodexAppServerError.rpcError(searchableText(error["message"] ?? error))
@@ -181,10 +299,256 @@ private final class CodexAppServerRPC {
                 }
                 return result
             }
+            onNotification?(message)
         }
         let detail = connection.diagnostics.trimmingCharacters(in: .whitespacesAndNewlines)
         throw CodexAppServerError.timedOut(detail.isEmpty ? "Timed out waiting for Codex app-server response \(id)." : "Timed out waiting for Codex app-server response \(id): \(detail)")
     }
+
+    func readNotifications(until predicate: ([String: Any]) -> Bool) throws -> Bool {
+        let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000)
+        let finished = LockedBool()
+        DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(timeoutMs)) { [connection] in
+            if !finished.get() {
+                connection.close()
+            }
+        }
+        defer { finished.set(true) }
+        while Date() < deadline {
+            guard let message = try readMessage(deadline: deadline) else { break }
+            if predicate(message) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func readMessage(deadline: Date) throws -> [String: Any]? {
+        while Date() < deadline {
+            guard let line = try connection.readLine(deadline: deadline) else {
+                return nil
+            }
+            guard let data = line.data(using: .utf8),
+                  let message = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                continue
+            }
+            return message
+        }
+        return nil
+    }
+}
+
+private final class CodexAppServerTurnCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private let onEvent: (@Sendable (CodexStreamEvent) -> Void)?
+    private var threadId: String?
+    private var turnId: String?
+    private var finished = false
+    private var errorText: String?
+    private var finalText: String?
+    private var fallbackAgentText: String?
+    private var agentMessageBuffers: [String: String] = [:]
+    private var sessionPath: String?
+
+    init(onEvent: (@Sendable (CodexStreamEvent) -> Void)?) {
+        self.onEvent = onEvent
+    }
+
+    var isFinished: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return finished
+    }
+
+    var finalAnswer: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return (finalText ?? fallbackAgentText).map(cleanPlainText).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    var outputPath: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return sessionPath
+    }
+
+    func setThreadId(_ id: String) {
+        lock.lock()
+        threadId = id
+        lock.unlock()
+    }
+
+    func setTurnId(_ id: String) {
+        lock.lock()
+        turnId = id
+        lock.unlock()
+    }
+
+    func failure(diagnostics: String) -> CodexExecFailure? {
+        lock.lock()
+        let text = errorText
+        lock.unlock()
+        guard let text, !text.isEmpty else { return nil }
+        return CodexExecFailure(
+            message: text,
+            stdout: "",
+            stderr: diagnostics,
+            timedOut: false,
+            blockedText: permissionBlock(in: text + "\n" + diagnostics)
+        )
+    }
+
+    func handleNotification(_ message: [String: Any]) {
+        guard let method = message["method"] as? String else { return }
+        let params = message["params"] as? [String: Any] ?? [:]
+        var events: [CodexStreamEvent] = []
+
+        lock.lock()
+        switch method {
+        case "thread/started":
+            if let thread = params["thread"] as? [String: Any] {
+                if let id = thread["id"] as? String {
+                    threadId = id
+                    events.append(.sessionStarted(id))
+                }
+                if let path = thread["path"] as? String {
+                    sessionPath = path
+                }
+            }
+        case "turn/started":
+            if let id = (params["turn"] as? [String: Any])?["id"] as? String ?? params["turnId"] as? String {
+                turnId = id
+                events.append(.turnStarted(id))
+            }
+        case "item/agentMessage/delta":
+            if let itemId = params["itemId"] as? String, let delta = params["delta"] as? String {
+                agentMessageBuffers[itemId, default: ""] += delta
+            }
+        case "item/completed":
+            if let item = params["item"] as? [String: Any] {
+                if appServerItemIndicatesFailure(item), let block = permissionBlock(in: searchableText(item)) {
+                    events.append(.blocker(block))
+                }
+                if item["type"] as? String == "agentMessage" {
+                    let phase = item["phase"] as? String ?? ""
+                    let text = textValue(in: item, keys: ["text", "message", "content"]) ?? ((item["id"] as? String).flatMap { agentMessageBuffers[$0] })
+                    if phase == "final_answer" || phase == "final" {
+                        finalText = text
+                    } else if let text, !cleanPlainText(text).isEmpty {
+                        fallbackAgentText = text
+                    }
+                }
+            }
+        case "error":
+            errorText = cleanPlainText(searchableText(params["error"] ?? params))
+        case "turn/completed":
+            if let turn = params["turn"] as? [String: Any],
+               let error = turn["error"], !(error is NSNull) {
+                errorText = cleanPlainText(searchableText(error))
+            }
+            finished = true
+        case "thread/status/changed":
+            if let status = params["status"] as? [String: Any],
+               status["type"] as? String == "systemError",
+               errorText == nil {
+                errorText = "Codex app-server reported a system error."
+            }
+        default:
+            break
+        }
+        if let summary = codexProgressSummary(from: message) {
+            events.append(.progress(summary))
+        }
+        lock.unlock()
+
+        for event in events {
+            onEvent?(event)
+        }
+    }
+}
+
+private func appServerItemIndicatesFailure(_ item: [String: Any]) -> Bool {
+    let status = (item["status"] as? String ?? "").lowercased()
+    if ["failed", "failure", "error"].contains(status) {
+        return true
+    }
+    if let error = item["error"], !(error is NSNull) {
+        return true
+    }
+    return false
+}
+
+private func appServerThreadStartParams(config: BridgeConfig) -> [String: Any] {
+    var params: [String: Any] = [
+        "cwd": config.codex.cwd,
+        "approvalPolicy": "never",
+        "sandbox": "danger-full-access",
+        "ephemeral": false,
+        "sessionStartSource": "clear",
+        "threadSource": "user"
+    ]
+    if let instructions = bridgeDeveloperInstructions(config: config) {
+        params["developerInstructions"] = instructions
+    }
+    return params
+}
+
+private func appServerThreadResumeParams(config: BridgeConfig, threadId: String) -> [String: Any] {
+    var params: [String: Any] = [
+        "threadId": threadId,
+        "cwd": config.codex.cwd,
+        "approvalPolicy": "never",
+        "sandbox": "danger-full-access"
+    ]
+    if let instructions = bridgeDeveloperInstructions(config: config) {
+        params["developerInstructions"] = instructions
+    }
+    return params
+}
+
+private func appServerTurnStartParams(config: BridgeConfig, request: PromptRequest, threadId: String) -> [String: Any] {
+    [
+        "threadId": threadId,
+        "input": appServerInputItems(from: request),
+        "cwd": config.codex.cwd,
+        "approvalPolicy": "never",
+        "sandboxPolicy": ["type": "dangerFullAccess"]
+    ]
+}
+
+private func appServerInputItems(from request: PromptRequest) -> [[String: Any]] {
+    var items: [[String: Any]] = [
+        [
+            "type": "text",
+            "text": request.promptText,
+            "text_elements": []
+        ]
+    ]
+    for attachment in request.attachments where attachment.kind == "image" && attachment.exists {
+        if let path = attachment.absolutePath {
+            items.append(["type": "localImage", "path": path])
+        }
+    }
+    return items
+}
+
+private func bridgeDeveloperInstructions(config: BridgeConfig) -> String? {
+    let text = [BridgeConstants.baseBridgeInstructions, config.codex.stylePrompt]
+        .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n\n")
+    return text.isEmpty ? nil : text
+}
+
+private func appServerThreadId(from result: [String: Any], fallback: String?) -> String {
+    if let id = (result["thread"] as? [String: Any])?["id"] as? String ?? result["id"] as? String ?? fallback {
+        return id
+    }
+    return ""
+}
+
+private func appServerTurnId(from result: [String: Any]) -> String? {
+    (result["turn"] as? [String: Any])?["id"] as? String ?? result["turnId"] as? String ?? result["id"] as? String
 }
 
 private final class ProcessCodexAppServerConnection: CodexAppServerConnection, @unchecked Sendable {
@@ -201,6 +565,10 @@ private final class ProcessCodexAppServerConnection: CodexAppServerConnection, @
 
     var diagnostics: String {
         diagnosticsBuffer.string()
+    }
+
+    var processIdentifier: Int32? {
+        process.isRunning ? process.processIdentifier : nil
     }
 
     func start() throws {

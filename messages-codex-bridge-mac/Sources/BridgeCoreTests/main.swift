@@ -21,7 +21,11 @@ struct BridgeCoreFocusedTests {
         try await testAppServerClientThreadReadSuccessAndCleanup()
         try await testAppServerClientRpcErrorAndCleanup()
         try await testAppServerClientInvalidResultAndTimeout()
+        try await testAppServerBackendStartsThreadAndReturnsFinalAnswer()
+        try await testAppServerBackendResumesThreadAndIgnoresMalformedNotifications()
+        try await testAppServerBackendErrorNotificationThrowsBridgeFailure()
         try testCodexProgressSummaryHandlesAppServerNotifications()
+        try await testProgressEventsUpdateStateWithoutSendingSms()
         try await testOrdinaryTextDuringActiveJobQueuesNextBatchWhileCodexStatusCutsThrough()
         print("BridgeCoreTests passed.")
     }
@@ -119,12 +123,129 @@ struct BridgeCoreFocusedTests {
         }
     }
 
+    private static func testAppServerBackendStartsThreadAndReturnsFinalAnswer() async throws {
+        let fake = FakeCodexAppServerConnection(lines: [
+            #"{"id":1,"result":{"ok":true}}"#,
+            #"{"id":2,"result":{"thread":{"id":"thread-new","path":"/tmp/thread.jsonl"}}}"#,
+            #"{"method":"thread/started","params":{"thread":{"id":"thread-new","path":"/tmp/thread.jsonl"}}}"#,
+            #"{"id":3,"result":{"turn":{"id":"turn-new"}}}"#,
+            #"{"method":"turn/started","params":{"threadId":"thread-new","turn":{"id":"turn-new"}}}"#,
+            #"{"method":"item/completed","params":{"threadId":"thread-new","turnId":"turn-new","item":{"type":"agentMessage","id":"item-note","status":"completed","text":"old note mentioning Apple event error -1743"}}}"#,
+            #"{"method":"item/completed","params":{"threadId":"thread-new","turnId":"turn-new","item":{"type":"agentMessage","id":"item-1","phase":"final_answer","text":"hello from app server"}}}"#,
+            #"{"method":"turn/completed","params":{"threadId":"thread-new","turn":{"id":"turn-new","status":"completed","error":null}}}"#
+        ])
+        var config = defaultBridgeConfig(paths: testPaths(), codexCommand: "/bin/echo")
+        config.timeoutMs = 1_000
+        let backend = CodexAppServerBackend(config: config, paths: testPaths()) { fake }
+        let eventCollector = CodexEventCollector()
+        let response = try await backend.invoke(PromptRequest(promptText: "hello", attachments: []), sessionId: nil) { event in
+            eventCollector.append(event)
+        }
+        let events = eventCollector.snapshot()
+        try expect(response.text == "hello from app server", "app-server backend final answer")
+        try expect(response.sessionId == "thread-new", "app-server backend returns thread id")
+        try expect(fake.sentMethods == ["initialize", "initialized", "thread/start", "turn/start"], "app-server start request sequence")
+        try expect(events.contains(.processStarted(4242)), "app-server process started event")
+        try expect(events.contains(.sessionStarted("thread-new")), "app-server session event")
+        try expect(events.contains(.turnStarted("turn-new")), "app-server turn event")
+        try expect(!events.contains { event in
+            if case .blocker = event { return true }
+            return false
+        }, "completed app-server items do not become permission blockers")
+        try expect(fake.closed, "app-server backend closes connection")
+    }
+
+    private static func testAppServerBackendResumesThreadAndIgnoresMalformedNotifications() async throws {
+        let fake = FakeCodexAppServerConnection(lines: [
+            #"{"id":1,"result":{"ok":true}}"#,
+            "not json",
+            #"{"id":2,"result":{"thread":{"id":"thread-existing"}}}"#,
+            #"{"id":3,"result":{"turn":{"id":"turn-resumed"}}}"#,
+            #"{"method":"unknown/event","params":{"ignored":true}}"#,
+            #"{"method":"item/agentMessage/delta","params":{"threadId":"thread-existing","turnId":"turn-resumed","itemId":"item-1","delta":"resumed "}}"#,
+            #"{"method":"item/agentMessage/delta","params":{"threadId":"thread-existing","turnId":"turn-resumed","itemId":"item-1","delta":"answer"}}"#,
+            #"{"method":"item/completed","params":{"threadId":"thread-existing","turnId":"turn-resumed","item":{"type":"agentMessage","id":"item-1","phase":"final_answer","text":"resumed answer"}}}"#,
+            #"{"method":"turn/completed","params":{"threadId":"thread-existing","turn":{"id":"turn-resumed","status":"completed","error":null}}}"#
+        ])
+        var config = defaultBridgeConfig(paths: testPaths(), codexCommand: "/bin/echo")
+        config.timeoutMs = 1_000
+        let backend = CodexAppServerBackend(config: config, paths: testPaths()) { fake }
+        let response = try await backend.invoke(PromptRequest(promptText: "resume", attachments: []), sessionId: "thread-existing", onEvent: nil)
+        try expect(response.text == "resumed answer", "app-server resume final answer")
+        try expect(response.sessionId == "thread-existing", "app-server resume keeps thread id")
+        try expect(fake.sentMethods == ["initialize", "initialized", "thread/resume", "turn/start"], "app-server resume request sequence")
+    }
+
+    private static func testAppServerBackendErrorNotificationThrowsBridgeFailure() async throws {
+        let fake = FakeCodexAppServerConnection(lines: [
+            #"{"id":1,"result":{"ok":true}}"#,
+            #"{"id":2,"result":{"thread":{"id":"thread-error"}}}"#,
+            #"{"id":3,"result":{"turn":{"id":"turn-error"}}}"#,
+            #"{"method":"error","params":{"threadId":"thread-error","turnId":"turn-error","error":{"message":"boom"}}}"#,
+            #"{"method":"turn/completed","params":{"threadId":"thread-error","turn":{"id":"turn-error","status":"completed","error":null}}}"#
+        ], diagnostics: "stderr details")
+        var config = defaultBridgeConfig(paths: testPaths(), codexCommand: "/bin/echo")
+        config.timeoutMs = 1_000
+        let backend = CodexAppServerBackend(config: config, paths: testPaths()) { fake }
+        do {
+            _ = try await backend.invoke(PromptRequest(promptText: "fail", attachments: []), sessionId: nil, onEvent: nil)
+            throw TestFailure(description: "Expected app-server backend failure")
+        } catch let error as CodexExecFailure {
+            try expect(error.message.contains("boom"), "app-server error notification text")
+            try expect(error.stderr == "stderr details", "app-server error diagnostics")
+        }
+    }
+
     private static func testCodexProgressSummaryHandlesAppServerNotifications() throws {
         try expect(codexProgressSummary(from: ["method": "turn/started", "params": ["turnId": "turn-1"]]) == "Codex turn started.", "turn started summary")
         try expect(codexProgressSummary(from: ["method": "item/started", "params": ["item": ["type": "mcp_tool_call", "tool": "computer-use"]]]) == "Started computer-use", "tool started summary")
         let parser = CodexStreamParser()
         let events = parser.consume(#"{"method":"item/completed","params":{"item":{"type":"command_execution","command":"swift test","status":"completed"}}}"# + "\n", stream: .stdout)
         try expect(events == [.progress("Completed swift test (completed)")], "parser emits app-server progress")
+    }
+
+    private static func testProgressEventsUpdateStateWithoutSendingSms() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        try stores.config.save(config)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 1, guid: "guid-1", text: "run a harmless probe", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in
+                FakeProgressCodexBackend(
+                    events: [
+                        .sessionStarted("thread-progress"),
+                        .turnStarted("turn-progress"),
+                        .progress("LEAKY INTERNAL PROGRESS"),
+                        .milestone("LEAKY INTERNAL MILESTONE")
+                    ],
+                    response: "final answer only"
+                )
+            },
+            now: { Date(timeIntervalSince1970: 1_777_777_777) }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        for _ in 0..<40 {
+            if await sink.repliesSnapshot().count >= 1 { break }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+
+        let replies = await sink.repliesSnapshot()
+        try expect(replies.map(\.text) == ["final answer only"], "progress and milestone events are state-only, not SMS replies")
+        let state = try stores.state.load()
+        try expect(state.codexSession.sessionId == "thread-progress", "progress test keeps app-server thread id")
+        try expect(state.activeJob == nil, "progress test clears completed active job")
     }
 
     private static func testOrdinaryTextDuringActiveJobQueuesNextBatchWhileCodexStatusCutsThrough() async throws {
@@ -188,7 +309,7 @@ struct BridgeCoreFocusedTests {
         try expect(replies.count == 1, "status command cuts through active job")
         let reply = try expectReply(replies.first)
         try expect(reply.text.contains("Codex bridge status:"), "status reply header")
-        try expect(reply.text.contains("Active backend: codex exec"), "status reply backend")
+        try expect(reply.text.contains("Active backend: codex app-server"), "status reply backend")
         try expect(reply.text.contains("Latest Codex progress: Running command."), "status reply progress")
     }
 
@@ -223,6 +344,7 @@ private final class FakeCodexAppServerConnection: CodexAppServerConnection, @unc
     }
 
     var diagnostics: String { diagnosticsText }
+    var processIdentifier: Int32? { 4242 }
 
     func start() throws {}
 
@@ -236,6 +358,47 @@ private final class FakeCodexAppServerConnection: CodexAppServerConnection, @unc
 
     func close() {
         closed = true
+    }
+}
+
+private final class CodexEventCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var events: [CodexStreamEvent] = []
+
+    func append(_ event: CodexStreamEvent) {
+        lock.lock()
+        events.append(event)
+        lock.unlock()
+    }
+
+    func snapshot() -> [CodexStreamEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        return events
+    }
+}
+
+private final class FakeProgressCodexBackend: CodexBackend {
+    let events: [CodexStreamEvent]
+    let response: String
+
+    init(events: [CodexStreamEvent], response: String) {
+        self.events = events
+        self.response = response
+    }
+
+    func invoke(_ request: PromptRequest, sessionId: String?, onEvent: (@Sendable (CodexStreamEvent) -> Void)?) async throws -> CodexResponse {
+        for event in events {
+            onEvent?(event)
+        }
+        return CodexResponse(
+            text: response,
+            sessionId: "thread-progress",
+            stdout: "",
+            stderr: "",
+            args: [],
+            outputPath: ""
+        )
     }
 }
 

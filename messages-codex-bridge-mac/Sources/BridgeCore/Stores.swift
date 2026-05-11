@@ -19,6 +19,7 @@ public func ensureRuntimeDirectories(_ paths: RuntimePaths) throws {
 public func defaultBridgeConfig(paths: RuntimePaths, codexCommand: String? = nil) -> BridgeConfig {
     BridgeConfig(
         allowedSender: BridgeConstants.defaultAllowedSender,
+        trustedSenders: nil,
         pollIntervalMs: BridgeConstants.defaultPollIntervalMs,
         batchWindowMs: BridgeConstants.defaultBatchWindowMs,
         chunkSize: BridgeConstants.defaultChunkSize,
@@ -114,13 +115,18 @@ public func validateConfig(_ config: BridgeConfig) throws {
         throw StoreError.validation("Config field \(name) must be positive.")
     }
     if config.ackDelayMs < 0 { throw StoreError.validation("Config field ackDelayMs must be zero or positive.") }
-    if config.allowedSender.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw StoreError.validation("Config field allowedSender is required.") }
     if config.messagesDbPath.isEmpty { throw StoreError.validation("Config field messagesDbPath is required.") }
     if config.codex.command.isEmpty { throw StoreError.validation("Config.codex.command is required.") }
     if config.codex.cwd.isEmpty { throw StoreError.validation("Config.codex.cwd is required.") }
 }
 
 public extension BridgeConfig {
+    var effectiveTrustedSenders: [String] {
+        let trusted = normalizedTrustedSenderList(trustedSenders ?? [])
+        if !trusted.isEmpty { return trusted }
+        return normalizedTrustedSenderList([allowedSender])
+    }
+
     var effectiveLongTaskProgressIntervalMs: Int { longTaskProgressIntervalMs ?? BridgeConstants.defaultLongTaskProgressIntervalMs }
     var effectiveLongTaskMilestoneMinIntervalMs: Int { longTaskMilestoneMinIntervalMs ?? BridgeConstants.defaultLongTaskMilestoneMinIntervalMs }
     var effectiveActiveJobAckEnabled: Bool { activeJobAckEnabled ?? true }
@@ -131,6 +137,25 @@ public extension BridgeConfig {
         outgoingAttachmentRoots ?? ["/"]
     }
     var effectiveOutgoingAttachmentExtensions: [String] { outgoingAttachmentExtensions ?? ["*"] }
+
+    mutating func syncTrustedSenders(_ senders: [String]) {
+        let normalized = normalizedTrustedSenderList(senders)
+        trustedSenders = normalized
+        allowedSender = normalized.first ?? ""
+    }
+}
+
+public func normalizedTrustedSenderList(_ senders: [String]) -> [String] {
+    var identities = Set<String>()
+    var results: [String] = []
+    for sender in senders {
+        let trimmed = sender.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { continue }
+        let identity = normalizedTrustedSenderIdentity(trimmed)
+        guard !identity.isEmpty, identities.insert(identity).inserted else { continue }
+        results.append(trimmed)
+    }
+    return results
 }
 
 public final class JSONFileStore<Value: Codable> {

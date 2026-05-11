@@ -20,6 +20,7 @@ public final class Migration {
         if config.codex.command == "codex" {
             config.codex.command = "/Applications/Codex.app/Contents/Resources/codex"
         }
+        migrateTrustedSenders(&config)
         try validateConfig(config)
         try stores.config.save(config)
         let state = (try? stores.state.load()) ?? defaultBridgeState()
@@ -35,6 +36,15 @@ public final class Migration {
             try FileManager.default.copyItem(at: url, to: dir.appendingPathComponent(url.lastPathComponent))
         }
         return dir
+    }
+}
+
+public func migrateTrustedSenders(_ config: inout BridgeConfig) {
+    let trusted = normalizedTrustedSenderList(config.trustedSenders ?? [])
+    if trusted.isEmpty {
+        config.syncTrustedSenders([config.allowedSender])
+    } else {
+        config.syncTrustedSenders(trusted)
     }
 }
 
@@ -68,10 +78,10 @@ public final class ServiceLifecycle {
         try data.write(to: paths.permissionBrokerLaunchAgentPath, options: .atomic)
     }
 
-    public func startHelperLaunchAgent() async throws {
+    public func startHelperLaunchAgent(appBundle: URL? = nil) async throws {
         await stopHelperLaunchAgent(removePlist: false)
         await stopPermissionBrokerLaunchAgent(removePlist: false)
-        try installApplicationBundle()
+        try installApplicationBundle(sourceAppPath: appBundle)
         try installHelperLaunchAgent()
         try installPermissionBrokerLaunchAgent()
         _ = try await runner.run("/bin/launchctl", ["bootstrap", "gui/\(getuid())", paths.helperLaunchAgentPath.path])
@@ -90,15 +100,19 @@ public final class ServiceLifecycle {
         _ = try? await runner.run("/bin/launchctl", ["kickstart", "-k", "gui/\(getuid())/\(BridgeConstants.permissionBrokerLaunchAgentLabel)"])
     }
 
-    public func installApplicationBundle() throws {
-        guard FileManager.default.fileExists(atPath: paths.builtAppPath.path) else {
-            throw StoreError.validation("Built app bundle not found at \(paths.builtAppPath.path). Run BuildSupport/build-app.zsh first.")
+    public func installApplicationBundle(sourceAppPath: URL? = nil) throws {
+        let source = sourceAppPath ?? paths.builtAppPath
+        guard FileManager.default.fileExists(atPath: source.path) else {
+            throw StoreError.validation("App bundle not found at \(source.path). Run BuildSupport/build-app.zsh first.")
+        }
+        if source.standardizedFileURL.path == paths.installedAppPath.standardizedFileURL.path {
+            return
         }
         try FileManager.default.createDirectory(at: paths.installedAppPath.deletingLastPathComponent(), withIntermediateDirectories: true)
         if FileManager.default.fileExists(atPath: paths.installedAppPath.path) {
             try FileManager.default.removeItem(at: paths.installedAppPath)
         }
-        try FileManager.default.copyItem(at: paths.builtAppPath, to: paths.installedAppPath)
+        try FileManager.default.copyItem(at: source, to: paths.installedAppPath)
     }
 
     public func stopHelperLaunchAgent(removePlist: Bool = false) async {

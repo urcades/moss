@@ -12,11 +12,38 @@ struct SelfTestError: Error, CustomStringConvertible {
     init(_ description: String) { self.description = description }
 }
 
+func testSQLiteMessageSourceTrustedSenders() async throws {
+    let dbURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("messages-bridge-trusted-senders-\(UUID().uuidString).sqlite")
+    defer { try? FileManager.default.removeItem(at: dbURL) }
+    let sql = """
+    CREATE TABLE handle(ROWID INTEGER PRIMARY KEY, id TEXT, service TEXT);
+    CREATE TABLE message(ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, date INTEGER, handle_id INTEGER, is_from_me INTEGER, service TEXT);
+    CREATE TABLE message_attachment_join(message_id INTEGER, attachment_id INTEGER);
+    CREATE TABLE attachment(ROWID INTEGER PRIMARY KEY, filename TEXT, mime_type TEXT, uti TEXT, transfer_name TEXT);
+    INSERT INTO handle(ROWID, id, service) VALUES (1, '+1 (520) 609-9095', 'iMessage');
+    INSERT INTO handle(ROWID, id, service) VALUES (2, 'Moss@Example.COM', 'iMessage');
+    INSERT INTO handle(ROWID, id, service) VALUES (3, '+1 999 000 0000', 'iMessage');
+    INSERT INTO message(ROWID, guid, text, date, handle_id, is_from_me, service) VALUES (1, 'phone', 'phone prompt', 1000000000, 1, 0, 'iMessage');
+    INSERT INTO message(ROWID, guid, text, date, handle_id, is_from_me, service) VALUES (2, 'email', 'email prompt', 1000000000, 2, 0, 'iMessage');
+    INSERT INTO message(ROWID, guid, text, date, handle_id, is_from_me, service) VALUES (3, 'other', 'other prompt', 1000000000, 3, 0, 'iMessage');
+    """
+    _ = try await ProcessRunner().run("/usr/bin/sqlite3", [dbURL.path, sql])
+    let source = SQLiteMessageSource(dbPath: dbURL.path, trustedSenders: ["5206099095", "moss@example.com"])
+    let messages = try await source.fetchNewMessages(afterRowId: 0)
+    try expect(messages.map(\.guid) == ["phone", "email"], "SQLite source matches multiple trusted senders")
+    let emptySource = SQLiteMessageSource(dbPath: dbURL.path, trustedSenders: [])
+    let emptyMessages = try await emptySource.fetchNewMessages(afterRowId: 0)
+    try expect(emptyMessages == [], "SQLite source ignores all messages with no trusted senders")
+}
+
 @main
 struct BridgeCoreSelfTest {
     static func main() async throws {
         try expect(senderAliases("+1 (520) 609-9095") == ["15206099095", "5206099095"], "sender aliases for +1 format")
         try expect(senderAliases("5206099095") == ["5206099095", "15206099095"], "sender aliases for ten digits")
+        try expect(normalizedTrustedSenderIdentity("+1 (520) 609-9095") == "15206099095", "trusted sender phone identity")
+        try expect(normalizedTrustedSenderIdentity("User@Example.COM") == "user@example.com", "trusted sender email identity")
+        try expect(normalizedTrustedSenderList([" +1 (520) 609-9095 ", "15206099095", "User@Example.COM", "user@example.com"]) == ["+1 (520) 609-9095", "User@Example.COM"], "trusted sender list trims and de-duplicates")
         try expect(appleTimestampToISO("0") == nil, "zero Apple timestamp is nil")
         try expect(appleTimestampToISO("1000000000")?.hasPrefix("2001-01-01T00:00:01") == true, "Apple timestamp conversion")
         try expect(classifyAttachment(mimeType: "image/png", uti: nil, absolutePath: nil) == "image", "image MIME classification")
@@ -25,6 +52,18 @@ struct BridgeCoreSelfTest {
 
         let paths = RuntimePaths.current(projectRoot: URL(fileURLWithPath: "/tmp/messages-codex-bridge-mac"))
         var config = defaultBridgeConfig(paths: paths)
+        try expect(config.allowedSender.isEmpty, "fresh default has no personal allowed sender")
+        try expect(config.effectiveTrustedSenders.isEmpty, "fresh default has no trusted senders")
+        var legacyConfig = config
+        legacyConfig.allowedSender = "+1 (520) 609-9095"
+        legacyConfig.trustedSenders = nil
+        migrateTrustedSenders(&legacyConfig)
+        try expect(legacyConfig.trustedSenders == ["+1 (520) 609-9095"], "legacy allowed sender migrates into trusted senders")
+        try expect(legacyConfig.allowedSender == "+1 (520) 609-9095", "legacy allowed sender remains synced")
+        var multiSenderConfig = config
+        multiSenderConfig.syncTrustedSenders(["+1 (520) 609-9095", "Moss@Example.COM", "15206099095"])
+        try expect(multiSenderConfig.trustedSenders == ["+1 (520) 609-9095", "Moss@Example.COM"], "multi sender config de-duplicates")
+        try expect(multiSenderConfig.allowedSender == "+1 (520) 609-9095", "allowed sender syncs to first trusted sender")
         config.codex.command = "/bin/echo"
         config.codex.model = "gpt-5.5"
         config.codex.reasoningEffort = "low"
@@ -199,6 +238,7 @@ struct BridgeCoreSelfTest {
         shortTimeoutConfig.sessionTtlMs = 7_200_000
         try expect(configForPrompt(shortTimeoutConfig, request: PromptRequest(promptText: "Can you check Safari?", attachments: [])).timeoutMs == 900_000, "ordinary prompt keeps short timeout")
         try expect(configForPrompt(shortTimeoutConfig, request: PromptRequest(promptText: "Use Computer Use to monitor this dashboard until the export is complete.", attachments: [])).timeoutMs == 7_200_000, "long task prompt uses session timeout")
+        try await testSQLiteMessageSourceTrustedSenders()
         let statusHelpService = BridgeService(
             paths: paths,
             makeSource: { _ in SQLiteMessageSource(dbPath: "/tmp/fake.db", allowedSender: "+1") },
