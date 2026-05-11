@@ -9,6 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let paths = RuntimePaths.current()
     private var doctorWindow: NSWindow?
     private var trustedSendersWindow: TrustedSendersWindowController?
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.title = "CodexMsg"
@@ -22,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func rebuildMenu() {
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Messages Codex Bridge", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Messages Codex Bridge \(appVersion)", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Run Doctor", action: #selector(runDoctor), keyEquivalent: "d"))
         menu.addItem(NSMenuItem(title: "Computer Use Probe", action: #selector(runComputerUseProbe), keyEquivalent: "p"))

@@ -1,0 +1,73 @@
+# Release Checklist
+
+Manual validation for the v0.1.0 source-build release candidate.
+
+## Automated Checks
+
+Run from `messages-codex-bridge-mac`:
+
+```sh
+swift test
+swift run BridgeCoreSelfTest
+swift run BridgeCoreTests
+./BuildSupport/build-app.zsh
+swift run codexmsgctl-swift doctor
+```
+
+All commands should complete successfully. Doctor may report missing macOS
+permissions on a fresh machine; grant the requested permissions and rerun Doctor
+before cutting a release.
+
+## App Smoke Test
+
+1. Open the built app:
+
+```sh
+open .build/app/MessagesCodexBridge.app
+```
+
+2. Confirm the menu header shows `Messages Codex Bridge 0.1.0`.
+3. Open `Trusted Senders...`.
+4. Add a test sender.
+5. Remove the test sender, or replace it with the real trusted sender.
+6. Close the Trusted Senders window and confirm the menu-bar app stays alive.
+7. Confirm status reports the trusted sender list:
+
+```sh
+swift run codexmsgctl-swift status
+```
+
+8. Send `/status` from a trusted sender and confirm the bridge replies.
+9. Send a normal prompt from a trusted sender and confirm Codex replies.
+10. Quit and reopen the menu-bar app.
+11. Run Doctor again and confirm the bridge is still healthy.
+12. Confirm helper and broker LaunchAgents remain loaded:
+
+```sh
+launchctl print "gui/$(id -u)/com.moss.MessagesCodexBridge.Helper"
+launchctl print "gui/$(id -u)/com.moss.MessagesCodexBridge.PermissionBroker"
+```
+
+13. After a logout/login or restart, confirm the helper is still loaded and
+    `/status` still works.
+
+## Release Steps
+
+After the automated checks and smoke test are green:
+
+1. Push `experiments/app-server-exec`.
+2. Open a PR into `main` titled `Promote Swift bridge v0.1.0 baseline`.
+3. Merge the PR.
+4. Update local `main`.
+5. Create the annotated tag:
+
+```sh
+git tag -a v0.1.0 -m "Messages Codex Bridge v0.1.0"
+git push origin v0.1.0
+```
+
+## Deferred Work
+
+- Signed and notarized zipped app distribution.
+- Custom app icon and final bundle artwork.
+- Any security-default changes beyond the current personal source-build model.

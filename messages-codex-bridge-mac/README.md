@@ -1,69 +1,153 @@
 # Messages Codex Bridge Mac
 
-Native Swift/macOS bridge for using Apple Messages as a prompt channel for `codex exec`.
+Native Swift/macOS bridge for using Apple Messages as a prompt channel for Codex.
 
-This is the active Swift bridge implementation. It keeps the existing runtime paths under:
+This repository currently distributes as a source build. You clone it, build the
+menu-bar app locally, open the app, add one or more trusted senders, grant the
+macOS permissions the Doctor reports, and then send prompts from Messages.
 
-- `~/Library/Application Support/MessagesLLMBridge/`
-- `~/Library/Logs/MessagesLLMBridge/`
+## Current Distribution Mode
 
-The native bridge runs from a signed menu-bar app plus a login helper:
+The v0.1.0 release candidate is source-build only:
 
-- App bundle id: `com.moss.MessagesCodexBridge`
-- Helper bundle id: `com.moss.MessagesCodexBridge.Helper`
+- Local build from this Swift package.
+- Local code signing identity when available.
+- Ad hoc signing fallback for development/build verification.
+- Zipped/notarized binary distribution is future work.
+- A custom app icon is future work.
 
-## Development
+## Prerequisites
+
+- macOS 15 or newer.
+- Git.
+- Xcode Command Line Tools or a Swift toolchain that can run `swift build`.
+- Apple Messages signed in and able to send/receive the account you want to use.
+- Codex.app installed with its bundled CLI available at:
 
 ```sh
-./BuildSupport/check-active-bridge.zsh
-swift build
-swift run BridgeCoreTests
-swift run BridgeCoreSelfTest
-swift run codexmsgctl-swift status
-swift run codexmsgctl-swift doctor
-swift run MessagesCodexBridgeHelper
-swift run MessagesCodexBridgeApp
+/Applications/Codex.app/Contents/Resources/codex
 ```
 
-`codexmsgctl-swift install` prepares the existing runtime config/state, backs them up, and starts the Swift helper LaunchAgent.
+## Fresh Mac Source Build
 
-## Bundle Build
+Clone the repository and build the app:
 
 ```sh
-SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" ./BuildSupport/build-app.zsh
+git clone https://github.com/urcades/moss.git
+cd moss/messages-codex-bridge-mac
+./BuildSupport/build-app.zsh
 open .build/app/MessagesCodexBridge.app
 ```
 
-The script creates a signed `.app` and embeds the helper under `Contents/Library/LoginItems/`. If `SIGN_IDENTITY` is omitted it uses the local `Messages Codex Bridge Local Code Signing` identity when present, otherwise it falls back to ad hoc signing for build verification.
+The build script creates:
 
-To create the local signing identity:
+- `.build/app/MessagesCodexBridge.app`
+- A bundled login helper at `Contents/Library/LoginItems/MessagesCodexBridgeHelper.app`
+- A bundled permission broker at `Contents/Library/LoginItems/MessagesCodexPermissionBroker.app`
+
+If no `SIGN_IDENTITY` is provided, the build script uses the local
+`Messages Codex Bridge Local Code Signing` identity when present. Otherwise it
+falls back to ad hoc signing, which is enough for source-build development.
+
+To create the local signing identity first:
 
 ```sh
 ./BuildSupport/create-local-signing-identity.zsh
 ./BuildSupport/build-app.zsh
+open .build/app/MessagesCodexBridge.app
 ```
 
-Use the app menu to register the helper and run the Computer Use probe.
+## First Run
 
-Use `Trusted Senders...` in the app menu to choose which phone numbers or Apple ID
-emails may send prompts to the bridge. Fresh installs start with no trusted
-senders until one is added.
+When the menu-bar app opens, its menu header should read:
 
-## Apple Messages control commands
+```text
+Messages Codex Bridge 0.1.0
+```
 
-Send these exact messages from the configured sender to control the Swift bridge without forwarding the text to Codex:
+Use the menu in this order:
 
-- `/codex status` replies with the active Codex thread id/link, active job state, latest progress, and Codex 0.130 capability status.
-- `/codex open` opens the active Codex thread in Codex.app with `codex://threads/<id>`.
-- `/codex history` starts a temporary local `codex app-server --listen stdio://` client, reads `thread/read`, and replies with a compact summary of the last loaded turns.
+1. Open `Trusted Senders...`.
+2. Add the phone number or Apple ID email that is allowed to send prompts.
+3. Run `Run Doctor`.
+4. Use the permission settings menu items that Doctor asks for.
+5. Send `/status` from the trusted sender.
+6. Send a normal prompt from the trusted sender.
 
-`codexmsgctl-swift status` and `codexmsgctl-swift doctor` also report whether the installed Codex supports app-server, `remote-control`, and `thread/read`. These checks use a short-lived Swift capability cache. Missing enhanced capabilities are reported as warnings/degraded status, not as a hard bridge failure.
+Fresh installs start with no trusted senders. In that state the bridge can run,
+but it ignores inbound Messages until you add at least one trusted sender.
 
-## Permission Model
+## Menu
 
-The native app intentionally creates a stable TCC identity. Do not edit TCC databases directly. Use the app's Doctor and Computer Use Probe actions to trigger/check:
+The app intentionally stays small. The menu contains the operational controls:
 
-- Full Disk Access for Messages DB reads
-- Automation for Messages replies
-- Automation to `com.openai.sky.CUAService` for Computer Use
-- Accessibility and Screen Recording for Codex/Computer Use
+- `Run Doctor`
+- `Computer Use Probe`
+- `Trusted Senders...`
+- `Permission Broker Status`
+- `Permission Broker Dry-Run Scan`
+- Permission settings shortcuts
+- Login helper controls
+- `Reset Codex Session`
+- `Open Logs`
+- `Quit`
+
+`Trusted Senders...` opens a plain native list window with `+` and `-` controls.
+Changes save immediately to the runtime config and do not require restarting the
+helper.
+
+## Runtime Paths
+
+The Swift bridge preserves the existing runtime locations:
+
+- `~/Library/Application Support/MessagesLLMBridge/`
+- `~/Library/Logs/MessagesLLMBridge/`
+
+Important runtime files:
+
+- `config.json`: trusted senders, Codex paths, bridge options.
+- `state.json`: active session/job state.
+- `messages-bridge-swift.log`: helper logs.
+
+## Permissions
+
+Do not edit TCC databases directly. Use `Run Doctor`, `Computer Use Probe`, and
+the menu's System Settings shortcuts.
+
+The bridge may need:
+
+- Full Disk Access: read the local Messages database.
+- Automation for Messages: send replies through Messages.
+- Automation to `com.openai.sky.CUAService`: run Codex Computer Use when asked.
+- Accessibility: allow Codex/Computer Use and the permission broker to operate local UI.
+- Screen Recording: allow Computer Use to inspect the screen.
+
+Permissions are not auto-granted by the app. The app opens the relevant System
+Settings panes and reports missing permissions through Doctor.
+
+## Control Commands
+
+Send these exact messages from a trusted sender:
+
+- `/status`: compact bridge status.
+- `/codex status`: active Codex thread id/link, active job state, progress, and capability status.
+- `/codex open`: open the active Codex thread in Codex.app.
+- `/codex history`: summarize the last loaded turns from the active Codex thread.
+
+All other text from a trusted sender is treated as a prompt for Codex.
+
+## Development And Validation
+
+Useful development commands:
+
+```sh
+swift build
+swift test
+swift run BridgeCoreSelfTest
+swift run BridgeCoreTests
+swift run codexmsgctl-swift status
+swift run codexmsgctl-swift doctor
+./BuildSupport/build-app.zsh
+```
+
+The release validation checklist lives in `RELEASE_CHECKLIST.md`.
