@@ -68,6 +68,7 @@ struct CodexMsgCtlSwift {
             print("Config path: \(paths.configPath.path)")
             print("State path: \(paths.statePath.path)")
             print("Allowed sender: \(config.allowedSender)")
+            print("Trusted senders: \(config.effectiveTrustedSenders.isEmpty ? "none" : config.effectiveTrustedSenders.joined(separator: ", "))")
             print("Codex command: \(config.codex.command)")
             print("Codex cwd: \(config.codex.cwd)")
             print("Last processed row id: \(state.lastProcessedRowId)")
@@ -77,6 +78,7 @@ struct CodexMsgCtlSwift {
             print("Active job status: \(state.activeJob?.status ?? "none")")
             print("Active job latest progress: \(state.activeJob?.lastObservedSummary ?? "none")")
             print("Active job Codex thread id: \(state.activeJob?.codexSessionId ?? "none")")
+            print("Active job Codex turn id: \(state.activeJob?.codexTurnId ?? "none")")
             if let brokerStatus = readPermissionBrokerStatus(paths: paths) {
                 print("Permission broker accessibility trusted: \(brokerStatus.accessibilityTrusted ? "yes" : "no")")
                 print("Permission broker last update: \(brokerStatus.lastSummary ?? "none")")

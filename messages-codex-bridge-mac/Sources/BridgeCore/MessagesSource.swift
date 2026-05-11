@@ -7,13 +7,20 @@ public protocol MessageSource {
 
 public final class SQLiteMessageSource: MessageSource {
     private let dbPath: String
-    private let allowedSender: String
+    private let trustedSenders: [String]
     private let homeDir: String
     private let runner: ProcessRunner
 
     public init(dbPath: String, allowedSender: String, homeDir: String = NSHomeDirectory(), runner: ProcessRunner = ProcessRunner()) {
         self.dbPath = dbPath
-        self.allowedSender = allowedSender
+        self.trustedSenders = normalizedTrustedSenderList([allowedSender])
+        self.homeDir = homeDir
+        self.runner = runner
+    }
+
+    public init(dbPath: String, trustedSenders: [String], homeDir: String = NSHomeDirectory(), runner: ProcessRunner = ProcessRunner()) {
+        self.dbPath = dbPath
+        self.trustedSenders = normalizedTrustedSenderList(trustedSenders)
         self.homeDir = homeDir
         self.runner = runner
     }
@@ -69,14 +76,21 @@ public final class SQLiteMessageSource: MessageSource {
           AND (\(senderWhereClause()))
         ORDER BY m.ROWID ASC, a.ROWID ASC;
         """
-        return try aggregateRows(try await query(sql))
+        return aggregateRows(try await query(sql))
     }
 
     private func senderWhereClause() -> String {
-        let aliases = senderAliases(allowedSender)
-        guard !aliases.isEmpty else { return "1 = 0" }
-        let expression = normalizedSQLHandleExpression("h.id")
-        return aliases.map { "\(expression) = '\($0.replacingOccurrences(of: "'", with: "''"))'" }.joined(separator: " OR ")
+        let values = trustedSenders.flatMap(trustedSenderComparisonValues)
+        guard !values.isEmpty else { return "1 = 0" }
+        let phoneExpression = normalizedSQLHandleExpression("h.id")
+        let textExpression = "lower(coalesce(h.id, ''))"
+        return values.map { value in
+            let escaped = value.replacingOccurrences(of: "'", with: "''")
+            if value.allSatisfy(\.isNumber) {
+                return "\(phoneExpression) = '\(escaped)'"
+            }
+            return "\(textExpression) = '\(escaped.lowercased())'"
+        }.joined(separator: " OR ")
     }
 
     private func query<T: Decodable>(_ sql: String) async throws -> [T] {

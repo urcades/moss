@@ -7,7 +7,7 @@ public enum BridgeConstants {
     public static let permissionBrokerBundleIdentifier = "com.moss.MessagesCodexBridge.PermissionBroker"
     public static let helperLaunchAgentLabel = "com.moss.MessagesCodexBridge.Helper"
     public static let permissionBrokerLaunchAgentLabel = "com.moss.MessagesCodexBridge.PermissionBroker"
-    public static let defaultAllowedSender = "+1-520-609-9095"
+    public static let defaultAllowedSender = ""
     public static let defaultPollIntervalMs = 2_000
     public static let defaultBatchWindowMs = 11_000
     public static let defaultChunkSize = 1_200
@@ -48,6 +48,7 @@ public struct CodexConfig: Codable, Equatable, Sendable {
 
 public struct BridgeConfig: Codable, Equatable, Sendable {
     public var allowedSender: String
+    public var trustedSenders: [String]?
     public var pollIntervalMs: Int
     public var batchWindowMs: Int
     public var chunkSize: Int
@@ -135,6 +136,7 @@ public struct ActiveJob: Codable, Equatable, Sendable {
     public var lastEventAt: String?
     public var codexPid: Int32?
     public var codexSessionId: String?
+    public var codexTurnId: String?
     public var outputPath: String?
     public var sessionLogPath: String?
     public var status: String?
@@ -158,6 +160,7 @@ public struct ActiveJob: Codable, Equatable, Sendable {
         lastEventAt: String?,
         codexPid: Int32?,
         codexSessionId: String?,
+        codexTurnId: String? = nil,
         outputPath: String?,
         sessionLogPath: String?,
         status: String?,
@@ -180,6 +183,7 @@ public struct ActiveJob: Codable, Equatable, Sendable {
         self.lastEventAt = lastEventAt
         self.codexPid = codexPid
         self.codexSessionId = codexSessionId
+        self.codexTurnId = codexTurnId
         self.outputPath = outputPath
         self.sessionLogPath = sessionLogPath
         self.status = status
@@ -341,4 +345,13 @@ public struct CodexResponse: Equatable, Sendable {
     public var stderr: String
     public var args: [String]
     public var outputPath: String
+
+    public init(text: String, sessionId: String?, stdout: String, stderr: String, args: [String], outputPath: String) {
+        self.text = text
+        self.sessionId = sessionId
+        self.stdout = stdout
+        self.stderr = stderr
+        self.args = args
+        self.outputPath = outputPath
+    }
 }
