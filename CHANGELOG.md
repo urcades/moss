@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v0.3.2
+
+- Replaced the menu bar text title with the `camera.macro` SF Symbol and a
+  `Moss` fallback label.
+
 ## v0.3.1
 
 - Added and documented the public Homebrew tap for source-building installs.

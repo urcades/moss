@@ -10,7 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var doctorWindow: NSWindow?
     private var trustedSendersWindow: TrustedSendersWindowController?
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.3.1"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.3.2"
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
