@@ -14,13 +14,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem.button?.title = "CodexMsg"
+        configureStatusItemButton()
         rebuildMenu()
         Task { await bootstrapQuietly() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    private func configureStatusItemButton() {
+        guard let button = statusItem.button else { return }
+
+        if let image = NSImage(systemSymbolName: "camera.macro", accessibilityDescription: "Moss") {
+            image.isTemplate = true
+            button.image = image
+            button.imagePosition = .imageOnly
+            button.title = ""
+            button.toolTip = "Moss"
+        } else {
+            button.image = nil
+            button.imagePosition = .noImage
+            button.title = "Moss"
+            button.toolTip = "Moss"
+        }
     }
 
     private func rebuildMenu() {
