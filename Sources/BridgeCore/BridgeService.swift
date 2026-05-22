@@ -69,6 +69,7 @@ public final class BridgeService: @unchecked Sendable {
 
     public func tick() async throws {
         let config = try stores.config.load()
+        try await expirePendingInteractiveCallbackIfNeeded(config: config)
         try await recoverDetachedActiveJobIfNeeded(config: config)
         try await deliverCompletedAutomationRuns(config: config)
         let messages = try await makeSource(config).fetchNewMessages(afterRowId: state.lastProcessedRowId)
@@ -84,6 +85,10 @@ public final class BridgeService: @unchecked Sendable {
     }
 
     private func processIncoming(config: BridgeConfig, message: MessageItem) {
+        if shouldRouteToPendingInteractiveCallback(message) {
+            queue.append(.interactiveCallbackReply(message))
+            return
+        }
         if state.activeJob != nil {
             if let command = localCommandName(message.text), message.attachments.isEmpty {
                 queue.append(.localCommand(command, message))
@@ -149,6 +154,7 @@ public final class BridgeService: @unchecked Sendable {
             if state.activeJob != nil {
                 guard let localCommandIndex = queue.firstIndex(where: {
                     if case .localCommand = $0 { return true }
+                    if case .interactiveCallbackReply = $0 { return true }
                     return false
                 }) else {
                     return
@@ -161,12 +167,81 @@ public final class BridgeService: @unchecked Sendable {
             switch job {
             case .localCommand(let command, let message):
                 try await handleLocalCommand(command, message: message)
+            case .interactiveCallbackReply(let message):
+                try await handleInteractiveCallbackReply(message)
             case .promptBatch(let batch):
                 if state.activeJob == nil {
                     try await startPromptBatch(batch)
                 }
             }
         }
+    }
+
+    private func shouldRouteToPendingInteractiveCallback(_ message: MessageItem) -> Bool {
+        guard let callback = state.pendingInteractiveCallback,
+              callback.status == "pending",
+              callback.recipient == message.handleId,
+              callback.service == message.service else {
+            return false
+        }
+        if message.attachments.isEmpty, localCommandName(message.text) != nil {
+            return false
+        }
+        return true
+    }
+
+    private func handleInteractiveCallbackReply(_ message: MessageItem) async throws {
+        guard var callback = state.pendingInteractiveCallback, callback.status == "pending" else { return }
+        callback.status = "answered"
+        callback.responseText = message.text
+        callback.responseRowId = message.rowId
+        callback.responseGuid = message.guid
+        callback.answeredAt = DateCodec.iso(now())
+        state.pendingInteractiveCallback = callback
+        if let jobId = callback.jobId {
+            updateActiveJob(jobId: jobId) { job in
+                job.status = "waitingForUser"
+                job.lastObservedSummary = "Captured a Messages reply for pending app-server callback \(callback.callbackId)."
+                job.lastEventAt = DateCodec.iso(now())
+            }
+        }
+        try stores.state.save(state)
+        let config = try stores.config.load()
+        try await sendReplyRecording(
+            makeReplySink(config),
+            recipient: message.handleId,
+            service: message.service,
+            text: "Got it. I captured that reply for the pending Codex prompt."
+        )
+    }
+
+    private func expirePendingInteractiveCallbackIfNeeded(config: BridgeConfig) async throws {
+        guard var callback = state.pendingInteractiveCallback,
+              callback.status == "pending",
+              let expiresAt = callback.expiresAt,
+              let deadline = DateCodec.parse(expiresAt),
+              deadline <= now() else {
+            return
+        }
+        callback.status = "timedOut"
+        callback.failureText = "Timed out waiting for a Messages reply."
+        state.pendingInteractiveCallback = callback
+        if let jobId = callback.jobId {
+            updateActiveJob(jobId: jobId) { job in
+                job.status = "failed"
+                job.lastObservedSummary = callback.failureText
+                job.lastEventAt = DateCodec.iso(now())
+            }
+        }
+        try stores.state.save(state)
+        try await sendReplyRecording(
+            makeReplySink(config),
+            recipient: callback.recipient,
+            service: callback.service,
+            text: "The pending Codex prompt timed out waiting for your reply."
+        )
+        state.pendingInteractiveCallback = nil
+        try stores.state.save(state)
     }
 
     private func handleLocalCommand(_ command: String, message: MessageItem) async throws {
@@ -995,17 +1070,31 @@ public final class BridgeService: @unchecked Sendable {
     }
 
     private func cancelActiveJob() -> String {
-        guard let job = state.activeJob else { return "No active job is running." }
+        let callbackWasPending = state.pendingInteractiveCallback?.status == "pending"
+        if var callback = state.pendingInteractiveCallback, callback.status == "pending" {
+            callback.status = "canceled"
+            callback.failureText = "Canceled by /cancel from Messages."
+            state.pendingInteractiveCallback = callback
+            try? stores.state.save(state)
+        }
+        guard let job = state.activeJob else {
+            state.pendingInteractiveCallback = nil
+            try? stores.state.save(state)
+            return callbackWasPending ? "Canceled the pending Codex prompt." : "No active job is running."
+        }
         state.activeJob?.status = "canceling"
         if let pid = job.codexPid {
             _ = terminateProcessTree(rootPid: pid)
             activeCodexTask?.cancel()
-            return "Canceling the active Codex job."
+            state.pendingInteractiveCallback = nil
+            try? stores.state.save(state)
+            return callbackWasPending ? "Canceling the active Codex job and pending prompt." : "Canceling the active Codex job."
         }
         activeCodexTask?.cancel()
         state.activeJob = nil
+        state.pendingInteractiveCallback = nil
         try? stores.state.save(state)
-        return "Canceled the active Codex job."
+        return callbackWasPending ? "Canceled the active Codex job and pending prompt." : "Canceled the active Codex job."
     }
 
     private func recoverActiveJobOnStartup() {
@@ -1046,6 +1135,7 @@ public final class BridgeService: @unchecked Sendable {
 
 private enum Job {
     case localCommand(String, MessageItem)
+    case interactiveCallbackReply(MessageItem)
     case promptBatch(PendingBatch)
 }
 

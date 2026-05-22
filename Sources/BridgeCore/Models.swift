@@ -477,8 +477,12 @@ public struct PendingInteractiveCallback: Codable, Equatable, Sendable {
     public var expiresAt: String?
     public var status: String
     public var failureText: String?
+    public var responseText: String?
+    public var responseRowId: Int64?
+    public var responseGuid: String?
+    public var answeredAt: String?
 
-    public init(callbackId: String, jobId: String? = nil, jsonRpcId: String? = nil, method: String, recipient: String, service: String, prompt: String, createdAt: String, expiresAt: String? = nil, status: String, failureText: String? = nil) {
+    public init(callbackId: String, jobId: String? = nil, jsonRpcId: String? = nil, method: String, recipient: String, service: String, prompt: String, createdAt: String, expiresAt: String? = nil, status: String, failureText: String? = nil, responseText: String? = nil, responseRowId: Int64? = nil, responseGuid: String? = nil, answeredAt: String? = nil) {
         self.callbackId = callbackId
         self.jobId = jobId
         self.jsonRpcId = jsonRpcId
@@ -490,6 +494,10 @@ public struct PendingInteractiveCallback: Codable, Equatable, Sendable {
         self.expiresAt = expiresAt
         self.status = status
         self.failureText = failureText
+        self.responseText = responseText
+        self.responseRowId = responseRowId
+        self.responseGuid = responseGuid
+        self.answeredAt = answeredAt
     }
 }
 

@@ -57,6 +57,8 @@ struct BridgeCoreFocusedTests {
         try await testBridgeAttachDirectiveAlwaysSendsValidatedAttachment()
         try await testProgressEventsUpdateStateWithoutSendingSms()
         try await testDeadActiveJobOnStartupNotifiesAndClears()
+        try await testPendingInteractiveCallbackCapturesNextReply()
+        try await testPendingInteractiveCallbackCancelAndTimeout()
         try testCorruptedStateJsonBacksUpAndDefaults()
         try await testAutomationRequestCreatesCodexAutomationFromInterpretedSpec()
         try await testCodexAutomationsReportsCreationInProgress()
@@ -1078,6 +1080,119 @@ struct BridgeCoreFocusedTests {
         try expect(replies.map(\.text) == ["That active job stopped before it could finish, so I cleared it. Please send the request again."], "dead startup job sends a visible recovery notice")
         let state = try stores.state.load()
         try expect(state.activeJob == nil, "dead startup job is cleared after notification")
+    }
+
+    private static func testPendingInteractiveCallbackCapturesNextReply() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        try stores.config.save(config)
+        var state = defaultBridgeState()
+        state.pendingInteractiveCallback = PendingInteractiveCallback(
+            callbackId: "callback-1",
+            jobId: "job-1",
+            jsonRpcId: "70",
+            method: "item/tool/requestUserInput",
+            recipient: "+1",
+            service: "iMessage",
+            prompt: "Choose one",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            expiresAt: "2026-01-01T00:05:00.000Z",
+            status: "pending"
+        )
+        try stores.state.save(state)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 1, guid: "callback-answer", text: "Use option B", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:01.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in FakeProgressCodexBackend(events: [], response: "should not run") },
+            now: { Date(timeIntervalSince1970: 1_767_225_602) }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+
+        let reloaded = try stores.state.load()
+        try expect(reloaded.pendingInteractiveCallback?.status == "answered", "pending callback records answered status")
+        try expect(reloaded.pendingInteractiveCallback?.responseText == "Use option B", "pending callback records Messages reply text")
+        try expect(reloaded.pendingInteractiveCallback?.responseRowId == 1, "pending callback records reply row")
+        try expect(reloaded.pendingBatch == nil, "callback reply is not queued as a new prompt batch")
+        let replies = await sink.repliesSnapshot()
+        try expect(replies.map(\.text) == ["Got it. I captured that reply for the pending Codex prompt."], "callback reply sends visible acknowledgement")
+    }
+
+    private static func testPendingInteractiveCallbackCancelAndTimeout() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        try stores.config.save(config)
+        var state = defaultBridgeState()
+        state.pendingInteractiveCallback = PendingInteractiveCallback(
+            callbackId: "callback-cancel",
+            method: "item/tool/requestUserInput",
+            recipient: "+1",
+            service: "iMessage",
+            prompt: "Choose one",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            expiresAt: "2026-01-01T00:05:00.000Z",
+            status: "pending"
+        )
+        try stores.state.save(state)
+        let cancelSink = CapturingReplySink()
+        let cancelService = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in QueueMessageSource(messages: [
+                MessageItem(rowId: 1, guid: "cancel", text: "/cancel", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:01.000Z", attachments: [])
+            ]) },
+            makeReplySink: { _ in cancelSink },
+            makeCodex: { _ in FakeProgressCodexBackend(events: [], response: "should not run") },
+            now: { Date(timeIntervalSince1970: 1_767_225_602) }
+        )
+        try await cancelService.initialize()
+        try await cancelService.tick()
+        let canceledState = try stores.state.load()
+        try expect(canceledState.pendingInteractiveCallback == nil, "cancel clears pending callback")
+        let cancelReplies = await cancelSink.repliesSnapshot()
+        try expect(cancelReplies.map(\.text) == ["Canceled the pending Codex prompt."], "cancel callback sends visible reply")
+
+        var timeoutState = canceledState
+        timeoutState.lastProcessedRowId = 1
+        timeoutState.pendingInteractiveCallback = PendingInteractiveCallback(
+            callbackId: "callback-timeout",
+            method: "mcpServer/elicitation/request",
+            recipient: "+1",
+            service: "iMessage",
+            prompt: "Confirm",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            expiresAt: "2026-01-01T00:00:01.000Z",
+            status: "pending"
+        )
+        try stores.state.save(timeoutState)
+        let timeoutSink = CapturingReplySink()
+        let timeoutService = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in QueueMessageSource(messages: []) },
+            makeReplySink: { _ in timeoutSink },
+            makeCodex: { _ in FakeProgressCodexBackend(events: [], response: "should not run") },
+            now: { Date(timeIntervalSince1970: 1_767_225_610) }
+        )
+        try await timeoutService.initialize()
+        try await timeoutService.tick()
+        let timedOutState = try stores.state.load()
+        try expect(timedOutState.pendingInteractiveCallback == nil, "timeout clears pending callback")
+        let timeoutReplies = await timeoutSink.repliesSnapshot()
+        try expect(timeoutReplies.map(\.text) == ["The pending Codex prompt timed out waiting for your reply."], "timeout sends visible reply")
     }
 
     private static func testCorruptedStateJsonBacksUpAndDefaults() throws {

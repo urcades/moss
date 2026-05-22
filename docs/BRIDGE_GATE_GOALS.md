@@ -65,6 +65,9 @@ Success means app-server `item/tool/requestUserInput` and `mcpServer/elicitation
   - The backend needs a live JSON-RPC responder channel. Persisted state alone is not enough because the current `CodexBackend.invoke` call has no way to resume a held server request after the bridge waits for a future Messages row.
 - Current status:
   - State saves now preserve non-terminal `pendingInteractiveCallback` records across stale helper/CLI saves while still allowing terminal callbacks to clear.
+  - Inbound trusted non-command replies now route to pending callback state instead of starting a new prompt batch, recording response text/row/guid and sending a visible acknowledgement.
+  - `/cancel` and callback expiration now clear pending callback state and send visible Messages feedback.
+  - This still does not complete the architecture gate: the captured answer is persisted, but the live app-server JSON-RPC responder channel still needs to consume it and resume the original request.
 
 ## Goal 5: Runtime State And Process Supervision
 
@@ -95,6 +98,7 @@ Success means the bridge continuously reports what Codex can really do from Mess
   - `/codex status` agrees with `codexmsgctl-swift status` about callable tools.
 - Current status:
   - `swift run codexmsgctl-swift smoke computer-use` passed with real `list_apps` and `get_app_state` calls and marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_2AFB06AB-BA16-4C44-B947-5543EEBB8654`.
+  - Later `swift run codexmsgctl-swift doctor --probe-computer-use` runs failed twice with exact live blocker `Computer Use server error -10005: cgWindowNotFound`; this is now recorded as a live runtime condition rather than a silent fallback.
   - `swift run codexmsgctl-swift smoke chrome` invoked the Chrome skill path and returned the exact blocker `privileged native pipe bridge is not available; browser-client is not trusted` with marker `CODEXMSGCTL_SMOKE_CHROME_9E2AAA1F-51AE-44D3-9B60-6A63DBEED695`.
   - `swift run codexmsgctl-swift smoke browser` invoked the Browser skill path and returned the exact blocker `Browser is not available: iab` with marker `CODEXMSGCTL_SMOKE_BROWSER_9BC2108C-E062-4CA4-8F74-CD305E23A487`.
   - `codexmsgctl-swift smoke` now has standalone `chrome`, `browser`, and `computer-use` subcommands that print app-server pid, thread id, turn id, progress, final response, and blocker text.
