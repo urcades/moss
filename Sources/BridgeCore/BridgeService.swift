@@ -363,7 +363,7 @@ public final class BridgeService: @unchecked Sendable {
             return
         }
         let text = command == "/codex"
-            ? try await runCodexCommand(message.text, config: config)
+            ? try await runCodexCommand(message.text, config: config, recipient: message.handleId, service: message.service)
             : runLocalCommand(message.text)
         try await sendReplyRecording(makeReplySink(config), recipient: message.handleId, service: message.service, text: text)
         try stores.state.save(state)
@@ -388,7 +388,7 @@ public final class BridgeService: @unchecked Sendable {
         return try result!.get()
     }
 
-    private func runCodexCommand(_ command: String, config: BridgeConfig) async throws -> String {
+    private func runCodexCommand(_ command: String, config: BridgeConfig, recipient: String, service: String) async throws -> String {
         let normalized = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         switch normalized {
         case "/codex status":
@@ -420,14 +420,17 @@ public final class BridgeService: @unchecked Sendable {
         case "/codex gates":
             return bridgeGateChecklistText(context: BridgeGateChecklistContext(
                 allowedSender: config.allowedSender,
-                service: "iMessage",
+                service: service,
                 hasActiveJob: state.activeJob != nil,
                 hasPendingInteractiveCallback: state.pendingInteractiveCallback != nil,
-                hasRecentInboundImage: hasUsableRecentMedia(direction: "inbound", recipient: config.allowedSender, service: "iMessage"),
-                hasRecentOutboundImage: hasUsableRecentMedia(direction: "outbound", recipient: config.allowedSender, service: "iMessage")
+                hasRecentInboundImage: hasUsableRecentMedia(direction: "inbound", recipient: recipient, service: service),
+                hasRecentOutboundImage: hasUsableRecentMedia(direction: "outbound", recipient: recipient, service: service)
             ))
+        case "/codex trusted-gates":
+            let evidence = try await trustedGateEvidence(config: config, recipient: recipient, service: service)
+            return formatTrustedGateEvidence(evidence)
         default:
-            return "Use /codex status, /codex open, /codex history, /codex automations, /codex gates, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|bridge-attach|generated-image|app-server-callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
+            return "Use /codex status, /codex open, /codex history, /codex automations, /codex gates, /codex trusted-gates, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|bridge-attach|generated-image|app-server-callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
         }
     }
 
@@ -981,6 +984,7 @@ public final class BridgeService: @unchecked Sendable {
             /codex history - summarize recent app-server thread history
             /codex automations - list Codex automation result routes bridged to Messages
             /codex gates - list remaining bridge gates and exact smoke commands
+            /codex trusted-gates - inspect trusted Messages gate evidence
             /codex retry-last-send - retry the last retryable outbound text or attachment
             /codex smoke text - send a marked text probe and report delivery evidence
             /codex smoke attachment - send a marked image probe and report delivery evidence
@@ -1837,7 +1841,7 @@ private struct CancelTransition {
 
 public func bridgeLocalCommandName(_ text: String) -> String? {
     let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    if ["/codex status", "/codex open", "/codex history", "/codex automations", "/codex gates", "/codex retry-last-send"].contains(normalized) || isCodexSmokeCommand(normalized) {
+    if ["/codex status", "/codex open", "/codex history", "/codex automations", "/codex gates", "/codex trusted-gates", "/codex retry-last-send"].contains(normalized) || isCodexSmokeCommand(normalized) {
         return "/codex"
     }
     let command = normalized.split(separator: " ").first.map(String.init)

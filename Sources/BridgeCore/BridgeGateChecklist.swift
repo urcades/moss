@@ -63,6 +63,8 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
 
     Trusted Messages gates:
     - /codex status
+    - /codex gates
+    - /codex trusted-gates
     - /codex smoke text
     - /codex smoke attachment
     - /codex smoke bridge-attach

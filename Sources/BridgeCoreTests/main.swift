@@ -29,6 +29,7 @@ struct BridgeCoreFocusedTests {
         try await testCodexSmokeAppServerCommandRunsFinalAnswerProbe()
         try await testCodexSmokeCapabilityCommandRunsAppServerProbe()
         try await testCodexGatesCommandRepliesWithChecklist()
+        try await testCodexTrustedGatesCommandRepliesWithEvidence()
         try await testCodexSmokeCallbackCapturesNextReplyAndClearsState()
         try await testCodexSmokeAppServerCallbackStartsDefaultBackendTurn()
         try testInboundImageSmokeBuildsLocalImageRequest()
@@ -117,6 +118,7 @@ struct BridgeCoreFocusedTests {
         try expect(bridgeLocalCommandName("/codex history") == "/codex", "exact codex history command")
         try expect(bridgeLocalCommandName("/codex automations") == "/codex", "exact codex automations command")
         try expect(bridgeLocalCommandName("/codex gates") == "/codex", "exact codex gates command")
+        try expect(bridgeLocalCommandName("/codex trusted-gates") == "/codex", "exact codex trusted-gates command")
         try expect(bridgeLocalCommandName("/codex retry-last-send") == "/codex", "exact codex retry command")
         try expect(bridgeLocalCommandName("/codex smoke text") == "/codex", "codex text smoke command")
         try expect(bridgeLocalCommandName("/codex smoke attachment") == "/codex", "codex attachment smoke command")
@@ -583,6 +585,46 @@ struct BridgeCoreFocusedTests {
         try expect(replies.first?.text.contains("Apple Messages Bridge gate checklist") == true, "codex gates reply has checklist header")
         try expect(replies.first?.text.contains("/codex smoke callback, then reply with any short text") == true, "codex gates reply includes trusted callback instructions")
         try expect(replies.first?.text.contains("swift run codexmsgctl-swift smoke outbound-image-check --recipient +1 --service iMessage") == true, "codex gates reply includes CLI outbound image command")
+        try expect(replies.first?.text.contains("/codex trusted-gates") == true, "codex gates reply includes trusted evidence command")
+    }
+
+    private static func testCodexTrustedGatesCommandRepliesWithEvidence() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let db = try makeSmokeMessagesDb(paths: paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.messagesDbPath = db.path
+        config.allowedSender = "+1-520-609-9095"
+        config.batchWindowMs = 1
+        try stores.config.save(config)
+        try runSQLite(db, """
+        INSERT INTO handle (ROWID, id, service)
+        VALUES (1, '+1 (520) 609-9095', 'iMessage');
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (1, 'guid-codex-trusted-gates', '/codex trusted-gates', 0, 0, 0, 1000000000, 'iMessage', 1);
+        """)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 1, guid: "guid-codex-trusted-gates", text: "/codex trusted-gates", handleId: "+1-520-609-9095", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in FakeProgressCodexBackend(events: [], response: "should not run") },
+            now: { Date(timeIntervalSince1970: 1_777_777_777) }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        let replies = await sink.repliesSnapshot()
+
+        try expect(replies.count == 1, "codex trusted-gates sends one evidence reply")
+        try expect(replies.first?.text.contains("Trusted Messages gate evidence:") == true, "codex trusted-gates reply has evidence header")
+        try expect(replies.first?.text.contains("/codex trusted-gates: missing-outbound; inbound row 1") == true, "codex trusted-gates reports its inbound row")
+        try expect(replies.first?.text.contains("Next trusted command to send from Apple Messages: /codex status") == true, "codex trusted-gates names next missing command")
     }
 
     private static func testCodexSmokeOutboundImageCheckSendsProbeAndBuildsFollowUp() async throws {

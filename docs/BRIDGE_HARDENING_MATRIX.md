@@ -44,7 +44,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 - State merge safety: stale saves preserve automation routes/status, recent media refs, pending callbacks, outbound delivery evidence, and same-active-job runtime metadata; path-scoped store locking covers independent store instances writing the same `state.json`; `BridgeStateBox` serializes in-memory service mutations for cursor, media, outbound, pending-batch, callback, cancel, active-job, prompt job-start, Codex session lifecycle, and automation paths; `BridgeJobQueue` owns transient prompt, local-command, and callback-reply dispatch ordering.
 - Capability drift: status and doctor expose stale capability caches after 24h instead of showing only an unqualified timestamp.
 - Gate harness: `codexmsgctl-swift gates` enumerates deterministic local gates, explicit live CLI smoke commands, trusted Messages commands, current readiness, and the remaining proof gaps.
-- Trusted gate observer: `codexmsgctl-swift trusted-gates` reads Messages DB evidence for each trusted `/codex ...` gate command and reports missing inbound rows, missing outbound replies, or outbound `message.error` values.
+- Trusted gate observer: `codexmsgctl-swift trusted-gates` and `/codex trusted-gates` read Messages DB evidence for each trusted `/codex ...` gate command and report missing inbound rows, missing outbound replies, outbound `message.error` values, attributed-body snippets, and the next missing command to send.
 
 ## Live Smoke Tests
 
