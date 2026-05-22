@@ -406,7 +406,7 @@ public final class BridgeService: @unchecked Sendable {
         case "/codex automations":
             return codexAutomationRoutesText()
         default:
-            return "Use /codex status, /codex open, /codex history, /codex automations, /codex retry-last-send, /codex smoke text, or /codex smoke attachment."
+            return "Use /codex status, /codex open, /codex history, /codex automations, /codex retry-last-send, or /codex smoke text|attachment|automation|inbound-image-check|chrome|browser|computer-use."
         }
     }
 
@@ -448,10 +448,130 @@ public final class BridgeService: @unchecked Sendable {
                 Evidence: \(lastOutboundSendStatusText())
                 """
             }
+        case "automation":
+            do {
+                let result = try createCodexAutomationSmoke(
+                    recipient: message.handleId,
+                    service: message.service,
+                    config: config,
+                    paths: paths,
+                    stores: stores,
+                    marker: marker
+                )
+                state = try stores.state.load()
+                summary = """
+                Smoke automation passed: \(result.marker)
+                Automation id: \(result.automation.id)
+                Automation file: \(result.automation.path)
+                Route: \(result.route.recipient) via \(result.route.service)
+                """
+            } catch {
+                summary = """
+                Smoke automation failed: \(marker)
+                Error: \(error)
+                """
+            }
+        case "inbound-image-check":
+            var refs = state.recentMediaRefs ?? []
+            if (try? buildInboundImageSmokeRequest(recipient: message.handleId, service: message.service, recentMediaRefs: refs)) == nil,
+               let recovered = try? await latestTrustedInboundImageMediaRef(config: config, recipient: message.handleId, service: message.service) {
+                refs.append(recovered)
+                state.recentMediaRefs = Array(refs.suffix(30))
+                try stores.state.save(state)
+            }
+            do {
+                let smoke = try buildInboundImageSmokeRequest(
+                    recipient: message.handleId,
+                    service: message.service,
+                    recentMediaRefs: refs,
+                    marker: marker
+                )
+                summary = await runBridgeAppServerSmoke(
+                    label: "inbound-image-check",
+                    marker: smoke.marker,
+                    request: smoke.request,
+                    config: config,
+                    requireSuccessToken: true
+                )
+            } catch {
+                summary = """
+                Smoke inbound-image-check failed: \(marker)
+                Error: \(error)
+                """
+            }
+        case "chrome", "browser", "computer-use":
+            if state.activeJob != nil {
+                summary = "Smoke \(subcommand) skipped: a Codex job is already active. Send /codex status or /cancel first."
+            } else {
+                var smokeConfig = config
+                smokeConfig.timeoutMs = min(config.timeoutMs, 60_000)
+                let request = PromptRequest(promptText: bridgeCapabilitySmokePrompt(capability: subcommand, marker: marker), attachments: [])
+                summary = await runBridgeAppServerSmoke(label: subcommand, marker: marker, request: request, config: smokeConfig)
+            }
         default:
-            summary = "Use /codex smoke text or /codex smoke attachment."
+            summary = "Use /codex smoke text, attachment, automation, inbound-image-check, chrome, browser, or computer-use."
         }
         _ = try await sink.sendReply(recipient: message.handleId, service: message.service, text: summary)
+    }
+
+    private func runBridgeAppServerSmoke(label: String, marker: String, request: PromptRequest, config: BridgeConfig, requireSuccessToken: Bool = false) async -> String {
+        let events = BridgeSmokeEventCollector()
+        let backend = useDefaultCodexBackend
+            ? makeDefaultCodex(config, nil)
+            : makeCodex(config)
+        do {
+            let response = try await backend.invoke(request, sessionId: nil) { event in
+                events.record(event)
+            }
+            if let processPid = events.processPid() {
+                _ = terminateProcessTree(rootPid: processPid)
+            }
+            guard response.text.contains(marker) else {
+                return """
+                Smoke \(label) failed: \(marker)
+                Error: response did not contain marker.
+                Thread id: \(response.sessionId ?? events.threadId() ?? "none")
+                Turn id: \(events.turnId() ?? "none")
+                Response: \(response.text)
+                """
+            }
+            if requireSuccessToken, !response.text.localizedCaseInsensitiveContains("SUCCESS") {
+                return """
+                Smoke \(label) failed: \(marker)
+                Error: response contained marker but did not report SUCCESS.
+                Thread id: \(response.sessionId ?? events.threadId() ?? "none")
+                Turn id: \(events.turnId() ?? "none")
+                Response: \(response.text)
+                """
+            }
+            return """
+            Smoke \(label) passed: \(marker)
+            Thread id: \(response.sessionId ?? events.threadId() ?? "none")
+            Turn id: \(events.turnId() ?? "none")
+            Response: \(response.text)
+            """
+        } catch let error as CodexBackendFailure {
+            if let processPid = events.processPid() {
+                _ = terminateProcessTree(rootPid: processPid)
+            }
+            let detail = error.blockedText ?? error.message
+            return """
+            Smoke \(label) failed: \(marker)
+            Error: \(detail)
+            Thread id: \(events.threadId() ?? "none")
+            Turn id: \(events.turnId() ?? "none")
+            """
+        } catch {
+            if let processPid = events.processPid() {
+                _ = terminateProcessTree(rootPid: processPid)
+            }
+            return """
+            Smoke \(label) failed: \(marker)
+            Error: \(error)
+            Thread id: \(events.threadId() ?? "none")
+            Turn id: \(events.turnId() ?? "none")
+            """
+        }
     }
 
     private func retryLastOutboundSend(config: BridgeConfig) async throws -> String {
@@ -638,6 +758,9 @@ public final class BridgeService: @unchecked Sendable {
             /codex retry-last-send - retry the last retryable outbound text or attachment
             /codex smoke text - send a marked text probe and report delivery evidence
             /codex smoke attachment - send a marked image probe and report delivery evidence
+            /codex smoke automation - create a paused marked automation and route
+            /codex smoke inbound-image-check - verify the latest trusted inbound image reaches app-server
+            /codex smoke chrome|browser|computer-use - verify delegated capability success or blocker text
             /cancel - stop the active Codex job
             /reset or /new - start a fresh Codex session
             /permissions status - show permission broker status
@@ -1416,13 +1539,77 @@ private func localCommandName(_ text: String) -> String? {
 
 private func isCodexSmokeCommand(_ text: String) -> Bool {
     let subcommand = codexSmokeSubcommand(text)
-    return subcommand == "text" || subcommand == "attachment"
+    return supportedBridgeCodexSmokeSubcommands.contains(subcommand)
 }
 
 private func codexSmokeSubcommand(_ text: String) -> String {
     let parts = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().split(separator: " ").map(String.init)
     guard parts.count == 3, parts[0] == "/codex", parts[1] == "smoke" else { return "" }
     return parts[2]
+}
+
+private let supportedBridgeCodexSmokeSubcommands: Set<String> = [
+    "text",
+    "attachment",
+    "automation",
+    "inbound-image-check",
+    "chrome",
+    "browser",
+    "computer-use"
+]
+
+private func bridgeCapabilitySmokePrompt(capability: String, marker: String) -> String {
+    switch capability {
+    case "computer-use":
+        return "Use Computer Use to inspect Safari. First call list_apps, then get_app_state for Safari. Do not navigate, click, type, or change any app state. Reply only with \(marker) SUCCESS and the Safari window title, or \(marker) BLOCKED and the exact blocker text."
+    case "chrome":
+        return "Use @Chrome to inspect the current Chrome tabs or current Chrome page without navigating, clicking, typing, or changing browser state. Reply only with \(marker) SUCCESS and a short observed title or URL, or \(marker) BLOCKED and the exact blocker text."
+    case "browser":
+        let encodedMarker = marker.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? marker
+        return "Use @Browser to open this local data URL and read the page text: data:text/html,<title>\(encodedMarker)</title><main>\(encodedMarker)</main>. Reply only with \(marker) SUCCESS if the browser page contained the marker, or \(marker) BLOCKED and the exact blocker text."
+    default:
+        return "Use \(capability) and reply only with \(marker) SUCCESS, or \(marker) BLOCKED and the exact blocker text."
+    }
+}
+
+private final class BridgeSmokeEventCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pid: Int32?
+    private var thread: String?
+    private var turn: String?
+
+    func record(_ event: CodexStreamEvent) {
+        lock.lock()
+        switch event {
+        case .processStarted(let value):
+            pid = value
+        case .sessionStarted(let value):
+            thread = value
+        case .turnStarted(let value):
+            turn = value
+        case .progress, .milestone, .blocker, .question:
+            break
+        }
+        lock.unlock()
+    }
+
+    func processPid() -> Int32? {
+        lock.lock()
+        defer { lock.unlock() }
+        return pid
+    }
+
+    func threadId() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return thread
+    }
+
+    func turnId() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return turn
+    }
 }
 
 private func bridgeSmokePNGData() throws -> Data {

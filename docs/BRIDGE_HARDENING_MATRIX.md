@@ -9,8 +9,8 @@ This document is the durable baseline for bridge reliability work. It maps known
 | Messages ingress | Messages DB rows arrive before attachments are readable | Attachment metadata records `exists`; prompt text includes missing paths | Add delayed-file retry/defer tests and policy |
 | Messages ingress | Image/file classification drift | Focused tests cover prompt attachment preservation | Add SQLite fixture coverage for attachment-only, multiple attachments, PDFs, unsupported files, and `~/` paths |
 | Codex app-server turns | Final answer never arrives | App-server tests reject non-final agent messages and surface no-final failures | Add live marked smoke test for a Messages-launched long turn |
-| Codex app-server callbacks | Tool/user-input callback silently returns empty or cancel | Unsupported interactive callbacks now return explicit JSON-RPC errors and emit a bridge blocker; state now has an optional pending callback record for visible future handoff | Implement a real live JSON-RPC responder channel; current backend invoke shape cannot resume a held callback after Messages waits for the next inbound reply |
-| Capability delegation | User says "use Computer Use/Chrome/Browser" without `@` mention | Natural-language aliases now become structured plugin mentions | Add live blocker probes for each capability |
+| Codex app-server callbacks | Tool/user-input callback silently returns empty or cancel | The default backend can persist a pending callback, send a Messages prompt, route the next trusted reply back to JSON-RPC, and clear terminal state | Add a live installed-helper callback smoke with a real app-server callback |
+| Capability delegation | User says "use Computer Use/Chrome/Browser" without `@` mention | Natural-language aliases now become structured plugin mentions; CLI and Messages smoke commands can launch marked Chrome, Browser, and Computer Use probes | Add trusted-chat live Messages runs for each blocker-or-success probe |
 | Dynamic tools | MCP tool succeeds/fails with odd content | Tests cover forwarding and image/text result normalization | Expand contract matrix for missing fields, stalled calls, and non-MCP namespaces |
 | Outbound text | AppleScript accepts send but delivery is unknown | Bridge verifies outgoing rows in `message.text` and `message.attributedBody`, records DB row/error/delivery evidence, and exposes retry eligibility | Add live smoke coverage in the installed helper path |
 | Outbound attachments | Valid `BRIDGE_ATTACH` stripped or ignored by prompt heuristics | Valid bridge directives are now explicit transport handoffs | Add live marked image-attachment smoke test |
@@ -25,7 +25,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 
 ## Tests Added Or Strengthened
 
-- App-server callback blockers: `item/tool/requestUserInput` and `mcpServer/elicitation/request` no longer silently resolve.
+- App-server callbacks: `item/tool/requestUserInput` and `mcpServer/elicitation/request` have deterministic Messages-backed responder coverage.
 - Natural-language capability mentions: `use Computer Use`, `use Chrome`, and `use Browser` become structured plugin mentions.
 - Explicit attachment handoff: a valid `BRIDGE_ATTACH:` line sends the file even when the original prompt did not match attachment-request heuristics.
 - Last outbound send evidence: bridge state and `/status` expose the latest text/attachment attempt, DB row, delivery state, and retry eligibility.
@@ -42,6 +42,7 @@ Use explicit markers in message text and filenames so live probes are searchable
 - Attachment probe: generate `bridge-smoke-attachment-<timestamp>.png`, send via `BRIDGE_ATTACH:`, and verify attachment evidence.
 - Inbound image probe: send an image into the trusted chat and verify app-server input includes a `localImage` item.
 - Capability probes: ask for marked Browser, Chrome, and Computer Use actions; require exact blocker text instead of fallback prose.
+- Messages command probes: send `/codex smoke chrome`, `/codex smoke browser`, `/codex smoke computer-use`, `/codex smoke automation`, and `/codex smoke inbound-image-check` from the trusted chat.
 
 ## Codex Changelog Adoption
 
@@ -57,7 +58,7 @@ Source of truth: <https://developers.openai.com/codex/changelog>
 | Plugin discovery and installed-plugin mention APIs | Partially adopted | Capability cache and structured mentions exist; refresh per turn or bounded TTL to avoid stale callability |
 | Permission profiles | Deferred | Current bridge uses `approvalPolicy: never` and `danger-full-access`; design a safer trusted-sender profile before adopting |
 | Thread pagination / sticky environments / remote thread store | Deferred | Current bridge only needs active-thread continuity; revisit if history/status grows beyond simple reads |
-| OpenAPI MCP and connector elicitations | Partially adopted | Dynamic MCP forwarding exists; real elicitation handling remains the main parity gap |
+| OpenAPI MCP and connector elicitations | Partially adopted | Dynamic MCP forwarding and deterministic elicitation handling exist; live installed-helper elicitation smoke remains the main parity gap |
 
 ## Acceptance Baseline
 
