@@ -77,6 +77,7 @@ public final class Doctor: @unchecked Sendable {
         checks.append(checkLastOutboundSend(state?.lastOutboundSend))
         checks.append(checkLiveSmokeResults(state?.liveSmokeResults))
         checks.append(bridgeSmokeAutomationDiagnosticCheck(paths: paths))
+        checks.append(await checkTrustedGateEvidence(config))
         checks.append(await checkRecentFailedOutboundEvidence(config))
         checks.append(checkCodexAppServerProcessSnapshot())
         checks.append(await checkMessagesAutomation(config))
@@ -211,6 +212,15 @@ public final class Doctor: @unchecked Sendable {
         }
         let failed = send.retryable || send.status.localizedCaseInsensitiveContains("fail")
         return DoctorCheck(name: "Last outbound send", ok: !failed, detail: outboundSendStatusText(send))
+    }
+
+    private func checkTrustedGateEvidence(_ config: BridgeConfig) async -> DoctorCheck {
+        do {
+            let evidence = try await trustedGateEvidence(config: config, service: "iMessage")
+            return DoctorCheck(name: "Trusted Messages gates", ok: true, detail: trustedGateSummaryText(evidence))
+        } catch {
+            return DoctorCheck(name: "Trusted Messages gates", ok: true, detail: "Unavailable: \(error)")
+        }
     }
 
     private func checkCodexAppServerProcessSnapshot() -> DoctorCheck {

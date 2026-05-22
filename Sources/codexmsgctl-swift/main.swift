@@ -108,6 +108,12 @@ struct CodexMsgCtlSwift {
             print("Recent media refs: \(recentMediaRefsStatusText(state.recentMediaRefs ?? []))")
             print("Live smoke results: \(liveSmokeResultsStatusText(state.liveSmokeResults ?? []))")
             print("Bridge smoke automations: \(bridgeSmokeAutomationStatusText(activeBridgeSmokeAutomations(in: paths.codexAutomationsDir)))")
+            do {
+                let evidence = try await trustedGateEvidence(config: config, service: "iMessage")
+                print("Trusted Messages gates: \(trustedGateSummaryText(evidence))")
+            } catch {
+                print("Trusted Messages gates: unavailable (\(error))")
+            }
             print("Automation creation status: \(automationCreationStatusText(state.automationCreationStatus))")
             print("Automation routes: \(automationRoutesStatusText(state.automationRoutes ?? []))")
             do {

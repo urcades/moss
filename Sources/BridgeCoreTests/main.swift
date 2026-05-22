@@ -1969,6 +1969,7 @@ struct BridgeCoreFocusedTests {
         try expect(evidence[3].status == "observed", "trusted gate evidence observes gates command")
         try expect(evidence[3].outboundRowId == 82, "trusted gate evidence skips outgoing rows for other chats")
         try expect(evidence[3].outboundSnippet == "Trusted attributed reply", "trusted gate evidence reads attributed body snippets")
+        try expect(trustedGateSummaryText(evidence) == "2/4 observed; 1 missing inbound; 1 incomplete; next /codex smoke chrome (outbound-error-25)", "trusted gate summary counts observed, missing, and incomplete commands")
         let formatted = formatTrustedGateEvidence(evidence)
         try expect(formatted.contains("/codex smoke chrome: outbound-error-25"), "trusted gate formatter includes failed command")
         try expect(formatted.contains("reply \"Smoke chrome failed: exact blocker\""), "trusted gate formatter includes reply snippet")
@@ -3503,7 +3504,10 @@ struct BridgeCoreFocusedTests {
         try ensureRuntimeDirectories(paths)
         let stores = RuntimeStores(paths: paths)
         var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        let db = try makeSmokeMessagesDb(paths: paths)
+        config.messagesDbPath = db.path
         config.batchWindowMs = 10_000
+        config.allowedSender = "+1"
         try stores.config.save(config)
         try writeCapabilityCache(paths: paths)
         try stores.state.save(BridgeState(
@@ -3561,6 +3565,7 @@ struct BridgeCoreFocusedTests {
         try expect(reply.text.contains("Codex bridge status:"), "status reply header")
         try expect(reply.text.contains("Active backend: codex app-server"), "status reply backend")
         try expect(reply.text.contains("Latest Codex progress: Running command."), "status reply progress")
+        try expect(reply.text.contains("Trusted Messages gates: 0/17 observed; 17 missing inbound; next /codex status (missing-inbound)"), "status reply summarizes trusted gate evidence")
     }
 
     private static func turn(status: String, user: String, answer: String) -> [String: Any] {

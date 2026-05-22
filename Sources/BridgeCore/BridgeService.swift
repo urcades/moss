@@ -393,7 +393,14 @@ public final class BridgeService: @unchecked Sendable {
         switch normalized {
         case "/codex status":
             let snapshot = await cachedCodexCapabilitiesBestEffort(command: config.codex.command, paths: paths, ttlMs: Int.max, refreshTimeoutMs: 5_000)
-            return codexStatusText(capabilitySnapshot: snapshot)
+            let trustedGateSummary: String
+            do {
+                let evidence = try await trustedGateEvidence(config: config, recipient: recipient, service: service)
+                trustedGateSummary = trustedGateSummaryText(evidence)
+            } catch {
+                trustedGateSummary = "unavailable: \(error)"
+            }
+            return codexStatusText(capabilitySnapshot: snapshot, trustedGateSummary: trustedGateSummary)
         case "/codex open":
             guard let threadId = state.codexSession.sessionId, !threadId.isEmpty else {
                 return "There is no active Codex thread to open yet."
@@ -961,7 +968,7 @@ public final class BridgeService: @unchecked Sendable {
         return lines.joined(separator: "\n")
     }
 
-    private func codexStatusText(capabilitySnapshot: CodexCapabilitySnapshot? = nil) -> String {
+    private func codexStatusText(capabilitySnapshot: CodexCapabilitySnapshot? = nil, trustedGateSummary: String? = nil) -> String {
         var lines = [
             "Codex bridge status:",
             "Active backend: codex app-server",
@@ -985,7 +992,8 @@ public final class BridgeService: @unchecked Sendable {
             "Pending interactive callback: \(pendingInteractiveCallbackStatusText())",
             "Last outbound send: \(lastOutboundSendStatusText())",
             "Recent media refs: \(recentMediaRefsStatusText(state.recentMediaRefs ?? []))",
-            "Live smoke results: \(liveSmokeResultsStatusText(state.liveSmokeResults ?? []))"
+            "Live smoke results: \(liveSmokeResultsStatusText(state.liveSmokeResults ?? []))",
+            "Trusted Messages gates: \(trustedGateSummary ?? "unavailable")"
         ]
         if let capabilitySnapshot {
             lines.append(formatCodexCapabilityCacheLine(capabilitySnapshot))

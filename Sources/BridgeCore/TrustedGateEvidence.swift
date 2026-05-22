@@ -290,6 +290,24 @@ public func formatTrustedGateEvidence(_ evidence: [TrustedGateEvidence]) -> Stri
     return lines.joined(separator: "\n")
 }
 
+public func trustedGateSummaryText(_ evidence: [TrustedGateEvidence]) -> String {
+    guard !evidence.isEmpty else { return "no commands configured" }
+    let observed = evidence.filter { $0.status == "observed" }.count
+    let missingInbound = evidence.filter { $0.status == "missing-inbound" }.count
+    let incomplete = evidence.count - observed - missingInbound
+    var parts = ["\(observed)/\(evidence.count) observed"]
+    if missingInbound > 0 {
+        parts.append("\(missingInbound) missing inbound")
+    }
+    if incomplete > 0 {
+        parts.append("\(incomplete) incomplete")
+    }
+    if let next = evidence.first(where: { $0.status != "observed" }) {
+        parts.append("next \(next.command) (\(next.status))")
+    }
+    return parts.joined(separator: "; ")
+}
+
 private func commandRequiresTrustedFollowUp(_ command: String) -> Bool {
     let normalized = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     return normalized == "/codex smoke callback" || normalized == "/codex smoke app-server-callback" || normalized == "/codex smoke mcp-elicitation-callback"
