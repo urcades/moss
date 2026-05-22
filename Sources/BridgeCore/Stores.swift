@@ -258,6 +258,10 @@ private func mergeBridgeStateForConcurrentSave(incoming: BridgeState, existing: 
         incoming: incoming.pendingInteractiveCallback,
         existing: existing.pendingInteractiveCallback
     )
+    merged.lastOutboundSend = mergeLastOutboundSend(
+        incoming: incoming.lastOutboundSend,
+        existing: existing.lastOutboundSend
+    )
     return merged
 }
 
@@ -330,6 +334,33 @@ private func mergePendingInteractiveCallback(incoming: PendingInteractiveCallbac
         return pendingInteractiveCallbackIsTerminal(existing) ? nil : existing
     case (nil, nil):
         return nil
+    }
+}
+
+private func mergeLastOutboundSend(incoming: OutboundSendRecord?, existing: OutboundSendRecord?) -> OutboundSendRecord? {
+    switch (incoming, existing) {
+    case let (incoming?, existing?):
+        if incoming.attemptId == existing.attemptId {
+            return outboundSendRecordRank(incoming) >= outboundSendRecordRank(existing) ? incoming : existing
+        }
+        return incoming.startedAt >= existing.startedAt ? incoming : existing
+    case let (incoming?, nil):
+        return incoming
+    case let (nil, existing?):
+        return existing
+    case (nil, nil):
+        return nil
+    }
+}
+
+private func outboundSendRecordRank(_ record: OutboundSendRecord) -> Int {
+    switch record.status {
+    case "delivered": return 5
+    case "failed": return 4
+    case "dbObserved": return 3
+    case "sentToMessages": return 2
+    case "queued", "sending": return 1
+    default: return record.completedAt == nil ? 0 : 2
     }
 }
 

@@ -690,6 +690,19 @@ struct BridgeCoreFocusedTests {
             expiresAt: "2026-05-22T07:07:00.000Z",
             status: "pending"
         )
+        existing.lastOutboundSend = OutboundSendRecord(
+            attemptId: "send-1",
+            kind: "attachment",
+            recipient: "+1",
+            service: "iMessage",
+            artifact: "/tmp/probe.png",
+            status: "dbObserved",
+            startedAt: "2026-05-22T07:03:00.000Z",
+            completedAt: "2026-05-22T07:03:01.000Z",
+            retryable: false,
+            evidence: OutboundDeliveryEvidence(transport: "AppleScript+MessagesDB", dbRowId: 44, dbError: 0, transferState: 5, dateDelivered: 0),
+            error: nil
+        )
         try stores.state.save(existing)
 
         var staleTickState = defaultBridgeState()
@@ -704,6 +717,7 @@ struct BridgeCoreFocusedTests {
         try expect(reloaded.recentMediaRefs?.contains(where: { $0.rowId == 43 && $0.path == "/tmp/source.png" }) == true, "state save preserves concurrent recent media refs")
         try expect(recentMediaRefsStatusText(reloaded.recentMediaRefs ?? []).contains("source.png"), "recent media status exposes latest image ref")
         try expect(reloaded.pendingInteractiveCallback?.callbackId == "callback-1", "state save preserves non-terminal pending interactive callback")
+        try expect(reloaded.lastOutboundSend?.attemptId == "send-1", "state save preserves concurrent outbound send evidence")
 
         if var completed = reloaded.pendingInteractiveCallback {
             var terminalState = reloaded
@@ -716,6 +730,40 @@ struct BridgeCoreFocusedTests {
         try stores.state.save(clearState)
         let cleared = try stores.state.load()
         try expect(cleared.pendingInteractiveCallback == nil, "terminal pending interactive callback can be cleared")
+
+        var inFlight = cleared
+        inFlight.lastOutboundSend = OutboundSendRecord(
+            attemptId: "send-2",
+            kind: "text",
+            recipient: "+1",
+            service: "iMessage",
+            artifact: nil,
+            body: "hello",
+            status: "sending",
+            startedAt: "2026-05-22T07:04:00.000Z"
+        )
+        try stores.state.save(inFlight)
+        var completedSend = cleared
+        completedSend.lastOutboundSend = OutboundSendRecord(
+            attemptId: "send-2",
+            kind: "text",
+            recipient: "+1",
+            service: "iMessage",
+            artifact: nil,
+            body: "hello",
+            status: "dbObserved",
+            startedAt: "2026-05-22T07:04:00.000Z",
+            completedAt: "2026-05-22T07:04:01.000Z",
+            evidence: OutboundDeliveryEvidence(transport: "AppleScript+MessagesDB", dbRowId: 45, dbError: 0)
+        )
+        try stores.state.save(completedSend)
+        let completedOutbound = try stores.state.load()
+        try expect(completedOutbound.lastOutboundSend?.status == "dbObserved", "state save keeps higher-ranked outbound send status for same attempt")
+        var staleSendUpdate = completedOutbound
+        staleSendUpdate.lastOutboundSend = inFlight.lastOutboundSend
+        try stores.state.save(staleSendUpdate)
+        let preservedOutbound = try stores.state.load()
+        try expect(preservedOutbound.lastOutboundSend?.status == "dbObserved", "stale outbound send update cannot downgrade completed evidence")
     }
 
     private static func testCapabilityFormattingAndCacheSnapshot() throws {
