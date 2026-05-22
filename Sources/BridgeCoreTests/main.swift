@@ -35,6 +35,7 @@ struct BridgeCoreFocusedTests {
         try await testCodexSmokeCapabilityCommandRunsAppServerProbe()
         try await testCodexGatesCommandRepliesWithChecklist()
         try await testCodexTrustedGatesCommandRepliesWithEvidence()
+        try testTrustedGateRunbookListsExactMessagesAndFollowUps()
         try await testCodexSmokeCallbackCapturesNextReplyAndClearsState()
         try await testCodexSmokeAppServerCallbackStartsDefaultBackendTurn()
         try await testCodexSmokeMcpElicitationCallbackStartsDefaultBackendTurn()
@@ -133,6 +134,7 @@ struct BridgeCoreFocusedTests {
         try expect(bridgeLocalCommandName("/codex automations") == "/codex", "exact codex automations command")
         try expect(bridgeLocalCommandName("/codex gates") == "/codex", "exact codex gates command")
         try expect(bridgeLocalCommandName("/codex trusted-gates") == "/codex", "exact codex trusted-gates command")
+        try expect(bridgeLocalCommandName("/codex trusted-gates runbook") == "/codex", "exact codex trusted-gates runbook command")
         try expect(bridgeLocalCommandName("/codex retry-last-send") == "/codex", "exact codex retry command")
         try expect(bridgeLocalCommandName("/codex smoke text") == "/codex", "codex text smoke command")
         try expect(bridgeLocalCommandName("/codex smoke attachment") == "/codex", "codex attachment smoke command")
@@ -827,6 +829,17 @@ struct BridgeCoreFocusedTests {
         try expect(replies.first?.text.contains("Trusted Messages gate evidence:") == true, "codex trusted-gates reply has evidence header")
         try expect(replies.first?.text.contains("/codex trusted-gates:") == false, "codex trusted-gates is an observer, not a required gate")
         try expect(replies.first?.text.contains("Next trusted command to send from Apple Messages: /codex status") == true, "codex trusted-gates names next missing command")
+    }
+
+    private static func testTrustedGateRunbookListsExactMessagesAndFollowUps() throws {
+        let text = trustedGateRunbookText()
+
+        try expect(text.contains("Trusted Messages gate runbook"), "trusted gate runbook has header")
+        try expect(text.contains("1. /codex status"), "trusted gate runbook starts with status")
+        try expect(text.contains("/codex smoke mcp-elicitation-callback"), "trusted gate runbook includes MCP elicitation command")
+        try expect(text.contains("After `/codex smoke callback` prompts, reply exactly: callback smoke reply"), "trusted gate runbook includes callback follow-up")
+        try expect(text.contains("After `/codex smoke app-server-callback` prompts, reply exactly: app-server callback smoke reply"), "trusted gate runbook includes app-server callback follow-up")
+        try expect(text.contains("After `/codex smoke mcp-elicitation-callback` prompts, reply exactly: mcp elicitation smoke reply"), "trusted gate runbook includes MCP elicitation follow-up")
     }
 
     private static func testCodexSmokeOutboundImageCheckSendsProbeAndBuildsFollowUp() async throws {

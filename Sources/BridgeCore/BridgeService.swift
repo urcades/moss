@@ -437,8 +437,10 @@ public final class BridgeService: @unchecked Sendable {
         case "/codex trusted-gates":
             let evidence = try await trustedGateEvidence(config: config, recipient: recipient, service: service)
             return formatTrustedGateEvidence(evidence)
+        case "/codex trusted-gates runbook":
+            return trustedGateRunbookText()
         default:
-            return "Use /codex status, /codex open, /codex history, /codex automations, /codex gates, /codex trusted-gates, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|bridge-attach|generated-image|edit-image-check|app-server-callback|mcp-elicitation-callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
+            return "Use /codex status, /codex open, /codex history, /codex automations, /codex gates, /codex trusted-gates, /codex trusted-gates runbook, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|bridge-attach|generated-image|edit-image-check|app-server-callback|mcp-elicitation-callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
         }
     }
 
@@ -1993,7 +1995,7 @@ private struct CancelTransition {
 
 public func bridgeLocalCommandName(_ text: String) -> String? {
     let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    if ["/codex status", "/codex open", "/codex history", "/codex automations", "/codex gates", "/codex trusted-gates", "/codex retry-last-send"].contains(normalized) || isCodexSmokeCommand(normalized) {
+    if ["/codex status", "/codex open", "/codex history", "/codex automations", "/codex gates", "/codex trusted-gates", "/codex trusted-gates runbook", "/codex retry-last-send"].contains(normalized) || isCodexSmokeCommand(normalized) {
         return "/codex"
     }
     let command = normalized.split(separator: " ").first.map(String.init)

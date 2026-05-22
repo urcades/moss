@@ -308,6 +308,24 @@ public func trustedGateSummaryText(_ evidence: [TrustedGateEvidence]) -> String 
     return parts.joined(separator: "; ")
 }
 
+public func trustedGateRunbookText(commands: [String] = defaultTrustedGateCommands) -> String {
+    var lines = [
+        "Trusted Messages gate runbook",
+        "Send these exact messages from the trusted Apple Messages chat, one at a time. After each command finishes, run /codex trusted-gates to inspect evidence."
+    ]
+    lines += commands.enumerated().map { index, command in
+        "\(index + 1). \(command)"
+    }
+    lines += [
+        "",
+        "Two-step callback replies:",
+        "After `/codex smoke callback` prompts, reply exactly: callback smoke reply",
+        "After `/codex smoke app-server-callback` prompts, reply exactly: app-server callback smoke reply",
+        "After `/codex smoke mcp-elicitation-callback` prompts, reply exactly: mcp elicitation smoke reply"
+    ]
+    return lines.joined(separator: "\n")
+}
+
 private func commandRequiresTrustedFollowUp(_ command: String) -> Bool {
     let normalized = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     return normalized == "/codex smoke callback" || normalized == "/codex smoke app-server-callback" || normalized == "/codex smoke mcp-elicitation-callback"
