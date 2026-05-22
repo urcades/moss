@@ -915,8 +915,9 @@ public final class BridgeService: @unchecked Sendable {
     private func codexAutomationRoutesText() -> String {
         let routes = state.automationRoutes ?? []
         var lines: [String] = []
-        if let creation = state.automationCreationStatus, creation.phase != "confirmed" {
-            lines.append("Automation creation \(creation.phase): \(creation.name ?? creation.automationId ?? "pending")")
+        if let creation = state.automationCreationStatus {
+            let title = creation.name ?? creation.automationId ?? "pending"
+            lines.append("Automation creation \(creation.phase): \(title)")
             if let sourceRowId = creation.sourceRowId {
                 lines.append("Source row: \(sourceRowId)")
             }

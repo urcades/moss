@@ -92,6 +92,7 @@ Success means Messages-triggered automation creation is bridge-owned, synchronou
   - A marked automation creation request produces one truthful confirmation.
   - `/codex automations` shows the route or the exact in-progress/failure phase.
 - Current status:
+  - `/codex automations` now keeps the latest confirmed creation evidence visible too, including created file path, route status, and confirmation-send evidence before listing routes.
   - `swift run codexmsgctl-swift smoke automation` creates a real paused `automation.toml`, persists its route, and records `automationCreationStatus`.
   - Live smoke passed for `bridge-smoke-test-7431ce30` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_B219F241-59D2-449C-BF80-244C7431CE30`.
   - Current live smoke passed for `bridge-smoke-test-8fd10e85` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_2B366AD1-1F91-45B3-99C9-6B728FD10E85`.

@@ -48,6 +48,8 @@ struct BridgeCoreFocusedTests {
         try testAutomationCreationClassifierMatrix()
         try testCodexAutomationCreationWritesAppAutomationToml()
         try testCodexAutomationSmokeCreatesRouteAndStatus()
+        try await testCodexAutomationsReportsCreationInProgress()
+        try await testCodexAutomationsReportsConfirmedCreationEvidence()
         try testBridgeStateSavePreservesConcurrentAutomationFields()
         try testBridgeStateSaveMergesSameActiveJobDetails()
         try testBridgeStateUpdateSerializesSeparateStoreInstances()
@@ -3227,6 +3229,52 @@ struct BridgeCoreFocusedTests {
 
         try expect(text.contains("Automation creation creating: Bridge Smoke Test"), "/codex automations reports in-flight creation")
         try expect(text.contains("Source row: 725"), "/codex automations includes source row")
+    }
+
+    private static func testCodexAutomationsReportsConfirmedCreationEvidence() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        try stores.config.save(defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo"))
+        var state = defaultBridgeState()
+        state.automationCreationStatus = AutomationCreationStatus(
+            automationId: "bridge-smoke-test",
+            name: "Bridge Smoke Test",
+            sourceRowId: 725,
+            sourceGuid: "guid-smoke",
+            phase: "confirmed",
+            createdFilePath: "/Users/moss/.codex/automations/bridge-smoke-test/automation.toml",
+            routeStatus: "route persisted",
+            confirmationSendStatus: "text dbObserved; db row 999",
+            updatedAt: "2026-05-22T00:00:00.000Z"
+        )
+        state.automationRoutes = [
+            CodexAutomationRoute(
+                automationId: "bridge-smoke-test",
+                name: "Bridge Smoke Test",
+                recipient: "+1",
+                service: "iMessage",
+                createdFromGuid: "guid-smoke",
+                createdFromRowId: 725,
+                createdAt: "2026-05-22T00:00:00.000Z"
+            )
+        ]
+        try stores.state.save(state)
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in QueueMessageSource(messages: []) },
+            makeReplySink: { _ in CapturingReplySink() },
+            makeCodex: { _ in FakeProgressCodexBackend(events: [], response: "unused") }
+        )
+
+        try await service.initialize()
+        let text = service.runLocalCommand("/codex automations")
+
+        try expect(text.contains("Automation creation confirmed: Bridge Smoke Test"), "/codex automations reports confirmed creation")
+        try expect(text.contains("Created file: /Users/moss/.codex/automations/bridge-smoke-test/automation.toml"), "/codex automations includes confirmed file")
+        try expect(text.contains("Confirmation send: text dbObserved; db row 999"), "/codex automations includes confirmation send evidence")
+        try expect(text.contains("Codex automation routes:"), "/codex automations still lists routes")
     }
 
     private static func testCompletedAutomationSessionIsForwardedOnce() async throws {
