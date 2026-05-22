@@ -102,6 +102,7 @@ Success means bridge state writes cannot clobber each other and cancellation lea
   - Doctor now parses app-server process snapshots by pid, parent pid, process group, elapsed time, and transport, and flags orphaned `stdio://` app-server processes separately from long-lived `unix://` or desktop app-server processes.
   - Synchronous doctor probes now have a default timeout, and doctor uses cached capability inventory for status instead of blocking on a fresh app-server inventory refresh.
   - Doctor now reports corrupt `state.json` recovery backups by exact backup path when they exist. Deterministic coverage verifies the latest backup path is discoverable; current live doctor reports `State recovery backups: none`.
+  - Doctor now reports helper and permission-broker LaunchAgent loaded state plus provenance across expected installed executable path, LaunchAgent plist `ProgramArguments[0]`, and the loaded `launchctl print` program path. Current live doctor shows all three paths agree for both LaunchAgents.
 - Live gates:
   - Doctor reports app-server process snapshots without hanging.
   - Cancel/timeout leaves no bridge-owned orphan `codex app-server` or Computer Use child process.

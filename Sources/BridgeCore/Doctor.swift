@@ -78,11 +78,24 @@ public final class Doctor: @unchecked Sendable {
         checks.append(await checkRecentFailedOutboundEvidence(config))
         checks.append(checkCodexAppServerProcessSnapshot())
         checks.append(await checkMessagesAutomation(config))
+        checks.append(await checkHelperLaunchAgent())
+        checks.append(checkLaunchAgentProvenance(
+            name: "Helper LaunchAgent provenance",
+            label: BridgeConstants.helperLaunchAgentLabel,
+            plistPath: paths.helperLaunchAgentPath,
+            expectedExecutable: paths.installedHelperExecutablePath
+        ))
         checks.append(checkTCC("Full Disk Access", services: ["kTCCServiceSystemPolicyAllFiles"], clients: bridgeClients(), missingDetail: "Grant Full Disk Access to Messages Codex Bridge so it can read Messages DB."))
         checks.append(checkTCC("Codex Accessibility", services: ["kTCCServiceAccessibility"], clients: codexComputerUseClients(), missingDetail: "Grant Accessibility to Codex and Codex Computer Use."))
         checks.append(checkTCC("Codex Screen Recording", services: ["kTCCServiceScreenCapture"], clients: codexComputerUseClients(), missingDetail: "Grant Screen Recording to Codex and Codex Computer Use."))
         checks.append(checkAppleEventsTarget("Automation: Computer Use", target: "com.openai.sky.CUAService"))
         checks.append(await checkPermissionBrokerLaunchAgent())
+        checks.append(checkLaunchAgentProvenance(
+            name: "Permission Broker LaunchAgent provenance",
+            label: BridgeConstants.permissionBrokerLaunchAgentLabel,
+            plistPath: paths.permissionBrokerLaunchAgentPath,
+            expectedExecutable: paths.installedPermissionBrokerExecutablePath
+        ))
         checks.append(checkTCC("Permission Broker Accessibility", services: ["kTCCServiceAccessibility"], clients: permissionBrokerClients(), missingDetail: "Grant Accessibility to Messages Codex Permission Broker so it can handle visible permission prompts."))
         checks.append(checkPermissionBrokerStatus())
         if includeComputerUseProbe {
@@ -258,6 +271,34 @@ public final class Doctor: @unchecked Sendable {
         return loaded
             ? DoctorCheck(name: "Permission Broker LaunchAgent", ok: true, detail: BridgeConstants.permissionBrokerLaunchAgentLabel)
             : DoctorCheck(name: "Permission Broker LaunchAgent", ok: false, detail: "Start the bridge with codexmsgctl-swift start to load \(BridgeConstants.permissionBrokerLaunchAgentLabel).")
+    }
+
+    private func checkHelperLaunchAgent() async -> DoctorCheck {
+        let loaded = await ServiceLifecycle(paths: paths).helperLaunchAgentLoaded()
+        return loaded
+            ? DoctorCheck(name: "Helper LaunchAgent", ok: true, detail: BridgeConstants.helperLaunchAgentLabel)
+            : DoctorCheck(name: "Helper LaunchAgent", ok: false, detail: "Start the bridge with codexmsgctl-swift start to load \(BridgeConstants.helperLaunchAgentLabel).")
+    }
+
+    private func checkLaunchAgentProvenance(name: String, label: String, plistPath: URL, expectedExecutable: URL) -> DoctorCheck {
+        let expected = expectedExecutable.standardizedFileURL.path
+        guard let plistProgram = launchAgentProgramArgument(at: plistPath) else {
+            return DoctorCheck(name: name, ok: false, detail: "Missing or unreadable LaunchAgent plist at \(plistPath.path).")
+        }
+        let plistMatches = URL(fileURLWithPath: plistProgram).standardizedFileURL.path == expected
+        let loadedProgram = (try? runner.runSync("/bin/launchctl", ["print", "gui/\(getuid())/\(label)"], timeoutMs: 5_000)).flatMap(launchctlProgram)
+        let loadedMatches = loadedProgram.map { URL(fileURLWithPath: $0).standardizedFileURL.path == expected }
+        var parts = [
+            "expected \(expected)",
+            "plist \(plistProgram)"
+        ]
+        if let loadedProgram {
+            parts.append("loaded \(loadedProgram)")
+        } else {
+            parts.append("loaded unavailable")
+        }
+        let ok = plistMatches && (loadedMatches ?? true)
+        return DoctorCheck(name: name, ok: ok, detail: parts.joined(separator: "; "))
     }
 
     private func checkPermissionBrokerStatus() -> DoctorCheck {
@@ -476,6 +517,28 @@ public func codeSigningSummary(at url: URL) -> String {
         return team
     }
     return process.terminationStatus == 0 ? "signed" : "unsigned or invalid"
+}
+
+public func launchAgentProgramArgument(at plistPath: URL) -> String? {
+    guard let data = try? Data(contentsOf: plistPath),
+          let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+          let dict = plist as? [String: Any],
+          let arguments = dict["ProgramArguments"] as? [String],
+          let first = arguments.first,
+          !first.isEmpty else {
+        return nil
+    }
+    return first
+}
+
+public func launchctlProgram(from output: String) -> String? {
+    for line in output.components(separatedBy: .newlines) {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("program = ") else { continue }
+        let value = String(trimmed.dropFirst("program = ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+    return nil
 }
 
 public extension ProcessRunner {

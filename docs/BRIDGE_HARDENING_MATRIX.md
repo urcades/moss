@@ -20,7 +20,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 | State files | `state.json` is truncated or corrupt | JSON store backs up corrupt files and falls back to defaults instead of wedging startup; doctor reports corrupt-state backup paths when present | Add live evidence the next time a real corrupt-state recovery happens |
 | Automations | Poll loop rereads all historical session JSONL | Bounded scan API skips delivered lower-bound sessions and has read-budget coverage | Persist scan watermarks if session-id ordering proves insufficient |
 | Automations | Diagnostic prompt creates automation | Classifier regression tests cover known false positives | Broaden natural-language classifier matrix |
-| LaunchAgents/runtime | Installed helper, runtime copy, and source drift | Doctor/status expose more runtime facts in recent work | Add provenance comparison against exact running executable and app bundle versions |
+| LaunchAgents/runtime | Installed helper, runtime copy, and source drift | Doctor/status expose runtime facts, helper/broker loaded state, and provenance comparison across expected executable, LaunchAgent plist, and loaded launchd program | Add source-vs-installed build identity comparison if release metadata becomes available |
 | Codex version drift | Bridge leaves new platform features unused | Capability adoption table below records current state | Recheck after each Codex CLI/app-server upgrade |
 
 ## Tests Added Or Strengthened

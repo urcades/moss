@@ -72,6 +72,7 @@ struct BridgeCoreFocusedTests {
         try await testPendingInteractiveCallbackCancelAndTimeout()
         try testCorruptedStateJsonBacksUpAndDefaults()
         try testStateRecoveryBackupDiagnosticsReportBackupPath()
+        try testLaunchAgentProgramDiagnostics()
         try await testAutomationRequestCreatesCodexAutomationFromInterpretedSpec()
         try await testCodexAutomationsReportsCreationInProgress()
         try await testCompletedAutomationSessionIsForwardedOnce()
@@ -1639,6 +1640,29 @@ struct BridgeCoreFocusedTests {
 
         try expect(stateRecoveryBackupCount(paths: paths) == 2, "state recovery backup count")
         try expect(backups.map(\.path) == [newer.path], "state recovery diagnostics report latest backup path")
+    }
+
+    private static func testLaunchAgentProgramDiagnostics() throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let helperPath = paths.tmpDir.appendingPathComponent("Helper With Spaces")
+        try Data("#!/bin/sh\n".utf8).write(to: helperPath)
+        let plistData = try helperLaunchAgentPlistData(paths: paths, helperExecutable: helperPath)
+        try FileManager.default.createDirectory(at: paths.launchAgentsDir, withIntermediateDirectories: true)
+        try plistData.write(to: paths.helperLaunchAgentPath)
+        let launchctlOutput = """
+        gui/501/com.moss.MessagesCodexBridge.Helper = {
+            state = running
+
+            program = \(helperPath.path)
+            arguments = {
+                \(helperPath.path)
+            }
+        }
+        """
+
+        try expect(launchAgentProgramArgument(at: paths.helperLaunchAgentPath) == helperPath.path, "launchagent plist program argument")
+        try expect(launchctlProgram(from: launchctlOutput) == helperPath.path, "launchctl loaded program parser")
     }
 
     private static func testAutomationRequestCreatesCodexAutomationFromInterpretedSpec() async throws {
