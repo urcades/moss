@@ -76,3 +76,28 @@ public func chunkMessageText(_ text: String, chunkSize: Int) -> [String] {
     }
     return chunks
 }
+
+public func outboundSendStatusText(_ send: OutboundSendRecord?) -> String {
+    guard let send else { return "none" }
+    var parts = [
+        "\(send.kind) \(send.status)",
+        "to \(send.recipient) via \(send.service)",
+        "attempt \(send.attemptId)"
+    ]
+    if let artifact = send.artifact {
+        parts.append("artifact \(artifact)")
+    }
+    if let rowId = send.evidence?.dbRowId {
+        parts.append("db row \(rowId)")
+    }
+    if send.retryable {
+        parts.append("retryable")
+    }
+    if let error = send.error, !error.isEmpty {
+        let short = error.count > 160 ? String(error.prefix(160)) : error
+        parts.append("error \(short)")
+    } else if let detail = send.evidence?.detail, !detail.isEmpty {
+        parts.append(detail)
+    }
+    return parts.joined(separator: "; ")
+}

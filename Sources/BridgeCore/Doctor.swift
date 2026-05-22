@@ -77,8 +77,25 @@ public final class Doctor: @unchecked Sendable {
             DoctorCheck(name: "Codex thread/read", ok: true, detail: capabilities.threadReadAvailable ? "yes" : "no"),
             DoctorCheck(name: "Codex enhanced bridge UX", ok: true, detail: capabilities.enhancedBridgeUXAvailable ? "yes" : "degraded")
         ]
+        if let inventory = capabilities.inventory {
+            checks.append(DoctorCheck(name: "Codex skills inventory", ok: true, detail: "\(inventory.enabledSkillCount) enabled / \(inventory.skills.count) total\(doctorSampleSuffix(inventory.skills.map(\.name)))"))
+            checks.append(DoctorCheck(name: "Codex plugins inventory", ok: true, detail: "\(inventory.plugins.count)\(doctorSampleSuffix(inventory.plugins.map { $0.displayName ?? $0.name }))"))
+            checks.append(DoctorCheck(name: "Codex apps/connectors inventory", ok: true, detail: "\(inventory.accessibleAppCount) accessible / \(inventory.apps.count) total\(doctorSampleSuffix(inventory.apps.filter(\.isAccessible).map(\.name)))"))
+            checks.append(DoctorCheck(name: "Codex MCP inventory", ok: true, detail: "\(inventory.mcpServers.count) server(s), \(inventory.mcpToolCount) tool(s)\(doctorSampleSuffix(inventory.mcpServers.map(\.name)))"))
+        } else {
+            checks.append(DoctorCheck(name: "Codex tool inventory", ok: false, detail: "Unavailable from app-server."))
+        }
         checks += capabilities.warnings.map { DoctorCheck(name: "Codex capability warning", ok: true, detail: $0) }
         return checks
+    }
+
+    private func doctorSampleSuffix(_ values: [String], limit: Int = 5) -> String {
+        let names = values
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !names.isEmpty else { return "" }
+        let shown = names.prefix(limit).joined(separator: ", ")
+        return names.count > limit ? " (\(shown), ...)" : " (\(shown))"
     }
 
     private func checkTrustedSenders(_ config: BridgeConfig) -> DoctorCheck {

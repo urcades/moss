@@ -23,9 +23,14 @@ public enum BridgeConstants {
     public static let localCommands: Set<String> = ["/status", "/cancel", "/reset", "/new", "/help", "/permissions", "/codex"]
     public static let baseBridgeInstructions = """
     You are replying through Apple Messages on a Mac.
+    Apple Messages is a remote control surface for Codex running on this Mac.
     Return plain text only.
     Do not include ANSI color codes.
     Avoid heavy markdown, code fences, and tables unless the user explicitly asks for them.
+    Treat requests to create, update, list, delete, watch, monitor, remind, follow up, or otherwise schedule automations as requests to use Codex automation tools when those tools are available.
+    If Codex automation tools are unavailable, say that clearly; do not implement a replacement inside the Messages bridge unless the user explicitly asks you to change the bridge.
+    Treat requests that name plugins, skills, apps, or tools as requests to invoke the relevant Codex capability when available.
+    Do not modify the Messages bridge itself unless the user explicitly asks to change the bridge.
     When you create or save an image, screenshot, PDF, document, archive, or other file artifact that should be sent to the user, include a separate line `BRIDGE_ATTACH: /absolute/path/to/file`.
     Output only the text that should be sent back as the message reply.
     """
@@ -312,19 +317,118 @@ public struct PendingBatch: Codable, Equatable, Sendable {
     }
 }
 
+public struct CodexAutomationRoute: Codable, Equatable, Sendable {
+    public var automationId: String
+    public var name: String
+    public var recipient: String
+    public var service: String
+    public var createdFromGuid: String?
+    public var createdFromRowId: Int64?
+    public var createdAt: String
+    public var lastSeenSessionId: String?
+    public var lastDeliveredSessionId: String?
+    public var lastDeliveredAt: String?
+
+    public init(
+        automationId: String,
+        name: String,
+        recipient: String,
+        service: String,
+        createdFromGuid: String?,
+        createdFromRowId: Int64?,
+        createdAt: String,
+        lastSeenSessionId: String? = nil,
+        lastDeliveredSessionId: String? = nil,
+        lastDeliveredAt: String? = nil
+    ) {
+        self.automationId = automationId
+        self.name = name
+        self.recipient = recipient
+        self.service = service
+        self.createdFromGuid = createdFromGuid
+        self.createdFromRowId = createdFromRowId
+        self.createdAt = createdAt
+        self.lastSeenSessionId = lastSeenSessionId
+        self.lastDeliveredSessionId = lastDeliveredSessionId
+        self.lastDeliveredAt = lastDeliveredAt
+    }
+}
+
+public struct OutboundDeliveryEvidence: Codable, Equatable, Sendable {
+    public var transport: String
+    public var dbRowId: Int64?
+    public var dbError: Int?
+    public var transferState: Int?
+    public var dateDelivered: Int64?
+    public var detail: String?
+
+    public init(transport: String, dbRowId: Int64? = nil, dbError: Int? = nil, transferState: Int? = nil, dateDelivered: Int64? = nil, detail: String? = nil) {
+        self.transport = transport
+        self.dbRowId = dbRowId
+        self.dbError = dbError
+        self.transferState = transferState
+        self.dateDelivered = dateDelivered
+        self.detail = detail
+    }
+}
+
+public struct OutboundSendRecord: Codable, Equatable, Sendable {
+    public var attemptId: String
+    public var kind: String
+    public var recipient: String
+    public var service: String
+    public var artifact: String?
+    public var status: String
+    public var startedAt: String
+    public var completedAt: String?
+    public var retryable: Bool
+    public var evidence: OutboundDeliveryEvidence?
+    public var error: String?
+
+    public init(
+        attemptId: String,
+        kind: String,
+        recipient: String,
+        service: String,
+        artifact: String?,
+        status: String,
+        startedAt: String,
+        completedAt: String? = nil,
+        retryable: Bool = false,
+        evidence: OutboundDeliveryEvidence? = nil,
+        error: String? = nil
+    ) {
+        self.attemptId = attemptId
+        self.kind = kind
+        self.recipient = recipient
+        self.service = service
+        self.artifact = artifact
+        self.status = status
+        self.startedAt = startedAt
+        self.completedAt = completedAt
+        self.retryable = retryable
+        self.evidence = evidence
+        self.error = error
+    }
+}
+
 public struct BridgeState: Codable, Equatable, Sendable {
     public var lastProcessedGuid: String?
     public var lastProcessedRowId: Int64
     public var pendingBatch: PendingBatch?
     public var activeJob: ActiveJob?
     public var codexSession: CodexSessionState
+    public var automationRoutes: [CodexAutomationRoute]?
+    public var lastOutboundSend: OutboundSendRecord?
 
-    public init(lastProcessedGuid: String?, lastProcessedRowId: Int64, pendingBatch: PendingBatch?, activeJob: ActiveJob?, codexSession: CodexSessionState) {
+    public init(lastProcessedGuid: String?, lastProcessedRowId: Int64, pendingBatch: PendingBatch?, activeJob: ActiveJob?, codexSession: CodexSessionState, automationRoutes: [CodexAutomationRoute]? = nil, lastOutboundSend: OutboundSendRecord? = nil) {
         self.lastProcessedGuid = lastProcessedGuid
         self.lastProcessedRowId = lastProcessedRowId
         self.pendingBatch = pendingBatch
         self.activeJob = activeJob
         self.codexSession = codexSession
+        self.automationRoutes = automationRoutes
+        self.lastOutboundSend = lastOutboundSend
     }
 }
 
@@ -337,6 +441,16 @@ public struct PromptRequest: Equatable, Sendable {
         self.promptText = promptText
         self.attachments = attachments
         self.threadName = threadName
+    }
+}
+
+public struct CodexMentionRef: Codable, Equatable, Sendable {
+    public var name: String
+    public var path: String
+
+    public init(name: String, path: String) {
+        self.name = name
+        self.path = path
     }
 }
 

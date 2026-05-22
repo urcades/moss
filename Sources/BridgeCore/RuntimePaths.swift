@@ -5,6 +5,9 @@ public struct RuntimePaths: Equatable, Sendable {
     public var projectRoot: URL
     public var defaultCodexCwd: URL
     public var appSupportDir: URL
+    public var codexHomeDir: URL
+    public var codexAutomationsDir: URL
+    public var codexSessionsDir: URL
     public var stateDir: URL
     public var tmpDir: URL
     public var logsDir: URL
@@ -28,6 +31,7 @@ public struct RuntimePaths: Equatable, Sendable {
         let home = URL(fileURLWithPath: NSHomeDirectory())
         let root = projectRoot ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let appSupport = URL(fileURLWithPath: environment["MESSAGES_LLM_BRIDGE_HOME"] ?? home.appendingPathComponent("Library/Application Support/\(BridgeConstants.appName)").path)
+        let codexHome = URL(fileURLWithPath: environment["CODEX_HOME"] ?? home.appendingPathComponent(".codex").path)
         let logs = URL(fileURLWithPath: environment["MESSAGES_LLM_BRIDGE_LOG_DIR"] ?? home.appendingPathComponent("Library/Logs/\(BridgeConstants.appName)").path)
         let launchAgents = URL(fileURLWithPath: environment["MESSAGES_LLM_BRIDGE_LAUNCH_AGENTS_DIR"] ?? home.appendingPathComponent("Library/LaunchAgents").path)
         let state = appSupport.appendingPathComponent("state")
@@ -36,6 +40,9 @@ public struct RuntimePaths: Equatable, Sendable {
             projectRoot: root,
             defaultCodexCwd: root,
             appSupportDir: appSupport,
+            codexHomeDir: codexHome,
+            codexAutomationsDir: codexHome.appendingPathComponent("automations"),
+            codexSessionsDir: codexHome.appendingPathComponent("sessions"),
             stateDir: state,
             tmpDir: appSupport.appendingPathComponent("tmp"),
             logsDir: logs,

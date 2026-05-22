@@ -1,8 +1,8 @@
 import Foundation
 
 public protocol ReplySink: Sendable {
-    func sendReply(recipient: String, service: String, text: String) async throws
-    func sendAttachment(recipient: String, service: String, filePath: String) async throws
+    func sendReply(recipient: String, service: String, text: String) async throws -> OutboundDeliveryEvidence
+    func sendAttachment(recipient: String, service: String, filePath: String) async throws -> OutboundDeliveryEvidence
 }
 
 public final class AppleMessagesReplySink: ReplySink {
@@ -18,19 +18,19 @@ public final class AppleMessagesReplySink: ReplySink {
         self.runner = runner
     }
 
-    public func sendReply(recipient: String, service: String, text: String) async throws {
+    public func sendReply(recipient: String, service: String, text: String) async throws -> OutboundDeliveryEvidence {
         for chunk in chunkMessageText(text, chunkSize: chunkSize) {
             try await sendChunk(recipient: recipient, service: service, text: chunk)
         }
+        return OutboundDeliveryEvidence(transport: "AppleScript", detail: "Messages accepted \(chunkMessageText(text, chunkSize: chunkSize).count) text chunk(s).")
     }
 
-    public func sendAttachment(recipient: String, service: String, filePath: String) async throws {
+    public func sendAttachment(recipient: String, service: String, filePath: String) async throws -> OutboundDeliveryEvidence {
         let serviceType = service.lowercased().contains("sms") ? "SMS" : "iMessage"
 
         if isClipboardSendableImage(filePath) {
             let clipboardPath = try await clipboardPreferredImagePath(from: filePath)
-            try await sendClipboardImage(recipient: recipient, serviceType: serviceType, filePath: clipboardPath)
-            return
+            return try await sendClipboardImage(recipient: recipient, serviceType: serviceType, filePath: clipboardPath)
         }
 
         let beforeRowId = try await latestOutgoingMessageRowId()
@@ -38,7 +38,7 @@ public final class AppleMessagesReplySink: ReplySink {
             let lines = appleMessagesAttachmentScriptLines()
             let args = lines.flatMap { ["-e", $0] } + ["--", recipient, serviceType, filePath]
             _ = try await runner.run(osascriptCommand, args)
-            try await verifyAttachmentSend(afterRowId: beforeRowId, originalFileName: URL(fileURLWithPath: filePath).lastPathComponent)
+            return try await verifyAttachmentSend(afterRowId: beforeRowId, originalFileName: URL(fileURLWithPath: filePath).lastPathComponent)
         } catch let fileSendError {
             throw fileSendError
         }
@@ -52,12 +52,12 @@ public final class AppleMessagesReplySink: ReplySink {
         return try await createClipboardFriendlyJPEG(from: filePath) ?? filePath
     }
 
-    private func sendClipboardImage(recipient: String, serviceType: String, filePath: String) async throws {
+    private func sendClipboardImage(recipient: String, serviceType: String, filePath: String) async throws -> OutboundDeliveryEvidence {
         let fallbackBeforeRowId = try await latestOutgoingMessageRowId()
         let lines = appleMessagesClipboardImageScriptLines()
         let args = lines.flatMap { ["-e", $0] } + ["--", recipient, serviceType, filePath]
         _ = try await runner.run(osascriptCommand, args)
-        try await verifyAttachmentSend(afterRowId: fallbackBeforeRowId, originalFileName: nil)
+        return try await verifyAttachmentSend(afterRowId: fallbackBeforeRowId, originalFileName: nil)
     }
 
     private func createClipboardFriendlyJPEG(from filePath: String) async throws -> String? {
@@ -77,8 +77,10 @@ public final class AppleMessagesReplySink: ReplySink {
         return Int64(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
     }
 
-    private func verifyAttachmentSend(afterRowId: Int64, originalFileName: String?) async throws {
-        guard let messagesDbPath else { return }
+    private func verifyAttachmentSend(afterRowId: Int64, originalFileName: String?) async throws -> OutboundDeliveryEvidence {
+        guard let messagesDbPath else {
+            return OutboundDeliveryEvidence(transport: "AppleScript", detail: "No Messages database configured for attachment verification.")
+        }
         try? await Task.sleep(nanoseconds: 3_000_000_000)
         let nameFilter: String
         if let originalFileName {
@@ -104,12 +106,21 @@ public final class AppleMessagesReplySink: ReplySink {
             throw StoreError.validation("Messages did not create an outgoing attachment row.")
         }
         let rowId = fields[0]
+        let rowIdValue = Int64(rowId)
         let error = Int(fields[1]) ?? 0
         let transferState = Int(fields[2]) ?? 0
         let delivered = Int64(fields[3]) ?? 0
         if error != 0 || transferState == 6 || delivered == 0 {
             throw StoreError.validation("Messages created an outgoing attachment row \(rowId), but did not deliver it: error=\(error), transfer_state=\(transferState), date_delivered=\(delivered).")
         }
+        return OutboundDeliveryEvidence(
+            transport: "AppleScript+MessagesDB",
+            dbRowId: rowIdValue,
+            dbError: error,
+            transferState: transferState,
+            dateDelivered: delivered,
+            detail: "Messages created and delivered an outgoing attachment row."
+        )
     }
 
     private func sendChunk(recipient: String, service: String, text: String) async throws {

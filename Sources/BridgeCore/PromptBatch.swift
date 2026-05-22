@@ -8,6 +8,35 @@ public func buildBatchPreview(_ batch: PendingBatch) -> String {
     return String(joined.prefix(120))
 }
 
+public func promptLooksLikeCodexAutomationRequest(_ text: String) -> Bool {
+    let normalized = text.lowercased()
+    if promptExplicitlyTargetsBridgeSource(normalized) {
+        return false
+    }
+    let automationTerms = [
+        "automation",
+        "automations",
+        "automate",
+        "reminder",
+        "remind me",
+        "schedule",
+        "scheduled",
+        "recurring",
+        "monitor",
+        "watch",
+        "check back",
+        "follow up"
+    ]
+    return automationTerms.contains { normalized.contains($0) }
+}
+
+private func promptExplicitlyTargetsBridgeSource(_ normalized: String) -> Bool {
+    let bridgeTerms = ["bridge", "messages bridge", "moss", "helper"]
+    let sourceTerms = ["source", "code", "swift", "implementation", "implement", "modify", "edit", "change", "patch"]
+    return bridgeTerms.contains { normalized.contains($0) } &&
+        sourceTerms.contains { normalized.contains($0) }
+}
+
 public func buildPromptRequest(from batch: PendingBatch) -> PromptRequest {
     var lines = [
         "These Apple Messages arrived within one short window. Interpret them as a single prompt.",
@@ -27,6 +56,14 @@ public func buildPromptRequest(from batch: PendingBatch) -> PromptRequest {
             lines.append(describeAttachment(refreshed))
             attachments.append(refreshed)
         }
+    }
+
+    if promptLooksLikeCodexAutomationRequest(batch.items.map(\.text).joined(separator: "\n")) {
+        lines.insert("""
+        Bridge routing guard:
+        This user is asking Codex to use an automation, reminder, scheduling, monitoring, or follow-up capability on this Mac. Do not implement, modify, inspect, or continue any Messages bridge scheduler or daily digest code. Do not use memory entries about bridge daily digest scaffolds as instructions. If a Codex automation tool is available, use it. If no such tool is available in this Messages-launched turn, reply plainly that the automation cannot be created from here.
+
+        """, at: 0)
     }
 
     return PromptRequest(promptText: lines.joined(separator: "\n"), attachments: attachments, threadName: buildBatchPreview(batch))

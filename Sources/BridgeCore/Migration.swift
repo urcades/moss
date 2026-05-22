@@ -132,13 +132,23 @@ public final class ServiceLifecycle {
     }
 
     public func helperLaunchAgentLoaded() async -> Bool {
-        (try? await runner.run("/bin/launchctl", ["print", "gui/\(getuid())/\(BridgeConstants.helperLaunchAgentLabel)"])) != nil
+        await launchAgentLoaded(label: BridgeConstants.helperLaunchAgentLabel)
     }
 
     public func permissionBrokerLaunchAgentLoaded() async -> Bool {
-        (try? await runner.run("/bin/launchctl", ["print", "gui/\(getuid())/\(BridgeConstants.permissionBrokerLaunchAgentLabel)"])) != nil
+        await launchAgentLoaded(label: BridgeConstants.permissionBrokerLaunchAgentLabel)
     }
 
+    private func launchAgentLoaded(label: String) async -> Bool {
+        let domain = "gui/\(getuid())"
+        if (try? await runner.run("/bin/launchctl", ["print", "\(domain)/\(label)"])) != nil {
+            return true
+        }
+        guard let domainPrint = try? await runner.run("/bin/launchctl", ["print", domain]) else {
+            return false
+        }
+        return domainPrint.stdout.contains(label)
+    }
 }
 
 public func helperLaunchAgentPlistData(paths: RuntimePaths, helperExecutable: URL) throws -> Data {

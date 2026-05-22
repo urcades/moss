@@ -101,6 +101,7 @@ struct CodexMsgCtlSwift {
             print("Active job latest progress: \(state.activeJob?.lastObservedSummary ?? "none")")
             print("Active job Codex thread id: \(state.activeJob?.codexSessionId ?? "none")")
             print("Active job Codex turn id: \(state.activeJob?.codexTurnId ?? "none")")
+            print("Last outbound send: \(outboundSendStatusText(state.lastOutboundSend))")
             if let brokerStatus = readPermissionBrokerStatus(paths: paths) {
                 print("Permission broker accessibility trusted: \(brokerStatus.accessibilityTrusted ? "yes" : "no")")
                 print("Permission broker last update: \(brokerStatus.lastSummary ?? "none")")
