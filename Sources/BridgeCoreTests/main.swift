@@ -48,6 +48,7 @@ struct BridgeCoreFocusedTests {
         try await testAppServerBackendUsesReadOnlySandboxForAutomationRequests()
         try await testAppServerBackendRejectsNonFinalAgentMessageAsReply()
         try await testAppServerBackendForwardsDynamicToolRequests()
+        try await testAppServerBackendResolvesInteractiveCallbacksWithResponder()
         try await testAppServerBackendBlocksUserInputAndElicitationRequests()
         try await testAppServerBackendNamesNewThreadFromPrompt()
         try await testAppServerBackendResumesThreadAndIgnoresMalformedNotifications()
@@ -823,6 +824,45 @@ struct BridgeCoreFocusedTests {
         try expect(contentItems.contains { $0["type"] as? String == "inputText" && $0["text"] as? String == "ok from node" }, "dynamic tool response converts MCP text content")
     }
 
+    private static func testAppServerBackendResolvesInteractiveCallbacksWithResponder() async throws {
+        let fake = FakeCodexAppServerConnection(lines: [
+            #"{"id":1,"result":{"ok":true}}"#,
+            #"{"id":2,"result":{"thread":{"id":"thread-prompts","path":"/tmp/thread.jsonl"}}}"#,
+            #"{"id":3,"result":{"turn":{"id":"turn-prompts"}}}"#,
+            #"{"id":70,"method":"item/tool/requestUserInput","params":{"threadId":"thread-prompts","turnId":"turn-prompts","itemId":"item-input","questions":[{"id":"choice","header":"Pick","question":"Choose one","isOther":false,"isSecret":false,"options":[{"label":"A","description":"first"},{"label":"B","description":"second"}]}]}}"#,
+            #"{"id":71,"method":"mcpServer/elicitation/request","params":{"threadId":"thread-prompts","turnId":null,"serverName":"codex_apps","mode":"form","message":"Need confirmation","requestedSchema":{"type":"object","properties":{"confirmed":{"type":"boolean"}}}}}"#,
+            #"{"method":"item/completed","params":{"threadId":"thread-prompts","turnId":"turn-prompts","item":{"type":"agentMessage","id":"item-1","phase":"final_answer","text":"prompt callbacks resolved"}}}"#,
+            #"{"method":"turn/completed","params":{"threadId":"thread-prompts","turn":{"id":"turn-prompts","status":"completed","error":null}}}"#
+        ])
+        var config = defaultBridgeConfig(paths: testPaths(), codexCommand: "/bin/echo")
+        config.timeoutMs = 1_000
+        let callbackMethods = StringCollector()
+        let backend = CodexAppServerBackend(
+            config: config,
+            paths: testPaths(),
+            interactiveCallbackResponder: { method, _, _ in
+                callbackMethods.append(method)
+                if method == "item/tool/requestUserInput" {
+                    return ["result": ["answers": ["choice": ["answers": ["B"]]]]]
+                }
+                return ["result": ["action": "accept", "content": ["confirmed": true], "_meta": NSNull()]]
+            },
+            makeConnection: { fake }
+        )
+
+        let response = try await backend.invoke(PromptRequest(promptText: "Exercise structured prompt callbacks.", attachments: []), sessionId: nil, onEvent: nil)
+
+        try expect(response.text == "prompt callbacks resolved", "interactive callbacks still allow final answer")
+        try expect(callbackMethods.snapshot() == ["item/tool/requestUserInput", "mcpServer/elicitation/request"], "interactive callback responder sees both methods")
+        let inputReply = fake.sentMessages.first { ($0["id"] as? Int) == 70 }
+        let inputResult = inputReply?["result"] as? [String: Any]
+        let answers = inputResult?["answers"] as? [String: Any]
+        try expect(answers?["choice"] != nil, "requestUserInput sends responder answers")
+        let elicitationReply = fake.sentMessages.first { ($0["id"] as? Int) == 71 }
+        let elicitationResult = elicitationReply?["result"] as? [String: Any]
+        try expect(elicitationResult?["action"] as? String == "accept", "elicitation sends responder result")
+    }
+
     private static func testAppServerBackendBlocksUserInputAndElicitationRequests() async throws {
         let fake = FakeCodexAppServerConnection(lines: [
             #"{"id":1,"result":{"ok":true}}"#,
@@ -1580,6 +1620,23 @@ private final class CodexEventCollector: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return events
+    }
+}
+
+private final class StringCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String] = []
+
+    func append(_ value: String) {
+        lock.lock()
+        values.append(value)
+        lock.unlock()
+    }
+
+    func snapshot() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return values
     }
 }
 

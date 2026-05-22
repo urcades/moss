@@ -67,7 +67,9 @@ Success means app-server `item/tool/requestUserInput` and `mcpServer/elicitation
   - State saves now preserve non-terminal `pendingInteractiveCallback` records across stale helper/CLI saves while still allowing terminal callbacks to clear.
   - Inbound trusted non-command replies now route to pending callback state instead of starting a new prompt batch, recording response text/row/guid and sending a visible acknowledgement.
   - `/cancel` and callback expiration now clear pending callback state and send visible Messages feedback.
-  - This still does not complete the architecture gate: the captured answer is persisted, but the live app-server JSON-RPC responder channel still needs to consume it and resume the original request.
+  - `CodexAppServerBackend` now accepts an interactive callback responder and can return real JSON-RPC results for `item/tool/requestUserInput` and `mcpServer/elicitation/request` instead of always emitting the unsupported error.
+  - The default bridge backend now persists a pending callback, messages the user, waits for the routed answer, returns app-server-shaped callback results, and clears terminal callback state.
+  - Remaining gap: this still needs a live Messages smoke that proves a real app-server callback pauses, receives the next trusted reply, and completes the original Codex turn end to end.
 
 ## Goal 5: Runtime State And Process Supervision
 

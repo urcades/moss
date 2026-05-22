@@ -202,6 +202,8 @@ public enum CodexAppServerError: Error, CustomStringConvertible, Equatable, Send
     }
 }
 
+public typealias CodexInteractiveCallbackResponder = @Sendable (_ method: String, _ requestId: Any, _ params: [String: Any]?) throws -> [String: Any]
+
 public protocol CodexAppServerConnection: AnyObject, Sendable {
     func start() throws
     func send(_ message: [String: Any]) throws
@@ -281,29 +283,38 @@ public final class CodexAppServerBackend: CodexBackend, @unchecked Sendable {
     private let config: BridgeConfig
     private let paths: RuntimePaths
     private let makeConnection: @Sendable () throws -> CodexAppServerConnection
+    private let interactiveCallbackResponder: CodexInteractiveCallbackResponder?
 
     public convenience init(config: BridgeConfig, paths: RuntimePaths) {
-        self.init(config: config, paths: paths) {
+        self.init(config: config, paths: paths, interactiveCallbackResponder: nil) {
             ProcessCodexAppServerConnection(command: config.codex.command)
         }
     }
 
-    public init(config: BridgeConfig, paths: RuntimePaths, makeConnection: @escaping @Sendable () throws -> CodexAppServerConnection) {
+    public convenience init(config: BridgeConfig, paths: RuntimePaths, interactiveCallbackResponder: CodexInteractiveCallbackResponder?) {
+        self.init(config: config, paths: paths, interactiveCallbackResponder: interactiveCallbackResponder) {
+            ProcessCodexAppServerConnection(command: config.codex.command)
+        }
+    }
+
+    public init(config: BridgeConfig, paths: RuntimePaths, interactiveCallbackResponder: CodexInteractiveCallbackResponder? = nil, makeConnection: @escaping @Sendable () throws -> CodexAppServerConnection) {
         self.config = config
         self.paths = paths
         self.makeConnection = makeConnection
+        self.interactiveCallbackResponder = interactiveCallbackResponder
     }
 
     public func invoke(_ request: PromptRequest, sessionId: String?, onEvent: (@Sendable (CodexStreamEvent) -> Void)?) async throws -> CodexResponse {
         let config = config
         let paths = paths
         let makeConnection = makeConnection
+        let interactiveCallbackResponder = interactiveCallbackResponder
         return try await Task.detached {
             let collector = CodexAppServerTurnCollector(onEvent: onEvent)
             let connection = try makeConnection()
             let rpc = CodexAppServerRPC(connection: connection, timeoutMs: config.timeoutMs, onNotification: { message in
                 collector.handleNotification(message)
-            })
+            }, interactiveCallbackResponder: interactiveCallbackResponder)
             defer { rpc.close() }
 
             do {
@@ -404,12 +415,14 @@ private final class CodexAppServerRPC {
     private let connection: CodexAppServerConnection
     private let timeoutMs: Int
     private let onNotification: (([String: Any]) -> Void)?
+    private let interactiveCallbackResponder: CodexInteractiveCallbackResponder?
     private var nextId = 1
 
-    init(connection: CodexAppServerConnection, timeoutMs: Int, onNotification: (([String: Any]) -> Void)? = nil) {
+    init(connection: CodexAppServerConnection, timeoutMs: Int, onNotification: (([String: Any]) -> Void)? = nil, interactiveCallbackResponder: CodexInteractiveCallbackResponder? = nil) {
         self.connection = connection
         self.timeoutMs = timeoutMs
         self.onNotification = onNotification
+        self.interactiveCallbackResponder = interactiveCallbackResponder
     }
 
     func initialize() throws {
@@ -524,7 +537,7 @@ private final class CodexAppServerRPC {
             method == "mcpServer/elicitation/request" else {
             return false
         }
-        let response = try serverRequestResponse(method: method, params: message["params"] as? [String: Any])
+        let response = try serverRequestResponse(method: method, requestId: requestId, params: message["params"] as? [String: Any])
         onNotification?(serverRequestNotification(method: method, response: response))
         var reply = response
         reply["id"] = requestId
@@ -532,15 +545,21 @@ private final class CodexAppServerRPC {
         return true
     }
 
-    private func serverRequestResponse(method: String, params: [String: Any]?) throws -> [String: Any] {
+    private func serverRequestResponse(method: String, requestId: Any, params: [String: Any]?) throws -> [String: Any] {
         switch method {
         case "item/tool/call":
             return try dynamicToolCallResponse(params: params)
         case "item/tool/requestUserInput":
+            if let interactiveCallbackResponder {
+                return try interactiveCallbackResponder(method, requestId, params)
+            }
             return unsupportedInteractiveCallbackResponse(
                 "Codex app-server requires interactive user input that the Messages bridge cannot answer. Ask the user to continue in Codex Desktop or send a new Messages reply with the requested choice."
             )
         case "mcpServer/elicitation/request":
+            if let interactiveCallbackResponder {
+                return try interactiveCallbackResponder(method, requestId, params)
+            }
             return unsupportedInteractiveCallbackResponse(
                 "Codex app-server requires MCP elicitation that the Messages bridge cannot answer. Ask the user to continue in Codex Desktop or send a new Messages reply with the requested confirmation."
             )

@@ -6,6 +6,7 @@ public final class BridgeService: @unchecked Sendable {
     private let makeSource: (BridgeConfig) -> MessageSource
     private let makeReplySink: (BridgeConfig) -> ReplySink
     private let makeCodex: (BridgeConfig) -> any CodexBackend
+    private let useDefaultCodexBackend: Bool
     private let now: () -> Date
     private var state: BridgeState
     private var stopped = false
@@ -19,6 +20,7 @@ public final class BridgeService: @unchecked Sendable {
         makeSource: @escaping (BridgeConfig) -> MessageSource,
         makeReplySink: @escaping (BridgeConfig) -> ReplySink,
         makeCodex: @escaping (BridgeConfig) -> any CodexBackend,
+        useDefaultCodexBackend: Bool = false,
         now: @escaping () -> Date = Date.init
     ) {
         self.paths = paths
@@ -26,6 +28,7 @@ public final class BridgeService: @unchecked Sendable {
         self.makeSource = makeSource
         self.makeReplySink = makeReplySink
         self.makeCodex = makeCodex
+        self.useDefaultCodexBackend = useDefaultCodexBackend
         self.now = now
         self.state = defaultBridgeState()
     }
@@ -35,7 +38,8 @@ public final class BridgeService: @unchecked Sendable {
             paths: paths,
             makeSource: { SQLiteMessageSource(dbPath: $0.messagesDbPath, trustedSenders: $0.effectiveTrustedSenders) },
             makeReplySink: { AppleMessagesReplySink(osascriptCommand: $0.osascriptCommand, chunkSize: $0.chunkSize, messagesDbPath: $0.messagesDbPath) },
-            makeCodex: { CodexAppServerBackend(config: $0, paths: paths) }
+            makeCodex: { CodexAppServerBackend(config: $0, paths: paths) },
+            useDefaultCodexBackend: true
         )
     }
 
@@ -242,6 +246,107 @@ public final class BridgeService: @unchecked Sendable {
         )
         state.pendingInteractiveCallback = nil
         try stores.state.save(state)
+    }
+
+    private func interactiveCallbackResponder(jobId: String, replySink: ReplySink, recipient: String, service: String, config: BridgeConfig) -> CodexInteractiveCallbackResponder {
+        { [weak self] method, requestId, params in
+            guard let self else {
+                return interactiveCallbackCancelResponse(method: method, answer: nil, params: params)
+            }
+            return try self.handleAppServerInteractiveCallback(
+                method: method,
+                requestId: requestId,
+                params: params,
+                jobId: jobId,
+                replySink: replySink,
+                recipient: recipient,
+                service: service,
+                config: config
+            )
+        }
+    }
+
+    private func handleAppServerInteractiveCallback(method: String, requestId: Any, params: [String: Any]?, jobId: String, replySink: ReplySink, recipient: String, service: String, config: BridgeConfig) throws -> [String: Any] {
+        let callbackId = UUID().uuidString
+        let startedAt = now()
+        let waitMs = max(1_000, config.timeoutMs - 1_000)
+        let deadline = startedAt.addingTimeInterval(Double(waitMs) / 1_000)
+        let callback = PendingInteractiveCallback(
+            callbackId: callbackId,
+            jobId: jobId,
+            jsonRpcId: String(describing: requestId),
+            method: method,
+            recipient: recipient,
+            service: service,
+            prompt: interactiveCallbackPrompt(method: method, params: params),
+            createdAt: DateCodec.iso(startedAt),
+            expiresAt: DateCodec.iso(deadline),
+            status: "pending"
+        )
+        stateLock.lock()
+        state.pendingInteractiveCallback = callback
+        if var job = state.activeJob, job.jobId == jobId {
+            job.status = "waitingForUser"
+            job.lastObservedSummary = "Codex is waiting for a Messages reply to continue."
+            job.lastEventAt = DateCodec.iso(startedAt)
+            state.activeJob = job
+        }
+        let stateToSave = state
+        stateLock.unlock()
+        try stores.state.save(stateToSave)
+        try runAsyncBlocking {
+            try await self.sendReplyRecording(
+                replySink,
+                recipient: recipient,
+                service: service,
+                text: """
+                Codex needs your input to continue:
+                \(callback.prompt)
+
+                Reply here with your answer, or send /cancel.
+                """
+            )
+        }
+        guard let answer = try waitForInteractiveCallbackAnswer(callbackId: callbackId, until: deadline) else {
+            markInteractiveCallbackFinished(callbackId: callbackId, status: "timedOut", failureText: "Timed out waiting for a Messages reply.")
+            try runAsyncBlocking {
+                try await self.sendReplyRecording(replySink, recipient: recipient, service: service, text: "The pending Codex prompt timed out waiting for your reply.")
+            }
+            return interactiveCallbackCancelResponse(method: method, answer: nil, params: params)
+        }
+        markInteractiveCallbackFinished(callbackId: callbackId, status: "completed", failureText: nil)
+        return interactiveCallbackSuccessResponse(method: method, answer: answer, params: params)
+    }
+
+    private func waitForInteractiveCallbackAnswer(callbackId: String, until deadline: Date) throws -> String? {
+        while Date() < deadline {
+            let latest = try stores.state.load().pendingInteractiveCallback
+            if latest?.callbackId != callbackId {
+                return nil
+            }
+            switch latest?.status {
+            case "answered":
+                return latest?.responseText ?? ""
+            case "canceled", "cancelled", "timedOut", "timeout", "failed":
+                return nil
+            default:
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+        }
+        return nil
+    }
+
+    private func markInteractiveCallbackFinished(callbackId: String, status: String, failureText: String?) {
+        stateLock.lock()
+        if var callback = state.pendingInteractiveCallback, callback.callbackId == callbackId {
+            callback.status = status
+            callback.failureText = failureText
+            state.pendingInteractiveCallback = callback
+            try? stores.state.save(state)
+            state.pendingInteractiveCallback = nil
+            try? stores.state.save(state)
+        }
+        stateLock.unlock()
     }
 
     private func handleLocalCommand(_ command: String, message: MessageItem) async throws {
@@ -761,7 +866,14 @@ public final class BridgeService: @unchecked Sendable {
     }
 
     private func invokeCodex(config: BridgeConfig, request: PromptRequest, sessionId: String?, jobId: String, replySink: ReplySink, recipient: String, service: String) async throws -> String {
-        let result = try await makeCodex(config).invoke(request, sessionId: sessionId) { [weak self] event in
+        let backend: any CodexBackend = useDefaultCodexBackend
+            ? CodexAppServerBackend(
+                config: config,
+                paths: paths,
+                interactiveCallbackResponder: interactiveCallbackResponder(jobId: jobId, replySink: replySink, recipient: recipient, service: service, config: config)
+            )
+            : makeCodex(config)
+        let result = try await backend.invoke(request, sessionId: sessionId) { [weak self] event in
             guard let self else { return }
             self.handleCodexStreamEvent(event, jobId: jobId, config: config, replySink: replySink, recipient: recipient, service: service)
         }
@@ -1130,6 +1242,99 @@ public final class BridgeService: @unchecked Sendable {
 
     private func processIsRunning(_ pid: Int32) -> Bool {
         kill(pid, 0) == 0
+    }
+}
+
+private func interactiveCallbackPrompt(method: String, params: [String: Any]?) -> String {
+    if method == "item/tool/requestUserInput" {
+        if let questions = params?["questions"] as? [[String: Any]], !questions.isEmpty {
+            return questions.map { question in
+                let header = question["header"] as? String
+                let text = question["question"] as? String ?? question["prompt"] as? String ?? "Codex is asking for input."
+                return [header, text].compactMap { $0 }.joined(separator: ": ")
+            }.joined(separator: "\n")
+        }
+        if let prompt = params?["prompt"] as? String, !prompt.isEmpty {
+            return prompt
+        }
+    }
+    if method == "mcpServer/elicitation/request" {
+        if let message = params?["message"] as? String, !message.isEmpty {
+            return message
+        }
+        if let request = params?["request"] as? [String: Any],
+           let message = request["message"] as? String,
+           !message.isEmpty {
+            return message
+        }
+    }
+    return "Codex is asking for input."
+}
+
+private func interactiveCallbackSuccessResponse(method: String, answer: String, params: [String: Any]?) -> [String: Any] {
+    if method == "item/tool/requestUserInput" {
+        let questionIds = ((params?["questions"] as? [[String: Any]]) ?? []).compactMap { $0["id"] as? String }
+        let ids = questionIds.isEmpty ? ["response"] : questionIds
+        let answers = Dictionary(uniqueKeysWithValues: ids.map { ($0, ["answers": [answer]]) })
+        return ["result": ["answers": answers]]
+    }
+    if method == "mcpServer/elicitation/request" {
+        return [
+            "result": [
+                "action": "accept",
+                "content": ["response": answer],
+                "_meta": NSNull()
+            ]
+        ]
+    }
+    return ["result": [:]]
+}
+
+private func interactiveCallbackCancelResponse(method: String, answer: String?, params: [String: Any]?) -> [String: Any] {
+    if method == "item/tool/requestUserInput" {
+        return ["result": ["answers": [:]]]
+    }
+    if method == "mcpServer/elicitation/request" {
+        return [
+            "result": [
+                "action": "cancel",
+                "content": NSNull(),
+                "_meta": NSNull()
+            ]
+        ]
+    }
+    return ["result": [:]]
+}
+
+private func runAsyncBlocking<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) throws -> T {
+    let semaphore = DispatchSemaphore(value: 0)
+    let box = LockedResultBox<T>()
+    Task {
+        do {
+            box.set(.success(try await operation()))
+        } catch {
+            box.set(.failure(error))
+        }
+        semaphore.signal()
+    }
+    semaphore.wait()
+    return try box.get()
+}
+
+private final class LockedResultBox<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<T, Error>?
+
+    func set(_ value: Result<T, Error>) {
+        lock.lock()
+        result = value
+        lock.unlock()
+    }
+
+    func get() throws -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try result!.get()
     }
 }
 
