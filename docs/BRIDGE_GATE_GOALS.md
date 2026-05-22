@@ -17,10 +17,12 @@ Success means outbound text and media can never look successful when Messages re
 - Current status:
   - Text smoke passed on row 731.
   - Current text smoke passed on row 745 with marker `CODEXMSGCTL_SMOKE_TEXT_4900E017-5AB5-482C-A02E-47099DB5664A`.
+  - Post-restart text smoke passed on row 747 with marker `CODEXMSGCTL_SMOKE_TEXT_6FCFBD88-EDB4-479C-B949-B9B1B12ACAA0`.
   - Old file-attachment smoke exposed row 732 with `error=25`, `transfer_state=6`; this was useful evidence but not the final image-media gate.
   - Image attachment smoke passed on row 737 after normalizing the configured phone handle before opening the `sms:` URL; Messages renamed the pasted image to `IMG_5972.jpeg`, so verification uses the DB baseline row instead of requiring the marker in `transfer_name`.
   - A later image attachment smoke hit a no-row AppleScript/clipboard failure after baseline row 743. Attachment verification now polls longer and retries once only when no Messages DB row appears; the hardened smoke then passed on row 744 with `transfer_state=5`.
   - Current attachment smoke passed on row 746 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_B28DE88E-10AF-44FA-8043-A8FE4EAE37AE` after clipboard retry 2; Messages renamed the image to `IMG_1669.jpeg`.
+  - Post-restart attachment smoke passed on row 748 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_0B03A564-0DDA-4429-93DC-97C65995A72E`; Messages renamed the image to `IMG_3577.jpeg`, `message.error=0`, `transfer_state=5`.
   - `/codex smoke attachment` now sends a marked image probe from the Messages command surface and keeps the probe as `lastOutboundSend` while sending an unrecorded summary reply.
 
 ## Goal 2: Media Continuity
@@ -124,6 +126,8 @@ Success means the bridge continuously reports what Codex can really do from Mess
   - Current `swift run codexmsgctl-swift smoke browser` still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_BROWSER_8A9C61EA-F7B0-451F-8BC4-E261E15DAFAD`.
   - Current smoke browser still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_BROWSER_F03F2AD3-962F-4A33-8C8E-09CCE3734F69`.
   - `codexmsgctl-swift smoke` now has standalone `chrome`, `browser`, and `computer-use` subcommands that print app-server pid, thread id, turn id, progress, final response, and blocker text.
+  - `codexmsgctl-swift status` and `/codex status` now use the capability cache first and bound live refresh attempts, so a stuck app-server capability refresh cannot hang status. Deterministic coverage verifies the best-effort status lookup returns an existing cache even when the Codex command is unavailable.
+  - Post-restart `swift run codexmsgctl-swift status` returned with `Codex capability cache: cached at 2026-05-22T08:38:33.701Z` and callable Chrome, Computer Use, and Apps/connectors invocation status.
 
 ## Required Green Gate Set
 

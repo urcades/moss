@@ -29,6 +29,7 @@ struct BridgeCoreFocusedTests {
         try testCodexAutomationSmokeCreatesRouteAndStatus()
         try testBridgeStateSavePreservesConcurrentAutomationFields()
         try testCapabilityFormattingAndCacheSnapshot()
+        try await testCapabilityBestEffortPrefersCache()
         try await testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb()
         try await testOutboundSmokeAttachmentEvidenceFindsMarkerInTransferName()
         try await testOutboundSmokeAttachmentEvidenceFallsBackToLatestAttachment()
@@ -477,6 +478,21 @@ struct BridgeCoreFocusedTests {
         try expect(formatted.contains("Codex invocation status: Chrome: callable"), "capability formatter separates invocation status")
         let snapshot = CodexCapabilitySnapshot(capabilities: capabilities, cachedAt: "2026-05-09T00:00:00.000Z", refreshed: false, cacheAgeSeconds: 12)
         try expect(formatCodexCapabilityCacheLine(snapshot) == "Codex capability cache: cached at 2026-05-09T00:00:00.000Z, age 12s", "capability cache formatter")
+    }
+
+    private static func testCapabilityBestEffortPrefersCache() async throws {
+        let paths = testPaths()
+        try writeCapabilityCache(paths: paths)
+
+        let snapshot = await cachedCodexCapabilitiesBestEffort(
+            command: "/definitely/missing/codex",
+            paths: paths,
+            ttlMs: Int.max,
+            refreshTimeoutMs: 1
+        )
+
+        try expect(snapshot?.capabilities.version == "0.130.0", "best-effort capability lookup returns cached version")
+        try expect(snapshot?.refreshed == false, "best-effort capability lookup does not refresh when cache exists")
     }
 
     private static func testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb() async throws {

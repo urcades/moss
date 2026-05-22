@@ -123,9 +123,12 @@ struct CodexMsgCtlSwift {
                 print("Codex thread link: \(codexThreadDeepLink(threadId))")
             }
             print("Codex session expires at: \(state.codexSession.expiresAt ?? "none")")
-            let snapshot = await cachedCodexCapabilities(command: config.codex.command, paths: paths)
-            print(formatCodexCapabilityCacheLine(snapshot))
-            print(formatCodexCapabilityLines(snapshot.capabilities).joined(separator: "\n"))
+            if let snapshot = await cachedCodexCapabilitiesBestEffort(command: config.codex.command, paths: paths, ttlMs: Int.max, refreshTimeoutMs: 5_000) {
+                print(formatCodexCapabilityCacheLine(snapshot))
+                print(formatCodexCapabilityLines(snapshot.capabilities).joined(separator: "\n"))
+            } else {
+                print("Codex capability cache: unavailable or timed out")
+            }
         case "configure":
             try configure(rest, paths: paths, stores: stores)
         case "doctor":

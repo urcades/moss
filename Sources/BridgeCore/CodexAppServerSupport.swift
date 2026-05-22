@@ -1231,6 +1231,22 @@ public func cachedCodexCapabilities(
     return CodexCapabilitySnapshot(capabilities: capabilities, cachedAt: cachedAt, refreshed: true, cacheAgeSeconds: 0)
 }
 
+public func cachedCodexCapabilitiesBestEffort(
+    command: String,
+    runner: ProcessRunner = ProcessRunner(),
+    paths: RuntimePaths = .current(),
+    ttlMs: Int = Int.max,
+    refreshTimeoutMs: Int = 10_000,
+    now: Date = Date()
+) async -> CodexCapabilitySnapshot? {
+    if let cached = loadCachedCodexCapabilities(paths: paths, now: now, ttlMs: ttlMs) {
+        return cached
+    }
+    return await codexAsyncTimeout(nanoseconds: UInt64(max(1, refreshTimeoutMs)) * 1_000_000) {
+        await cachedCodexCapabilities(command: command, runner: runner, paths: paths, ttlMs: 0, now: now)
+    }
+}
+
 public func probeCodexCapabilities(command: String, runner: ProcessRunner = ProcessRunner(), paths: RuntimePaths = .current()) async -> CodexCapabilities {
     var version: String?
     var warnings: [String] = []
@@ -1589,6 +1605,41 @@ private func saveCachedCodexCapabilities(_ entry: CodexCapabilityCacheEntry, pat
         try data.write(to: capabilityCachePath(paths: paths), options: .atomic)
     } catch {
         // Capability probing is advisory. The bridge should keep working even when the cache cannot be written.
+    }
+}
+
+private func codexAsyncTimeout<T: Sendable>(nanoseconds: UInt64, operation: @escaping @Sendable () async -> T) async -> T? {
+    await withCheckedContinuation { continuation in
+        let resumeOnce = CodexTimeoutResumeOnce()
+        let task = Task {
+            let value = await operation()
+            resumeOnce.run {
+                continuation.resume(returning: value)
+            }
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            resumeOnce.run {
+                task.cancel()
+                continuation.resume(returning: nil)
+            }
+        }
+    }
+}
+
+private final class CodexTimeoutResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didResume = false
+
+    func run(_ body: () -> Void) {
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            return
+        }
+        didResume = true
+        lock.unlock()
+        body()
     }
 }
 

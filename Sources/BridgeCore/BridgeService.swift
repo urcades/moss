@@ -380,7 +380,7 @@ public final class BridgeService: @unchecked Sendable {
         let normalized = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         switch normalized {
         case "/codex status":
-            let snapshot = await cachedCodexCapabilities(command: config.codex.command, paths: paths)
+            let snapshot = await cachedCodexCapabilitiesBestEffort(command: config.codex.command, paths: paths, ttlMs: Int.max, refreshTimeoutMs: 5_000)
             return codexStatusText(capabilitySnapshot: snapshot)
         case "/codex open":
             guard let threadId = state.codexSession.sessionId, !threadId.isEmpty else {
@@ -540,6 +540,8 @@ public final class BridgeService: @unchecked Sendable {
         if let capabilitySnapshot {
             lines.append(formatCodexCapabilityCacheLine(capabilitySnapshot))
             lines += formatCodexCapabilityLines(capabilitySnapshot.capabilities)
+        } else {
+            lines.append("Codex capability cache: unavailable or timed out")
         }
         return lines.joined(separator: "\n")
     }
