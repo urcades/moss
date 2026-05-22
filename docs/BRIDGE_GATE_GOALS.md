@@ -121,6 +121,7 @@ Success means the bridge continuously reports what Codex can really do from Mess
   - Capability cache separates discovered, callable, blocked, and unsupported.
   - Browser, Chrome, Computer Use, and app connector probes report exact blockers.
   - Dynamic app-server tool forwarding has contract coverage for MCP success, MCP error content, unsupported non-MCP namespaces, malformed request fields, images, primitives, and unknown JSON object content with searchable keys.
+  - Stalled dynamic MCP forwarding returns a structured tool failure, includes the timed-out app-server response id, and closes the app-server connection.
 - Live gates:
   - `doctor --probe-computer-use` returns within its timeout and prints exact blocker text.
   - `/codex status` agrees with `codexmsgctl-swift status` about callable tools.
@@ -141,6 +142,7 @@ Success means the bridge continuously reports what Codex can really do from Mess
   - Current smoke browser still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_BROWSER_F03F2AD3-962F-4A33-8C8E-09CCE3734F69`.
   - `codexmsgctl-swift smoke` now has standalone `chrome`, `browser`, and `computer-use` subcommands that print app-server pid, thread id, turn id, progress, final response, and blocker text.
   - `codexmsgctl-swift status` and `/codex status` now use the capability cache first and bound live refresh attempts, so a stuck app-server capability refresh cannot hang status. Deterministic coverage verifies the best-effort status lookup returns an existing cache even when the Codex command is unavailable.
+  - Dynamic tool forwarding now has deterministic stalled-call coverage using a fake app-server connection that waits until the RPC deadline, then verifies the bridge sends an explicit failed tool result for the original dynamic call.
   - Post-restart `swift run codexmsgctl-swift status` returned with `Codex capability cache: cached at 2026-05-22T08:38:33.701Z` and callable Chrome, Computer Use, and Apps/connectors invocation status.
   - The Messages command surface now recognizes `/codex smoke automation`, `/codex smoke callback`, `/codex smoke inbound-image-check`, `/codex smoke chrome`, `/codex smoke browser`, and `/codex smoke computer-use`, so capability probes can be launched from Apple Messages instead of only from the CLI. Deterministic coverage verifies `/codex smoke chrome` invokes the app-server probe path and returns thread/turn evidence in the reply.
   - Post-restart `swift run codexmsgctl-swift smoke chrome` passed with marker `CODEXMSGCTL_SMOKE_CHROME_33E4142A-6BDF-4224-A9BD-2D7148DAACCA` and exact blocker `privileged native pipe bridge is not available; browser-client is not trusted`.

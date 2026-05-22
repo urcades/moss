@@ -61,6 +61,7 @@ struct BridgeCoreFocusedTests {
         try await testAppServerBackendUsesReadOnlySandboxForAutomationRequests()
         try await testAppServerBackendRejectsNonFinalAgentMessageAsReply()
         try await testAppServerBackendForwardsDynamicToolRequests()
+        try await testAppServerBackendReturnsDynamicToolFailureWhenMcpCallStalls()
         try await testAppServerBackendRejectsUnsupportedDynamicToolNamespace()
         try await testAppServerBackendHandlesMalformedDynamicToolRequest()
         try await testAppServerBackendNormalizesOddDynamicToolResponses()
@@ -1299,6 +1300,35 @@ struct BridgeCoreFocusedTests {
         try expect(contentItems.contains { $0["type"] as? String == "inputText" && $0["text"] as? String == "ok from node" }, "dynamic tool response converts MCP text content")
     }
 
+    private static func testAppServerBackendReturnsDynamicToolFailureWhenMcpCallStalls() async throws {
+        let fake = FakeCodexAppServerConnection(lines: [
+            #"{"id":1,"result":{"ok":true}}"#,
+            #"{"id":2,"result":{"thread":{"id":"thread-tool","path":"/tmp/thread.jsonl"}}}"#,
+            #"{"id":3,"result":{"turn":{"id":"turn-tool"}}}"#,
+            #"{"id":93,"method":"item/tool/call","params":{"threadId":"thread-tool","turnId":"turn-tool","callId":"call-stalled","namespace":"mcp__node_repl__","tool":"js","arguments":{"code":"while(true){}"}}}"#
+        ], diagnostics: "mcp call stalled", stallWhenEmpty: true)
+        var config = defaultBridgeConfig(paths: testPaths(), codexCommand: "/bin/echo")
+        config.timeoutMs = 120
+        let backend = CodexAppServerBackend(config: config, paths: testPaths()) { fake }
+
+        do {
+            _ = try await backend.invoke(PromptRequest(promptText: "Use a dynamic MCP tool that stalls.", attachments: []), sessionId: nil, onEvent: nil)
+            throw TestFailure(description: "Expected stalled dynamic tool turn to time out")
+        } catch let error as CodexBackendFailure {
+            try expect(error.timedOut, "stalled dynamic tool turn reports timeout")
+        }
+
+        try expect(fake.sentMethods.contains("mcpServer/tool/call"), "stalled dynamic tool is still forwarded to MCP")
+        let toolReply = fake.sentMessages.first { ($0["id"] as? Int) == 93 }
+        let result = toolReply?["result"] as? [String: Any]
+        let contentItems = result?["contentItems"] as? [[String: Any]] ?? []
+        let replyText = contentItems.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        try expect(result?["success"] as? Bool == false, "stalled dynamic tool response reports failure")
+        try expect(replyText.contains("failed through app-server MCP forwarding"), "stalled dynamic tool response names forwarding failure")
+        try expect(replyText.contains("Timed out waiting for Codex app-server response 4"), "stalled dynamic tool response includes timed-out MCP response id")
+        try expect(fake.closed, "stalled dynamic tool closes app-server connection")
+    }
+
     private static func testAppServerBackendRejectsUnsupportedDynamicToolNamespace() async throws {
         let fake = FakeCodexAppServerConnection(lines: [
             #"{"id":1,"result":{"ok":true}}"#,
@@ -2206,13 +2236,15 @@ struct BridgeCoreFocusedTests {
 private final class FakeCodexAppServerConnection: CodexAppServerConnection, @unchecked Sendable {
     private var lines: [String]
     private let diagnosticsText: String
+    private let stallWhenEmpty: Bool
     private(set) var sentMethods: [String] = []
     private(set) var sentMessages: [[String: Any]] = []
     private(set) var closed = false
 
-    init(lines: [String], diagnostics: String = "") {
+    init(lines: [String], diagnostics: String = "", stallWhenEmpty: Bool = false) {
         self.lines = lines
         self.diagnosticsText = diagnostics
+        self.stallWhenEmpty = stallWhenEmpty
     }
 
     var diagnostics: String { diagnosticsText }
@@ -2226,7 +2258,15 @@ private final class FakeCodexAppServerConnection: CodexAppServerConnection, @unc
     }
 
     func readLine(deadline: Date) throws -> String? {
-        lines.isEmpty ? nil : lines.removeFirst()
+        if !lines.isEmpty {
+            return lines.removeFirst()
+        }
+        if stallWhenEmpty {
+            while Date() < deadline, !closed {
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+        }
+        return nil
     }
 
     func close() {
