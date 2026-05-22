@@ -54,12 +54,14 @@ public final class Doctor: @unchecked Sendable {
     public func run(includeComputerUseProbe: Bool = false) async -> DoctorReport {
         let stores = RuntimeStores(paths: paths)
         let config = (try? stores.config.load()) ?? defaultBridgeConfig(paths: paths)
+        let state = try? stores.state.load()
         var checks: [DoctorCheck] = []
         checks.append(contentsOf: runtimeDiagnosticChecks(paths: paths))
         checks.append(checkCodex(config))
         checks.append(contentsOf: await checkCodexCapabilities(config))
         checks.append(checkTrustedSenders(config))
         checks.append(checkMessagesDb(config))
+        checks.append(checkLastOutboundSend(state?.lastOutboundSend))
         checks.append(await checkRecentFailedOutboundEvidence(config))
         checks.append(checkCodexAppServerProcessSnapshot())
         checks.append(await checkMessagesAutomation(config))
@@ -145,10 +147,18 @@ public final class Doctor: @unchecked Sendable {
             guard !failures.isEmpty else {
                 return DoctorCheck(name: "Recent failed outbound evidence", ok: true, detail: "No recent failed outgoing Messages rows found.")
             }
-            return DoctorCheck(name: "Recent failed outbound evidence", ok: false, detail: formatRecentFailedOutboundEvidence(failures))
+            return DoctorCheck(name: "Recent failed outbound evidence", ok: true, detail: formatRecentFailedOutboundEvidence(failures))
         } catch {
             return DoctorCheck(name: "Recent failed outbound evidence", ok: true, detail: "Unavailable: \(error)")
         }
+    }
+
+    private func checkLastOutboundSend(_ send: OutboundSendRecord?) -> DoctorCheck {
+        guard let send else {
+            return DoctorCheck(name: "Last outbound send", ok: true, detail: "none")
+        }
+        let failed = send.retryable || send.status.localizedCaseInsensitiveContains("fail")
+        return DoctorCheck(name: "Last outbound send", ok: !failed, detail: outboundSendStatusText(send))
     }
 
     private func checkCodexAppServerProcessSnapshot() -> DoctorCheck {

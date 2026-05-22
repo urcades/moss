@@ -22,6 +22,8 @@ struct BridgeCoreFocusedTests {
         try await testMissingPreviousImageReferenceAsksForSource()
         try testDiagnosticMentionOfDailyBriefingDoesNotCreateAutomation()
         try testCodexAutomationCreationWritesAppAutomationToml()
+        try testCodexAutomationSmokeCreatesRouteAndStatus()
+        try testBridgeStateSavePreservesConcurrentAutomationFields()
         try testCapabilityFormattingAndCacheSnapshot()
         try await testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb()
         try await testOutboundSmokeAttachmentEvidenceFindsMarkerInTransferName()
@@ -229,6 +231,74 @@ struct BridgeCoreFocusedTests {
         try expect(toml.contains(#"execution_environment = "local""#), "automation toml local execution")
         try expect(toml.contains(#"cwds = ["/Users/moss/Developer/Codex Misc"]"#), "automation toml cwd comes from interpreted spec")
         try expect(!toml.contains("Can we create a new automation?"), "interpreted automation prompt does not duplicate raw request")
+    }
+
+    private static func testCodexAutomationSmokeCreatesRouteAndStatus() throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.codex.model = "gpt-test"
+        config.codex.reasoningEffort = "low"
+        try stores.config.save(config)
+
+        let result = try createCodexAutomationSmoke(
+            recipient: "+1",
+            service: "iMessage",
+            config: config,
+            paths: paths,
+            stores: stores,
+            now: Date(timeIntervalSince1970: 1_778_640_000),
+            marker: "CODEXMSGCTL_SMOKE_AUTOMATION_TEST"
+        )
+
+        try expect(result.marker == "CODEXMSGCTL_SMOKE_AUTOMATION_TEST", "automation smoke marker is preserved")
+        try expect(result.automation.name == "Bridge Smoke Test ION_TEST", "automation smoke name uses marker suffix")
+        let toml = try String(contentsOfFile: result.automation.path, encoding: .utf8)
+        try expect(toml.contains("CODEXMSGCTL_SMOKE_AUTOMATION_TEST"), "automation smoke prompt contains marker")
+        try expect(toml.contains(#"rrule = "FREQ=YEARLY;BYMONTH=12;BYMONTHDAY=31;BYHOUR=23;BYMINUTE=59;BYSECOND=0""#), "automation smoke uses harmless far-future schedule")
+        let state = try stores.state.load()
+        try expect(state.automationRoutes?.contains(where: { $0.automationId == result.automation.id && $0.recipient == "+1" }) == true, "automation smoke route persisted")
+        try expect(state.automationCreationStatus?.automationId == result.automation.id, "automation smoke creation status automation id")
+        try expect(state.automationCreationStatus?.phase == "confirmed", "automation smoke creation status confirmed")
+    }
+
+    private static func testBridgeStateSavePreservesConcurrentAutomationFields() throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var existing = defaultBridgeState()
+        existing.automationRoutes = [
+            CodexAutomationRoute(
+                automationId: "bridge-smoke-test",
+                name: "Bridge Smoke Test",
+                recipient: "+1",
+                service: "iMessage",
+                createdFromGuid: "guid-1",
+                createdFromRowId: 42,
+                createdAt: "2026-05-22T07:00:00.000Z"
+            )
+        ]
+        existing.automationCreationStatus = AutomationCreationStatus(
+            automationId: "bridge-smoke-test",
+            name: "Bridge Smoke Test",
+            phase: "confirmed",
+            createdFilePath: "/tmp/automation.toml",
+            routeStatus: "route persisted",
+            confirmationSendStatus: "verified",
+            updatedAt: "2026-05-22T07:00:00.000Z"
+        )
+        try stores.state.save(existing)
+
+        var staleTickState = defaultBridgeState()
+        staleTickState.lastProcessedRowId = 99
+        staleTickState.lastProcessedGuid = "newer-message-guid"
+        try stores.state.save(staleTickState)
+
+        let reloaded = try stores.state.load()
+        try expect(reloaded.lastProcessedRowId == 99, "state save keeps incoming cursor fields")
+        try expect(reloaded.automationRoutes?.contains(where: { $0.automationId == "bridge-smoke-test" && $0.createdFromRowId == 42 }) == true, "state save preserves concurrent automation route")
+        try expect(reloaded.automationCreationStatus?.automationId == "bridge-smoke-test", "state save preserves concurrent automation creation status")
     }
 
     private static func testCapabilityFormattingAndCacheSnapshot() throws {

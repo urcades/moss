@@ -27,6 +27,94 @@ public struct CodexAutomationSpec: Equatable, Sendable {
     }
 }
 
+public struct CodexAutomationSmokeResult: Equatable, Sendable {
+    public var marker: String
+    public var automation: CreatedCodexAutomation
+    public var route: CodexAutomationRoute
+
+    public init(marker: String, automation: CreatedCodexAutomation, route: CodexAutomationRoute) {
+        self.marker = marker
+        self.automation = automation
+        self.route = route
+    }
+}
+
+public func createCodexAutomationSmoke(
+    recipient: String,
+    service: String,
+    config: BridgeConfig,
+    paths: RuntimePaths,
+    stores: RuntimeStores,
+    now: Date = Date(),
+    marker: String = "CODEXMSGCTL_SMOKE_AUTOMATION_\(UUID().uuidString)"
+) throws -> CodexAutomationSmokeResult {
+    let shortMarker = String(marker.suffix(8))
+    let nowText = DateCodec.iso(now)
+    let name = "Bridge Smoke Test \(shortMarker)"
+    let spec = CodexAutomationSpec(
+        name: name,
+        prompt: "Return exactly this text and nothing else: \(marker)",
+        rrule: "FREQ=YEARLY;BYMONTH=12;BYMONTHDAY=31;BYHOUR=23;BYMINUTE=59;BYSECOND=0",
+        model: config.codex.model ?? "gpt-5.2",
+        reasoningEffort: config.codex.reasoningEffort,
+        executionEnvironment: "local",
+        cwds: [config.codex.cwd]
+    )
+    let batch = PendingBatch(
+        handleId: recipient,
+        service: service,
+        startedAt: nowText,
+        deadlineAt: nowText,
+        items: [
+            MessageItem(
+                rowId: 0,
+                guid: "codexmsgctl-smoke-\(marker)",
+                text: "Create a new automation that returns \(marker).",
+                handleId: recipient,
+                service: service,
+                receivedAt: nowText,
+                attachments: []
+            )
+        ]
+    )
+    guard let automation = try createCodexAutomationIfRequested(batch: batch, config: config, paths: paths, now: now, spec: spec) else {
+        throw StoreError.validation("Smoke automation failed: creation helper returned nil.")
+    }
+    guard let metadata = automationMetadata(at: URL(fileURLWithPath: automation.path)),
+          metadata.id == automation.id,
+          metadata.name == automation.name else {
+        throw StoreError.validation("Smoke automation failed: created TOML metadata did not match \(automation.path).")
+    }
+    let route = CodexAutomationRoute(
+        automationId: automation.id,
+        name: automation.name,
+        recipient: recipient,
+        service: service,
+        createdFromGuid: "codexmsgctl-smoke-\(marker)",
+        createdFromRowId: nil,
+        createdAt: nowText
+    )
+    var state = try stores.state.load()
+    state.automationRoutes = upsertCodexAutomationRoute(route, into: state.automationRoutes ?? [])
+    state.automationCreationStatus = AutomationCreationStatus(
+        automationId: automation.id,
+        name: automation.name,
+        sourceRowId: nil,
+        sourceGuid: "codexmsgctl-smoke-\(marker)",
+        phase: "confirmed",
+        createdFilePath: automation.path,
+        routeStatus: "route persisted",
+        confirmationSendStatus: "codexmsgctl smoke verified",
+        updatedAt: nowText
+    )
+    try stores.state.save(state)
+    let reloaded = try stores.state.load()
+    guard reloaded.automationRoutes?.contains(where: { $0.automationId == automation.id && $0.recipient == recipient && $0.service == service }) == true else {
+        throw StoreError.validation("Smoke automation failed: route was not persisted in bridge state.")
+    }
+    return CodexAutomationSmokeResult(marker: marker, automation: automation, route: route)
+}
+
 public func createCodexAutomationIfRequested(batch: PendingBatch, config: BridgeConfig, paths: RuntimePaths, now: Date = Date(), spec: CodexAutomationSpec? = nil) throws -> CreatedCodexAutomation? {
     let messageText = batch.items.map(\.text).joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
     guard shouldCreateCodexAutomation(from: messageText) else { return nil }

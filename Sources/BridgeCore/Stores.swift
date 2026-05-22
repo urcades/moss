@@ -220,7 +220,14 @@ public final class JSONFileStore<Value: Codable> {
 
     public func save(_ value: Value) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let data = try JSONEncoder.pretty.encode(value)
+        let valueToWrite: Value
+        if let incoming = value as? BridgeState,
+           let existing = try? load() as? BridgeState {
+            valueToWrite = mergeBridgeStateForConcurrentSave(incoming: incoming, existing: existing) as! Value
+        } else {
+            valueToWrite = value
+        }
+        let data = try JSONEncoder.pretty.encode(valueToWrite)
         let tmp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
         try data.write(to: tmp, options: .atomic)
         if FileManager.default.fileExists(atPath: url.path) {
@@ -234,6 +241,73 @@ public final class JSONFileStore<Value: Codable> {
         let value = try load()
         try save(value)
         return value
+    }
+}
+
+private func mergeBridgeStateForConcurrentSave(incoming: BridgeState, existing: BridgeState) -> BridgeState {
+    var merged = incoming
+    let routes = mergeAutomationRoutes(incoming: incoming.automationRoutes ?? [], existing: existing.automationRoutes ?? [])
+    merged.automationRoutes = routes.isEmpty ? nil : routes
+    merged.automationCreationStatus = latestAutomationCreationStatus(
+        incoming: incoming.automationCreationStatus,
+        existing: existing.automationCreationStatus
+    )
+    return merged
+}
+
+private func mergeAutomationRoutes(incoming: [CodexAutomationRoute], existing: [CodexAutomationRoute]) -> [CodexAutomationRoute] {
+    var byId = Dictionary(uniqueKeysWithValues: existing.map { ($0.automationId, $0) })
+    for route in incoming {
+        if let current = byId[route.automationId] {
+            byId[route.automationId] = mergeAutomationRoute(incoming: route, existing: current)
+        } else {
+            byId[route.automationId] = route
+        }
+    }
+    return byId.values.sorted { lhs, rhs in
+        if lhs.createdAt == rhs.createdAt { return lhs.automationId < rhs.automationId }
+        return lhs.createdAt < rhs.createdAt
+    }
+}
+
+private func mergeAutomationRoute(incoming: CodexAutomationRoute, existing: CodexAutomationRoute) -> CodexAutomationRoute {
+    CodexAutomationRoute(
+        automationId: incoming.automationId,
+        name: incoming.name,
+        recipient: incoming.recipient,
+        service: incoming.service,
+        createdFromGuid: incoming.createdFromGuid ?? existing.createdFromGuid,
+        createdFromRowId: incoming.createdFromRowId ?? existing.createdFromRowId,
+        createdAt: min(incoming.createdAt, existing.createdAt),
+        lastSeenSessionId: incoming.lastSeenSessionId ?? existing.lastSeenSessionId,
+        lastDeliveredSessionId: incoming.lastDeliveredSessionId ?? existing.lastDeliveredSessionId,
+        lastDeliveredAt: latestNonNilTimestamp(incoming.lastDeliveredAt, existing.lastDeliveredAt)
+    )
+}
+
+private func latestAutomationCreationStatus(incoming: AutomationCreationStatus?, existing: AutomationCreationStatus?) -> AutomationCreationStatus? {
+    switch (incoming, existing) {
+    case let (incoming?, existing?):
+        return incoming.updatedAt >= existing.updatedAt ? incoming : existing
+    case let (incoming?, nil):
+        return incoming
+    case let (nil, existing?):
+        return existing
+    case (nil, nil):
+        return nil
+    }
+}
+
+private func latestNonNilTimestamp(_ lhs: String?, _ rhs: String?) -> String? {
+    switch (lhs, rhs) {
+    case let (lhs?, rhs?):
+        return lhs >= rhs ? lhs : rhs
+    case let (lhs?, nil):
+        return lhs
+    case let (nil, rhs?):
+        return rhs
+    case (nil, nil):
+        return nil
     }
 }
 

@@ -42,6 +42,11 @@ Success means Messages-triggered automation creation is bridge-owned, synchronou
 - Live gates:
   - A marked automation creation request produces one truthful confirmation.
   - `/codex automations` shows the route or the exact in-progress/failure phase.
+- Current status:
+  - `swift run codexmsgctl-swift smoke automation` creates a real paused `automation.toml`, persists its route, and records `automationCreationStatus`.
+  - Live smoke passed for `bridge-smoke-test-7431ce30` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_B219F241-59D2-449C-BF80-244C7431CE30`.
+  - `codexmsgctl-swift status` now reports automation creation status and the latest automation routes.
+  - State saves now merge automation route/status fields so a helper tick with stale in-memory state cannot erase a newly persisted route.
 
 ## Goal 4: Interactive Callback Parity
 
@@ -62,6 +67,8 @@ Success means bridge state writes cannot clobber each other and cancellation lea
   - Corrupt `state.json` is backed up and defaulted.
   - Cancel kills the known process tree.
   - Simultaneous tick/callback/cancel/send-record updates preserve unrelated fields.
+- Current status:
+  - Deterministic coverage now verifies stale state saves preserve concurrently added automation route/status fields while still accepting incoming cursor updates.
 - Live gates:
   - Doctor reports app-server process snapshots without hanging.
   - Cancel/timeout leaves no bridge-owned orphan `codex app-server` or Computer Use child process.

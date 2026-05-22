@@ -22,7 +22,7 @@ struct CodexMsgCtlSwift {
           codexmsgctl-swift configure --safety standard|permissive|preserve
           codexmsgctl-swift configure --preserve-safety
           codexmsgctl-swift doctor [--probe-computer-use]
-          codexmsgctl-swift smoke text|attachment [--recipient HANDLE] [--service iMessage|SMS]
+          codexmsgctl-swift smoke text|attachment|automation [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift broker start|stop|status|doctor|events|dry-run-scan
           codexmsgctl-swift reset
         """)
@@ -103,6 +103,8 @@ struct CodexMsgCtlSwift {
             print("Active job Codex thread id: \(state.activeJob?.codexSessionId ?? "none")")
             print("Active job Codex turn id: \(state.activeJob?.codexTurnId ?? "none")")
             print("Last outbound send: \(outboundSendStatusText(state.lastOutboundSend))")
+            print("Automation creation status: \(automationCreationStatusText(state.automationCreationStatus))")
+            print("Automation routes: \(automationRoutesStatusText(state.automationRoutes ?? []))")
             do {
                 let failures = try await recentFailedOutboundEvidence(config: config, limit: 3)
                 print("Recent failed outbound evidence: \(formatRecentFailedOutboundEvidence(failures))")
@@ -149,7 +151,7 @@ struct CodexMsgCtlSwift {
     private static func runSmokeCommand(_ args: [String], paths: RuntimePaths, stores: RuntimeStores) async throws {
         let subcommand = args.first ?? "help"
         if subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
-            print("Usage: codexmsgctl-swift smoke text|attachment [--recipient HANDLE] [--service iMessage|SMS]")
+            print("Usage: codexmsgctl-swift smoke text|attachment|automation [--recipient HANDLE] [--service iMessage|SMS]")
             return
         }
         let config = try stores.config.load()
@@ -163,6 +165,8 @@ struct CodexMsgCtlSwift {
             try await runTextSmoke(recipient: recipient, service: service, config: config)
         case "attachment":
             try await runAttachmentSmoke(recipient: recipient, service: service, config: config, paths: paths)
+        case "automation":
+            try runAutomationSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
         default:
             throw StoreError.validation("Unknown smoke command: \(subcommand)")
         }
@@ -233,6 +237,23 @@ struct CodexMsgCtlSwift {
         print("Smoke attachment passed.")
     }
 
+    private static func runAutomationSmoke(recipient: String, service: String, config: BridgeConfig, paths: RuntimePaths, stores: RuntimeStores) throws {
+        let result = try createCodexAutomationSmoke(
+            recipient: recipient,
+            service: service,
+            config: config,
+            paths: paths,
+            stores: stores
+        )
+        print("Smoke automation marker: \(result.marker)")
+        print("Automation id: \(result.automation.id)")
+        print("Automation name: \(result.automation.name)")
+        print("Automation file: \(result.automation.path)")
+        print("Schedule: \(result.automation.rrule)")
+        print("Route: \(result.route.recipient) via \(result.route.service)")
+        print("Smoke automation passed.")
+    }
+
     private static func smokePNGData() throws -> Data {
         let encoded = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
         guard let data = Data(base64Encoded: encoded) else {
@@ -294,6 +315,33 @@ struct CodexMsgCtlSwift {
             parts.append(detail)
         }
         return parts.joined(separator: ", ")
+    }
+
+    private static func automationCreationStatusText(_ status: AutomationCreationStatus?) -> String {
+        guard let status else { return "none" }
+        var parts = [
+            status.phase,
+            status.name ?? status.automationId ?? "unknown"
+        ]
+        if let path = status.createdFilePath {
+            parts.append(path)
+        }
+        if let routeStatus = status.routeStatus {
+            parts.append(routeStatus)
+        }
+        if let failureText = status.failureText {
+            parts.append("failure \(failureText)")
+        }
+        return parts.joined(separator: "; ")
+    }
+
+    private static func automationRoutesStatusText(_ routes: [CodexAutomationRoute]) -> String {
+        guard !routes.isEmpty else { return "none" }
+        let latest = routes.sorted { $0.createdAt < $1.createdAt }.suffix(3)
+        let details = latest.map { route in
+            "\(route.name) (\(route.automationId)) -> \(route.recipient) via \(route.service)"
+        }.joined(separator: " | ")
+        return "\(routes.count) route(s); latest: \(details)"
     }
 
     private static func configure(_ args: [String], paths: RuntimePaths, stores: RuntimeStores) throws {
