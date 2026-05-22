@@ -21,7 +21,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 | Automations | Poll loop rereads all historical session JSONL | Bounded scan API skips delivered lower-bound sessions and has read-budget coverage | Persist scan watermarks if session-id ordering proves insufficient |
 | Automations | Diagnostic prompt creates automation | Classifier regression tests cover management/debug/list/status false positives, schedule/calendar false positives, and reminder/monitor/follow-up positives | Keep expanding phrase fixtures from live trusted-chat misses |
 | LaunchAgents/runtime | Installed helper, runtime copy, and source drift | Doctor/status expose runtime facts, helper/broker loaded state, provenance comparison across expected executable, LaunchAgent plist, loaded launchd program, and built-vs-installed executable identity | Add release/build metadata checks when packaged artifacts expose stable build ids |
-| Codex version drift | Bridge leaves new platform features unused | Capability adoption table below records current state | Recheck after each Codex CLI/app-server upgrade |
+| Codex version drift | Bridge leaves new platform features unused | Capability adoption table below records current state; status/doctor mark capability caches stale after 24h | Recheck after each Codex CLI/app-server upgrade |
 
 ## Tests Added Or Strengthened
 
@@ -37,6 +37,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 - Automation scan budget: repeated automation forwarding can avoid rereading delivered historical rollout files.
 - Automation creation status: `/codex automations` can show in-flight creation state instead of only stale routes.
 - State recovery: corrupted state JSON is backed up and defaulted.
+- Capability drift: status and doctor expose stale capability caches after 24h instead of showing only an unqualified timestamp.
 
 ## Live Smoke Tests
 

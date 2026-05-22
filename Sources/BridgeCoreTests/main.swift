@@ -740,6 +740,9 @@ struct BridgeCoreFocusedTests {
         try expect(formatted.contains("Codex invocation status: Chrome: callable"), "capability formatter separates invocation status")
         let snapshot = CodexCapabilitySnapshot(capabilities: capabilities, cachedAt: "2026-05-09T00:00:00.000Z", refreshed: false, cacheAgeSeconds: 12)
         try expect(formatCodexCapabilityCacheLine(snapshot) == "Codex capability cache: cached at 2026-05-09T00:00:00.000Z, age 12s", "capability cache formatter")
+        let staleSnapshot = CodexCapabilitySnapshot(capabilities: capabilities, cachedAt: "2026-05-09T00:00:00.000Z", refreshed: false, cacheAgeSeconds: staleCodexCapabilityCacheAgeSeconds)
+        try expect(formatCodexCapabilityCacheLine(staleSnapshot).contains("stale >24h"), "capability cache formatter marks stale caches")
+        try expect(formatCodexCapabilityCacheDetail(staleSnapshot).contains("stale >24h"), "capability cache detail marks stale caches")
     }
 
     private static func testCapabilityBestEffortPrefersCache() async throws {

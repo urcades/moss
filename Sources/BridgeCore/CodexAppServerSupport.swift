@@ -159,6 +159,8 @@ public struct CodexCapabilitySnapshot: Equatable, Sendable {
     }
 }
 
+public let staleCodexCapabilityCacheAgeSeconds = 86_400
+
 private struct CodexCapabilityCacheEntry: Codable {
     var cachedAt: String
     var capabilities: CodexCapabilities
@@ -1350,10 +1352,19 @@ private func sampleSuffix(_ values: [String], limit: Int = 5) -> String {
 }
 
 public func formatCodexCapabilityCacheLine(_ snapshot: CodexCapabilitySnapshot) -> String {
+    "Codex capability cache: \(formatCodexCapabilityCacheDetail(snapshot))"
+}
+
+public func formatCodexCapabilityCacheDetail(_ snapshot: CodexCapabilitySnapshot) -> String {
     if snapshot.refreshed {
-        return "Codex capability cache: refreshed at \(snapshot.cachedAt)"
+        return "refreshed at \(snapshot.cachedAt)"
     }
-    return "Codex capability cache: cached at \(snapshot.cachedAt), age \(snapshot.cacheAgeSeconds ?? 0)s"
+    let age = snapshot.cacheAgeSeconds ?? 0
+    var detail = "cached at \(snapshot.cachedAt), age \(age)s"
+    if age >= staleCodexCapabilityCacheAgeSeconds {
+        detail += "; stale >24h"
+    }
+    return detail
 }
 
 public func readCodexThreadHistory(command: String, threadId: String, timeoutMs: Int = 15_000) async throws -> String {

@@ -140,7 +140,7 @@ public final class Doctor: @unchecked Sendable {
         }
         let capabilities = snapshot.capabilities
         var checks = [
-            DoctorCheck(name: "Codex capability cache", ok: true, detail: snapshot.refreshed ? "refreshed at \(snapshot.cachedAt)" : "cached at \(snapshot.cachedAt), age \(snapshot.cacheAgeSeconds ?? 0)s"),
+            DoctorCheck(name: "Codex capability cache", ok: true, detail: formatCodexCapabilityCacheDetail(snapshot)),
             DoctorCheck(name: "Codex version", ok: true, detail: capabilities.version ?? "unknown"),
             DoctorCheck(name: "Codex app-server", ok: true, detail: capabilities.appServerAvailable ? "yes" : "no"),
             DoctorCheck(name: "Codex remote-control", ok: true, detail: capabilities.remoteControlAvailable ? "yes" : "no"),
