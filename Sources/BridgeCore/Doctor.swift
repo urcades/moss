@@ -471,7 +471,48 @@ public func runtimeDiagnosticChecks(paths: RuntimePaths = .current()) -> [Doctor
         DoctorCheck(name: "Installed app signing", ok: true, detail: codeSigningSummary(at: paths.installedAppPath)),
         DoctorCheck(name: "Installed helper signing", ok: true, detail: codeSigningSummary(at: installedHelperBundlePath(paths: paths))),
         DoctorCheck(name: "Installed permission broker signing", ok: true, detail: codeSigningSummary(at: installedPermissionBrokerBundlePath(paths: paths)))
+    ] + [
+        runtimeExecutableIdentityCheck(
+            name: "Helper built-vs-installed identity",
+            built: paths.builtHelperExecutablePath,
+            installed: paths.installedHelperExecutablePath
+        ),
+        runtimeExecutableIdentityCheck(
+            name: "Permission broker built-vs-installed identity",
+            built: paths.builtPermissionBrokerExecutablePath,
+            installed: paths.installedPermissionBrokerExecutablePath
+        )
     ]
+}
+
+public func runtimeExecutableIdentityCheck(name: String, built: URL, installed: URL) -> DoctorCheck {
+    let fm = FileManager.default
+    guard fm.fileExists(atPath: installed.path) else {
+        return DoctorCheck(name: name, ok: false, detail: "Installed executable missing at \(installed.path)")
+    }
+    guard fm.fileExists(atPath: built.path) else {
+        return DoctorCheck(name: name, ok: true, detail: "Not comparable: built executable missing at \(built.path)")
+    }
+    do {
+        let builtData = try Data(contentsOf: built)
+        let installedData = try Data(contentsOf: installed)
+        let builtStamp = fileModificationSummary(built)
+        let installedStamp = fileModificationSummary(installed)
+        if builtData == installedData {
+            return DoctorCheck(name: name, ok: true, detail: "match; bytes \(builtData.count); built \(builtStamp); installed \(installedStamp)")
+        }
+        return DoctorCheck(name: name, ok: false, detail: "mismatch; built bytes \(builtData.count) \(builtStamp); installed bytes \(installedData.count) \(installedStamp)")
+    } catch {
+        return DoctorCheck(name: name, ok: false, detail: "Unable to compare \(built.path) and \(installed.path): \(error)")
+    }
+}
+
+private func fileModificationSummary(_ url: URL) -> String {
+    guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+          let date = attrs[.modificationDate] as? Date else {
+        return "mtime unknown"
+    }
+    return "mtime \(DateCodec.iso(date))"
 }
 
 public func installedHelperBundlePath(paths: RuntimePaths) -> URL {

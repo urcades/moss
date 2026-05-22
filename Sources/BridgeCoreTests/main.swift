@@ -81,6 +81,7 @@ struct BridgeCoreFocusedTests {
         try testCorruptedStateJsonBacksUpAndDefaults()
         try testStateRecoveryBackupDiagnosticsReportBackupPath()
         try testLaunchAgentProgramDiagnostics()
+        try testRuntimeExecutableIdentityDiagnostics()
         try await testAutomationRequestCreatesCodexAutomationFromInterpretedSpec()
         try await testCodexAutomationsReportsCreationInProgress()
         try await testCompletedAutomationSessionIsForwardedOnce()
@@ -1905,6 +1906,40 @@ struct BridgeCoreFocusedTests {
 
         try expect(launchAgentProgramArgument(at: paths.helperLaunchAgentPath) == helperPath.path, "launchagent plist program argument")
         try expect(launchctlProgram(from: launchctlOutput) == helperPath.path, "launchctl loaded program parser")
+    }
+
+    private static func testRuntimeExecutableIdentityDiagnostics() throws {
+        let paths = testPaths()
+        try FileManager.default.createDirectory(at: paths.builtHelperExecutablePath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: paths.installedHelperExecutablePath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("same helper".utf8).write(to: paths.builtHelperExecutablePath)
+        try Data("same helper".utf8).write(to: paths.installedHelperExecutablePath)
+
+        let matching = runtimeExecutableIdentityCheck(
+            name: "Helper built-vs-installed identity",
+            built: paths.builtHelperExecutablePath,
+            installed: paths.installedHelperExecutablePath
+        )
+        try expect(matching.ok, "runtime identity passes for matching executables")
+        try expect(matching.detail.contains("match"), "runtime identity reports match")
+
+        try Data("different helper".utf8).write(to: paths.installedHelperExecutablePath)
+        let mismatched = runtimeExecutableIdentityCheck(
+            name: "Helper built-vs-installed identity",
+            built: paths.builtHelperExecutablePath,
+            installed: paths.installedHelperExecutablePath
+        )
+        try expect(!mismatched.ok, "runtime identity fails for mismatched executables")
+        try expect(mismatched.detail.contains("mismatch"), "runtime identity reports mismatch")
+
+        try FileManager.default.removeItem(at: paths.builtHelperExecutablePath)
+        let notComparable = runtimeExecutableIdentityCheck(
+            name: "Helper built-vs-installed identity",
+            built: paths.builtHelperExecutablePath,
+            installed: paths.installedHelperExecutablePath
+        )
+        try expect(notComparable.ok, "runtime identity is non-fatal when built artifact is absent")
+        try expect(notComparable.detail.contains("Not comparable"), "runtime identity explains missing built artifact")
     }
 
     private static func testAutomationRequestCreatesCodexAutomationFromInterpretedSpec() async throws {

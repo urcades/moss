@@ -109,6 +109,8 @@ Success means bridge state writes cannot clobber each other and cancellation lea
   - Synchronous doctor probes now have a default timeout, and doctor uses cached capability inventory for status instead of blocking on a fresh app-server inventory refresh.
   - Doctor now reports corrupt `state.json` recovery backups by exact backup path when they exist. Deterministic coverage verifies the latest backup path is discoverable; current live doctor reports `State recovery backups: none`.
   - Doctor now reports helper and permission-broker LaunchAgent loaded state plus provenance across expected installed executable path, LaunchAgent plist `ProgramArguments[0]`, and the loaded `launchctl print` program path. Current live doctor shows all three paths agree for both LaunchAgents.
+  - Doctor now compares built helper/broker executables with the installed runtime copies and reports byte-level match/mismatch when both artifacts exist. Deterministic coverage verifies match, mismatch, and missing-built-artifact behavior.
+  - Current live doctor reports built-vs-installed identity matches for the helper (`3349440` bytes) and permission broker (`3412384` bytes), with matching built/installed mtimes.
 - Live gates:
   - Doctor reports app-server process snapshots without hanging.
   - Cancel/timeout leaves no bridge-owned orphan `codex app-server` or Computer Use child process.
