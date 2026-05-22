@@ -60,16 +60,21 @@ Use explicit markers in message text and filenames so live probes are searchable
 
 Source of truth: <https://developers.openai.com/codex/changelog>
 
+Last refreshed: 2026-05-22 against installed Codex CLI 0.133.0 and installed app 0.3.2/bridge runtime. The official changelog currently includes May 2026 app-server thread pagination, stdio exec-server transport, environment-provider work, Chrome extension updates, remote-control/app-server API changes, plugin discovery/share changes, and permission-profile metadata.
+
 | Capability | Bridge status | Next action |
 | --- | --- | --- |
 | Goals in Codex CLI | Deferred | Evaluate only after app-server exposes a stable goal API suitable for Messages-launched work |
-| CLI image viewing / app-server image fidelity | Partially adopted | Preserve local image inputs; add fidelity/detail options if app-server schema supports them in this runtime |
-| Remote Computer Use / browser control / Chrome extension | Partially adopted | Structured mentions and capability status exist; add live probes and exact blocker reporting |
-| App-server Unix socket transport | Deferred | Prefer stdio until process lifecycle issues are settled; reassess for long-lived helper stability |
-| App-server lifecycle/tool events | Partially adopted | Progress and callback blocker events are consumed; expand diagnostics around lifecycle events |
-| Plugin discovery and installed-plugin mention APIs | Partially adopted | Capability cache and structured mentions exist; refresh per turn or bounded TTL to avoid stale callability |
-| Permission profiles | Deferred | Current bridge uses `approvalPolicy: never` and `danger-full-access`; design a safer trusted-sender profile before adopting |
-| Thread pagination / sticky environments / remote thread store | Deferred | Current bridge only needs active-thread continuity; revisit if history/status grows beyond simple reads |
+| CLI image viewing / app-server image fidelity | Adopted for current bridge scope | Local image inputs are preserved, generated media and edit-image smokes verify app-server can create/read PNG artifacts, and unsupported image refs are skipped or converted before app-server use |
+| Remote Computer Use / browser control / Chrome extension | Partially adopted | Structured mentions, CLI/Messages smokes, capability cache, and exact blocker reporting exist; trusted-chat live evidence remains required for each blocker-or-success probe |
+| App-server Unix socket transport | Deferred | The bridge still uses `codex app-server --listen stdio://`; prefer stdio until process lifecycle and callback gates are fully proven, then reassess Unix sockets for daemon stability |
+| Stdio exec-server transport | No bridge action needed | The bridge does not own Codex command execution transport; continue verifying app-server command/progress events and child cleanup |
+| App-server lifecycle/tool events | Adopted for current bridge scope | Session/turn/progress/blocker/question events are consumed in status, smoke output, and active-job provenance; keep extending diagnostics from live failures |
+| Plugin discovery and installed-plugin mention APIs | Adopted for current bridge scope | Capability cache records skills/plugins/apps/MCP inventory; natural-language Chrome/Browser/Computer Use aliases become structured mentions; stale cache age is visible in status/doctor |
+| Plugin share/discoverability updates | Deferred | Relevant to plugin management UI, not bridge transport; revisit if Messages adds plugin install/share commands |
+| Permission profiles / active profile metadata | Deferred | Current bridge intentionally uses a permissive trusted-Mac profile; design a safer trusted-sender profile before adopting app-server permission-profile switching |
+| Thread pagination / sticky environments / environment providers | Deferred | Current bridge only needs active-thread continuity and simple thread reads; revisit if `/codex history` or status grows beyond bounded recent-thread reads |
+| Remote thread store | Deferred | Official changelog indicates remote thread-store implementation churn/removal; keep bridge state local until current app-server API stabilizes |
 | OpenAPI MCP and connector elicitations | Partially adopted | Dynamic MCP forwarding and deterministic elicitation handling exist; live installed-helper elicitation smoke remains the main parity gap |
 
 ## Acceptance Baseline
