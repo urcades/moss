@@ -30,9 +30,10 @@ Success: a real app-server-generated `item/tool/requestUserInput` or `mcpServer/
 Evidence:
 - Fake-runtime callback tests pass.
 - `/codex smoke app-server-callback` starts a real app-server callback turn from Messages and expects the next trusted reply to complete that original turn.
+- `codexmsgctl-swift smoke app-server-callback` starts a real app-server callback turn locally with an automatic responder; on 2026-05-22 it failed before bridge callback handling because Codex returned `BLOCKED request_user_input is unavailable in Default mode` without emitting a callback request.
 - A live installed-helper smoke records callback id, inbound prompt row, trusted reply row/guid, app-server thread/turn id, and final answer.
 
-Current status: deterministic support exists and the trusted-chat command exists; live real-callback proof still needs a trusted Messages run.
+Current status: deterministic support exists and the CLI/trusted-chat commands exist; live real-callback proof is blocked by Codex runtime mode/callback availability, not by the bridge responder seam.
 
 ## Goal D: Media Delivery And Editing Truth
 

@@ -110,7 +110,7 @@ Success means app-server `item/tool/requestUserInput` and `mcpServer/elicitation
   - Inbound reply routing goes to the callback instead of a new prompt.
   - Cancel and timeout answer the app-server request and clear state.
 - Architecture gate:
-  - The backend now has a JSON-RPC responder channel for app-server callbacks. The remaining proof is live installed-helper evidence from Apple Messages via `/codex smoke app-server-callback`.
+  - The backend now has a JSON-RPC responder channel for app-server callbacks. The CLI and Messages command surfaces both have app-server callback smokes; the current live runtime proof is blocked before bridge callback handling because Codex reports `request_user_input is unavailable in Default mode`.
 - Current status:
   - State saves now preserve non-terminal `pendingInteractiveCallback` records across stale helper/CLI saves while still allowing terminal callbacks to clear.
   - Inbound trusted non-command replies now route to pending callback state instead of starting a new prompt batch, recording response text/row/guid and sending a visible acknowledgement.
@@ -120,7 +120,9 @@ Success means app-server `item/tool/requestUserInput` and `mcpServer/elicitation
   - Deterministic coverage now runs a `BridgeService` end-to-end callback flow through the default backend responder seam: fake app-server asks for input, the bridge sends the Messages prompt, the next trusted reply is captured, the responder returns structured answers, the original turn sends its final answer, and pending/active state clears.
   - `/codex smoke callback` now creates a pending callback from Apple Messages and verifies that the next trusted non-command reply is captured by the callback route, reports the captured row/guid/text, clears pending state, and does not start a normal Codex job. Deterministic coverage exercises the two-message flow.
   - `/codex smoke app-server-callback` now starts a real app-server turn from Apple Messages with a prompt that must use app-server interactive user input before final answer. Deterministic coverage proves the command starts the default backend, sends the callback prompt, routes the trusted reply, and completes the original turn.
-  - Remaining gap: this still needs a trusted live run that proves the installed helper can trigger the real app-server callback, receive the next trusted reply, and complete the original Codex turn end to end.
+  - `codexmsgctl-swift smoke app-server-callback` now runs the same real app-server prompt with an automatic JSON-RPC callback responder and fails distinctly when no callback request is emitted.
+  - Live CLI proof on 2026-05-22 reached app-server thread `019e4fb9-e17e-7132-9261-6e5605ab6e21` / turn `019e4fb9-e36e-7a82-bc58-fa965ab16a35`, but Codex completed with `BLOCKED request_user_input is unavailable in Default mode` and emitted no `item/tool/requestUserInput` request.
+  - Remaining gap: identify whether app-server can start Messages-launched turns in a callback-capable mode or route a real MCP elicitation from a connector/plugin; then rerun both CLI and trusted `/codex smoke app-server-callback`.
 
 ## Goal 5: Runtime State And Process Supervision
 

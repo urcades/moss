@@ -24,7 +24,7 @@ struct CodexMsgCtlSwift {
           codexmsgctl-swift doctor [--probe-computer-use]
           codexmsgctl-swift gates
           codexmsgctl-swift trusted-gates [--recipient HANDLE] [--service iMessage|SMS]
-          codexmsgctl-swift smoke text|attachment|bridge-attach|generated-image|edit-image-check|automation|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
+          codexmsgctl-swift smoke text|attachment|bridge-attach|generated-image|edit-image-check|automation|app-server|app-server-callback|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift broker start|stop|status|doctor|events|dry-run-scan
           codexmsgctl-swift reset
         """)
@@ -175,7 +175,7 @@ struct CodexMsgCtlSwift {
     private static func runSmokeCommand(_ args: [String], paths: RuntimePaths, stores: RuntimeStores) async throws {
         let subcommand = args.first ?? "help"
         if subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
-            print("Usage: codexmsgctl-swift smoke text|attachment|bridge-attach|generated-image|edit-image-check|automation|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]")
+            print("Usage: codexmsgctl-swift smoke text|attachment|bridge-attach|generated-image|edit-image-check|automation|app-server|app-server-callback|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]")
             return
         }
         let config = try stores.config.load()
@@ -199,6 +199,8 @@ struct CodexMsgCtlSwift {
             try runAutomationSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
         case "app-server":
             try await runAppServerFinalAnswerSmoke(config: config, paths: paths)
+        case "app-server-callback":
+            try await runAppServerCallbackSmoke(config: config, paths: paths)
         case "inbound-image-check":
             try await runInboundImageCheckSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
         case "outbound-image-check":
@@ -492,6 +494,47 @@ struct CodexMsgCtlSwift {
         try await runAppServerMarkerSmoke(label: "app-server", marker: marker, request: request, config: smokeConfig, paths: paths, requireSuccessToken: true)
     }
 
+    private static func runAppServerCallbackSmoke(config: BridgeConfig, paths: RuntimePaths) async throws {
+        let marker = "CODEXMSGCTL_SMOKE_APP_SERVER_CALLBACK_\(UUID().uuidString)"
+        let answer = "cli-callback-answer-\(UUID().uuidString.prefix(8))"
+        var smokeConfig = config
+        smokeConfig.timeoutMs = min(config.timeoutMs, 60_000)
+        let callbackRecords = AppServerCallbackSmokeRecords()
+        let responder: CodexInteractiveCallbackResponder = { method, requestId, params in
+            callbackRecords.append(method: method, requestId: "\(requestId)", prompt: callbackPromptSummary(params: params), answer: answer)
+            return appServerCallbackSmokeResponse(method: method, params: params, answer: answer)
+        }
+        let request = PromptRequest(
+            promptText: bridgeAppServerCallbackSmokePrompt(marker: marker),
+            attachments: []
+        )
+        print("Smoke app-server-callback marker: \(marker)")
+        print("Callback answer: \(answer)")
+        let response = try await invokeAppServerSmoke(
+            label: "app-server-callback",
+            marker: marker,
+            request: request,
+            config: smokeConfig,
+            paths: paths,
+            requireSuccessToken: false,
+            interactiveCallbackResponder: responder
+        )
+        let records = callbackRecords.snapshot()
+        for record in records {
+            print("Callback request: method=\(record.method) id=\(record.requestId) prompt=\"\(record.prompt)\" answer=\"\(record.answer)\"")
+        }
+        guard !records.isEmpty else {
+            throw StoreError.validation("Smoke app-server-callback failed: app-server completed without invoking an interactive callback. Response: \(computerUseProbeDetailWithWindowDiagnostics(response.text))")
+        }
+        guard response.text.localizedCaseInsensitiveContains("SUCCESS") else {
+            throw StoreError.validation("Smoke app-server-callback failed: callback was handled but final answer did not report SUCCESS. Response: \(computerUseProbeDetailWithWindowDiagnostics(response.text))")
+        }
+        guard response.text.contains(answer) else {
+            throw StoreError.validation("Smoke app-server-callback failed: final answer did not echo callback answer \(answer).")
+        }
+        print("Smoke app-server-callback passed.")
+    }
+
     private static func runInboundImageCheckSmoke(recipient: String, service: String, config: BridgeConfig, paths: RuntimePaths, stores: RuntimeStores) async throws {
         var state = try stores.state.load()
         var refs = state.recentMediaRefs ?? []
@@ -579,10 +622,10 @@ struct CodexMsgCtlSwift {
         print("Smoke \(label) passed.")
     }
 
-    private static func invokeAppServerSmoke(label: String, marker: String, request: PromptRequest, config: BridgeConfig, paths: RuntimePaths, requireSuccessToken: Bool = false) async throws -> CodexResponse {
+    private static func invokeAppServerSmoke(label: String, marker: String, request: PromptRequest, config: BridgeConfig, paths: RuntimePaths, requireSuccessToken: Bool = false, interactiveCallbackResponder: CodexInteractiveCallbackResponder? = nil) async throws -> CodexResponse {
         let events = CapabilitySmokeEvents()
         do {
-            let response = try await CodexAppServerBackend(config: config, paths: paths).invoke(request, sessionId: nil) { event in
+            let response = try await CodexAppServerBackend(config: config, paths: paths, interactiveCallbackResponder: interactiveCallbackResponder).invoke(request, sessionId: nil) { event in
                 switch event {
                 case .processStarted(let pid):
                     events.setProcessPid(pid)
@@ -848,4 +891,59 @@ private final class CapabilitySmokeEvents: @unchecked Sendable {
         defer { lock.unlock() }
         return turn
     }
+}
+
+private struct AppServerCallbackSmokeRecord: Sendable {
+    var method: String
+    var requestId: String
+    var prompt: String
+    var answer: String
+}
+
+private final class AppServerCallbackSmokeRecords: @unchecked Sendable {
+    private let lock = NSLock()
+    private var records: [AppServerCallbackSmokeRecord] = []
+
+    func append(method: String, requestId: String, prompt: String, answer: String) {
+        lock.lock()
+        records.append(AppServerCallbackSmokeRecord(method: method, requestId: requestId, prompt: prompt, answer: answer))
+        lock.unlock()
+    }
+
+    func snapshot() -> [AppServerCallbackSmokeRecord] {
+        lock.lock()
+        defer { lock.unlock() }
+        return records
+    }
+}
+
+private func callbackPromptSummary(params: [String: Any]?) -> String {
+    let candidates = [
+        params?["prompt"] as? String,
+        params?["message"] as? String,
+        (params?["request"] as? [String: Any])?["message"] as? String
+    ].compactMap { $0 }
+    if let candidate = candidates.first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+        return callbackSmokeTruncate(cleanPlainText(candidate), limit: 160)
+    }
+    let questions = params?["questions"] as? [[String: Any]] ?? []
+    let questionText = questions.compactMap { question -> String? in
+        let id = question["id"] as? String
+        let header = question["header"] as? String
+        let body = question["question"] as? String ?? question["prompt"] as? String
+        return [id, header, body]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ": ")
+    }.joined(separator: " | ")
+    if !questionText.isEmpty {
+        return callbackSmokeTruncate(cleanPlainText(questionText), limit: 160)
+    }
+    return callbackSmokeTruncate(cleanPlainText(searchableText(params ?? [:])), limit: 160)
+}
+
+private func callbackSmokeTruncate(_ value: String, limit: Int) -> String {
+    guard value.count > limit else { return value }
+    let index = value.index(value.startIndex, offsetBy: limit)
+    return String(value[..<index])
 }

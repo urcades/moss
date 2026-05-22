@@ -36,6 +36,7 @@ struct BridgeCoreFocusedTests {
         try testInboundImageSmokeBuildsLocalImageRequest()
         try testOutboundImageSmokeBuildsLocalImageRequest()
         try testImageEditSmokeBuildsPreviousImageRequest()
+        try testAppServerCallbackSmokeResponseShapes()
         try testInboundImageSmokeRequiresTrustedInboundImage()
         try await testInboundImageSmokeRecoversLatestTrustedImageFromMessagesDb()
         try await testCodexSmokeOutboundImageCheckSendsProbeAndBuildsFollowUp()
@@ -866,6 +867,41 @@ struct BridgeCoreFocusedTests {
         try expect(smoke.request.attachments.map(\.absolutePath) == [imagePath], "image edit smoke attaches source image")
         try expect(smoke.request.promptText.contains("Modify that image"), "image edit smoke uses previous-image language")
         try expect(smoke.request.promptText.contains("BRIDGE_ATTACH: \(artifactPath)"), "image edit smoke asks app-server for attachment directive")
+    }
+
+    private static func testAppServerCallbackSmokeResponseShapes() throws {
+        let answer = "purple"
+        let inputResponse = appServerCallbackSmokeResponse(
+            method: "item/tool/requestUserInput",
+            params: [
+                "questions": [
+                    ["id": "choice", "question": "Pick one"],
+                    ["id": "note", "question": "Say more"]
+                ]
+            ],
+            answer: answer
+        )
+        let inputResult = inputResponse["result"] as? [String: Any]
+        let answers = inputResult?["answers"] as? [String: Any]
+        let choice = answers?["choice"] as? [String: Any]
+        let note = answers?["note"] as? [String: Any]
+        try expect(choice?["answers"] as? [String] == [answer], "callback smoke fills requestUserInput choice answers")
+        try expect(note?["answers"] as? [String] == [answer], "callback smoke fills every requestUserInput question")
+
+        let elicitationResponse = appServerCallbackSmokeResponse(
+            method: "mcpServer/elicitation/request",
+            params: ["message": "Confirm"],
+            answer: answer
+        )
+        let elicitationResult = elicitationResponse["result"] as? [String: Any]
+        let content = elicitationResult?["content"] as? [String: Any]
+        try expect(elicitationResult?["action"] as? String == "accept", "callback smoke accepts elicitation")
+        try expect(content?["response"] as? String == answer, "callback smoke includes elicitation text response")
+        try expect(content?["confirmed"] as? Bool == true, "callback smoke includes confirmation for elicitation schemas")
+
+        let prompt = bridgeAppServerCallbackSmokePrompt(marker: "CALLBACK_MARKER")
+        try expect(prompt.contains("CALLBACK_MARKER"), "app-server callback smoke prompt includes marker")
+        try expect(prompt.contains("requestUserInput"), "app-server callback smoke prompt asks for requestUserInput")
     }
 
     private static func testInboundImageSmokeRequiresTrustedInboundImage() throws {
@@ -2888,6 +2924,7 @@ struct BridgeCoreFocusedTests {
         try expect(text.contains("swift run codexmsgctl-swift smoke bridge-attach --recipient +1 --service iMessage"), "gate checklist includes bridge attach smoke")
         try expect(text.contains("swift run codexmsgctl-swift smoke generated-image --recipient +1 --service iMessage"), "gate checklist includes CLI generated image smoke")
         try expect(text.contains("swift run codexmsgctl-swift smoke edit-image-check --recipient +1 --service iMessage"), "gate checklist includes CLI edit image smoke")
+        try expect(text.contains("swift run codexmsgctl-swift smoke app-server-callback"), "gate checklist includes CLI app-server callback smoke")
         try expect(text.contains("/codex smoke generated-image"), "gate checklist includes generated image smoke")
         try expect(text.contains("/codex smoke edit-image-check"), "gate checklist includes trusted edit image smoke")
         try expect(text.contains("Trusted evidence observer:"), "gate checklist separates trusted evidence observer")

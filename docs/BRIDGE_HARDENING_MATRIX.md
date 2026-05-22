@@ -25,7 +25,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 
 ## Tests Added Or Strengthened
 
-- App-server callbacks: `item/tool/requestUserInput` and `mcpServer/elicitation/request` have deterministic Messages-backed responder coverage.
+- App-server callbacks: `item/tool/requestUserInput` and `mcpServer/elicitation/request` have deterministic Messages-backed responder coverage; `codexmsgctl-swift smoke app-server-callback` now probes the real app-server path and reports the current live blocker when Codex does not emit a callback request.
 - App-server final answers: app-server smoke commands verify a normal marked turn returns a final reply with thread/turn evidence.
 - Dynamic app-server tools: MCP forwarding now has contract coverage for unsupported namespaces, malformed requests, stalled MCP calls, error responses, images, primitives, and unknown JSON object content.
 - Natural-language capability mentions: `use Computer Use`, `use Chrome`, and `use Browser` become structured plugin mentions.

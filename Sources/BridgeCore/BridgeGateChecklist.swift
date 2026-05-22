@@ -56,6 +56,7 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
     - swift run codexmsgctl-swift smoke generated-image\(liveSuffix)
     - swift run codexmsgctl-swift smoke edit-image-check\(liveSuffix)
     - swift run codexmsgctl-swift smoke app-server
+    - swift run codexmsgctl-swift smoke app-server-callback
     - swift run codexmsgctl-swift smoke inbound-image-check\(liveSuffix)
     - swift run codexmsgctl-swift smoke outbound-image-check\(liveSuffix)
     - swift run codexmsgctl-swift smoke chrome

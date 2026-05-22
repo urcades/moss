@@ -1936,7 +1936,7 @@ private func bridgeAppServerSmokePrompt(marker: String) -> String {
     "Reply only with \(marker) SUCCESS. Do not call tools, plugins, apps, browser, or Computer Use."
 }
 
-private func bridgeAppServerCallbackSmokePrompt(marker: String) -> String {
+public func bridgeAppServerCallbackSmokePrompt(marker: String) -> String {
     """
     This is an Apple Messages bridge callback smoke test.
     Before giving a final answer, call the app-server interactive user input/requestUserInput facility and ask the user to reply with any short text for marker \(marker).
