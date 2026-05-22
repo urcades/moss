@@ -9,32 +9,83 @@ public func buildBatchPreview(_ batch: PendingBatch) -> String {
 }
 
 public func promptLooksLikeCodexAutomationRequest(_ text: String) -> Bool {
-    let normalized = text.lowercased()
+    let normalized = canonicalPromptText(text)
     if promptExplicitlyTargetsBridgeSource(normalized) {
         return false
+    }
+    if automationCreationIntentScore(text) > 0 {
+        return true
     }
     let automationTerms = [
         "automation",
         "automations",
-        "automate",
         "reminder",
-        "remind me",
-        "schedule",
-        "scheduled",
+        "reminders",
         "recurring",
+        "scheduled",
         "monitor",
         "watch",
         "check back",
         "follow up"
     ]
-    return automationTerms.contains { normalized.contains($0) }
+    if automationTerms.contains(where: { containsPhrase(normalized, $0) }) {
+        return true
+    }
+    if containsPhrase(normalized, "schedule") {
+        let scheduledTaskTerms = ["automation", "reminder", "task", "job", "run", "check", "message", "send", "tell me", "follow up"]
+        return scheduledTaskTerms.contains { containsPhrase(normalized, $0) }
+    }
+    return false
 }
 
 private func promptExplicitlyTargetsBridgeSource(_ normalized: String) -> Bool {
     let bridgeTerms = ["bridge", "messages bridge", "moss", "helper"]
     let sourceTerms = ["source", "code", "swift", "implementation", "implement", "modify", "edit", "change", "patch"]
-    return bridgeTerms.contains { normalized.contains($0) } &&
-        sourceTerms.contains { normalized.contains($0) }
+    return bridgeTerms.contains { containsPhrase(normalized, $0) } &&
+        sourceTerms.contains { containsPhrase(normalized, $0) }
+}
+
+func automationCreationIntentScore(_ text: String) -> Int {
+    let normalized = canonicalPromptText(text)
+    if containsAnyPattern(text, [
+        #"(?i)\b(create|make|add|set\s*up|setup|start)\b.{0,80}\b(automation|automations|reminder|reminders|recurring task|scheduled task|monitor|watch)\b"#,
+        #"(?i)\b(new)\b.{0,40}\b(automation|reminder|recurring task|scheduled task)\b"#,
+        #"(?i)\b(automation|reminder)\b.{0,60}\b(create|make|add|set\s*up|setup|start|new)\b"#
+    ]) {
+        return 3
+    }
+    if ["remind me", "check back", "follow up with me", "follow up on", "monitor", "watch"].contains(where: { containsPhrase(normalized, $0) }) {
+        return 2
+    }
+    if containsAnyPattern(text, [
+        #"(?i)\bschedule\b.{0,80}\b(automation|reminder|task|job|run|check|message|send|tell me|follow[- ]?up)\b"#,
+        #"(?i)\b(recurring|daily|weekly|monthly|every\s+(morning|afternoon|evening|day|week|month|hour))\b.{0,80}\b(send|tell me|notify me|check|summarize|digest)\b"#
+    ]) {
+        return 1
+    }
+    return 0
+}
+
+func canonicalPromptText(_ text: String) -> String {
+    let lowered = text.lowercased()
+    let scalars = lowered.unicodeScalars.map { scalar -> Character in
+        CharacterSet.alphanumerics.contains(scalar) ? Character(scalar) : " "
+    }
+    return String(scalars).split(whereSeparator: \.isWhitespace).joined(separator: " ")
+}
+
+func containsPhrase(_ canonicalText: String, _ phrase: String) -> Bool {
+    let canonicalPhrase = canonicalPromptText(phrase)
+    guard !canonicalPhrase.isEmpty else { return false }
+    return " \(canonicalText) ".contains(" \(canonicalPhrase) ")
+}
+
+func containsAnyPattern(_ text: String, _ patterns: [String]) -> Bool {
+    let range = NSRange(text.startIndex..<text.endIndex, in: text)
+    return patterns.contains { pattern in
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return false }
+        return regex.firstMatch(in: text, range: range) != nil
+    }
 }
 
 public func buildPromptRequest(from batch: PendingBatch) -> PromptRequest {

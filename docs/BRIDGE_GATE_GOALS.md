@@ -65,6 +65,7 @@ Success means Messages-triggered automation creation is bridge-owned, synchronou
   - Current live smoke passed for `bridge-smoke-test-8fd10e85` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_2B366AD1-1F91-45B3-99C9-6B728FD10E85`.
   - `codexmsgctl-swift status` now reports automation creation status and the latest automation routes.
   - State saves now merge automation route/status fields so a helper tick with stale in-memory state cannot erase a newly persisted route.
+  - Automation creation classification now has a phrase matrix covering creation/reminder/monitor/follow-up positives plus management/debug/list/status and ordinary schedule false positives.
 
 ## Goal 4: Interactive Callback Parity
 
@@ -129,6 +130,7 @@ Success means the bridge continuously reports what Codex can really do from Mess
   - Current `swift run codexmsgctl-swift smoke chrome` still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_CHROME_BF716326-E9E4-40FF-A47A-173DB6A40F3A`.
   - Current smoke chrome still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_CHROME_AFFEEED9-3DCA-469B-AC95-CF261D565C74`.
   - Post-dynamic-tool-contract smoke chrome passed with marker `CODEXMSGCTL_SMOKE_CHROME_576B25C3-DDA5-47B2-9221-ACEC6F3EDAC9` and exact blocker `privileged native pipe bridge is not available; browser-client is not trusted`.
+  - Post-classifier-restart `swift run codexmsgctl-swift smoke computer-use` passed with marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_76A2D932-9377-4AD0-A1E5-B91A4747AB10` and exact blocker `Computer Use server error -10005: cgWindowNotFound`.
   - `swift run codexmsgctl-swift smoke browser` invoked the Browser skill path and returned the exact blocker `Browser is not available: iab` with marker `CODEXMSGCTL_SMOKE_BROWSER_9BC2108C-E062-4CA4-8F74-CD305E23A487`.
   - Current `swift run codexmsgctl-swift smoke browser` still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_BROWSER_8A9C61EA-F7B0-451F-8BC4-E261E15DAFAD`.
   - Current smoke browser still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_BROWSER_F03F2AD3-962F-4A33-8C8E-09CCE3734F69`.

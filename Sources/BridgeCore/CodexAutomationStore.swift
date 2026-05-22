@@ -124,30 +124,38 @@ public func createCodexAutomationIfRequested(batch: PendingBatch, config: Bridge
 
 public func shouldCreateCodexAutomation(from text: String) -> Bool {
     guard promptLooksLikeCodexAutomationRequest(text) else { return false }
-    let normalized = text.lowercased()
-    if normalized.contains("delete automation") ||
-        normalized.contains("remove automation") ||
-        normalized.contains("list automation") ||
-        normalized.contains("list automations") ||
-        normalized.contains("show automation") ||
-        normalized.contains("show automations") {
+    let normalized = canonicalPromptText(text)
+    let managementPhrases = [
+        "delete automation",
+        "delete automations",
+        "remove automation",
+        "remove automations",
+        "list automation",
+        "list automations",
+        "show automation",
+        "show automations",
+        "view automation",
+        "view automations",
+        "automation status",
+        "automation statuses",
+        "status of automation",
+        "status of automations",
+        "why did automation",
+        "why did the automation",
+        "why didnt automation",
+        "why didnt the automation",
+        "automation failed",
+        "automation error",
+        "debug automation",
+        "diagnose automation",
+        "inspect automation",
+        "look into automation",
+        "look into the automation"
+    ]
+    if managementPhrases.contains(where: { containsPhrase(normalized, $0) }) {
         return false
     }
-    let creationTerms = [
-        "create",
-        "new automation",
-        "set up",
-        "setup",
-        "add an automation",
-        "add a reminder",
-        "schedule",
-        "remind me",
-        "monitor",
-        "watch",
-        "check back",
-        "follow up"
-    ]
-    return creationTerms.contains { normalized.contains($0) }
+    return automationCreationIntentScore(text) > 0
 }
 
 private struct CodexAutomationDraft {

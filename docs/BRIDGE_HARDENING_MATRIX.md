@@ -19,7 +19,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 | Active jobs | Helper restarts with stale active job | Dead job recovery notifies and clears; cancel now terminates known descendant processes as well as the root pid | Move all state mutation behind one owner/actor |
 | State files | `state.json` is truncated or corrupt | JSON store backs up corrupt files and falls back to defaults instead of wedging startup; doctor reports corrupt-state backup paths when present | Add live evidence the next time a real corrupt-state recovery happens |
 | Automations | Poll loop rereads all historical session JSONL | Bounded scan API skips delivered lower-bound sessions and has read-budget coverage | Persist scan watermarks if session-id ordering proves insufficient |
-| Automations | Diagnostic prompt creates automation | Classifier regression tests cover known false positives | Broaden natural-language classifier matrix |
+| Automations | Diagnostic prompt creates automation | Classifier regression tests cover management/debug/list/status false positives, schedule/calendar false positives, and reminder/monitor/follow-up positives | Keep expanding phrase fixtures from live trusted-chat misses |
 | LaunchAgents/runtime | Installed helper, runtime copy, and source drift | Doctor/status expose runtime facts, helper/broker loaded state, and provenance comparison across expected executable, LaunchAgent plist, and loaded launchd program | Add source-vs-installed build identity comparison if release metadata becomes available |
 | Codex version drift | Bridge leaves new platform features unused | Capability adoption table below records current state | Recheck after each Codex CLI/app-server upgrade |
 

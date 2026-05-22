@@ -29,6 +29,7 @@ struct BridgeCoreFocusedTests {
         try testInboundImageSmokeRequiresTrustedInboundImage()
         try await testInboundImageSmokeRecoversLatestTrustedImageFromMessagesDb()
         try testDiagnosticMentionOfDailyBriefingDoesNotCreateAutomation()
+        try testAutomationCreationClassifierMatrix()
         try testCodexAutomationCreationWritesAppAutomationToml()
         try testCodexAutomationSmokeCreatesRouteAndStatus()
         try testBridgeStateSavePreservesConcurrentAutomationFields()
@@ -501,6 +502,38 @@ struct BridgeCoreFocusedTests {
         let text = "I'm confused why sometimes computer use works and sometimes it doesn't, also in your last daily morning briefing X wasn't able to be granted, even though we've granted it before - can you look into this?"
         try expect(!promptLooksLikeCodexAutomationRequest(text), "daily briefing diagnostics are not automation requests")
         try expect(!shouldCreateCodexAutomation(from: text), "daily briefing diagnostics do not create automations")
+    }
+
+    private static func testAutomationCreationClassifierMatrix() throws {
+        let positives = [
+            "Create a new automation every morning at 7am that sends a local news and weather digest.",
+            "Set up a reminder to ping me tomorrow at 9am.",
+            "Schedule a recurring task that checks the bridge status every Friday.",
+            "Remind me next week to review the Messages bridge hardening matrix.",
+            "Monitor the Codex changelog daily and tell me if app-server changes ship.",
+            "Watch this repo weekly and send me a summary.",
+            "Check back in two hours and ask me whether the smoke tests passed.",
+            "Follow up with me tomorrow morning about this rollout."
+        ]
+        for text in positives {
+            try expect(promptLooksLikeCodexAutomationRequest(text), "automation classifier should route creation-like prompt: \(text)")
+            try expect(shouldCreateCodexAutomation(from: text), "automation classifier should create for: \(text)")
+        }
+
+        let negatives = [
+            "Can you check whether the Morning News automation is running?",
+            "Show me my automations and their routes.",
+            "List automations that are bridged to Messages.",
+            "Why did the automation fail last night?",
+            "Please inspect automation.toml for route mismatch issues.",
+            "Can you use the browser to check the WWDC schedule?",
+            "What is on my schedule today?",
+            "Debug the automation delivery evidence without creating anything.",
+            "Remove automation Bridge Smoke Test 123."
+        ]
+        for text in negatives {
+            try expect(!shouldCreateCodexAutomation(from: text), "automation classifier should not create for: \(text)")
+        }
     }
 
     private static func testCodexAutomationCreationWritesAppAutomationToml() throws {
