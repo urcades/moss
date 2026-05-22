@@ -24,6 +24,7 @@ struct BridgeCoreFocusedTests {
         try testPreviousImageReferenceSkipsUnsupportedRecentImage()
         try testLiveSmokeResultsStatusHighlightsLatestBlocker()
         try testLiveSmokeResultsKeepLatestPerSmokeName()
+        try testRecordLiveSmokeResultPersistsToState()
         try await testMissingPreviousImageReferenceAsksForSource()
         try await testCodexSmokeAttachmentCommandSendsProbeAndSummary()
         try await testCodexSmokeBridgeAttachCommandUsesDirectiveHandoff()
@@ -408,6 +409,30 @@ struct BridgeCoreFocusedTests {
         try expect(results.contains(where: { $0.name == "chrome" && $0.marker == "NEW" }), "live smoke results replace older same-name result")
         try expect(!results.contains(where: { $0.marker == "OLD" }), "live smoke results drop older same-name result")
         try expect(results.map(\.name) == ["browser", "chrome"], "live smoke results remain sorted by update time")
+    }
+
+    private static func testRecordLiveSmokeResultPersistsToState() throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        try stores.state.save(defaultBridgeState())
+
+        try recordLiveSmokeResult(
+            stores: stores,
+            name: "computer-use",
+            marker: "DOCTOR_MARKER",
+            status: "blocked",
+            detail: "cgWindowNotFound",
+            threadId: "thread-doctor",
+            turnId: nil,
+            updatedAt: Date(timeIntervalSince1970: 1_778_640_000)
+        )
+
+        let reloaded = try stores.state.load()
+        try expect(reloaded.liveSmokeResults?.count == 1, "record live smoke result persists one result")
+        try expect(reloaded.liveSmokeResults?.first?.name == "computer-use", "record live smoke result persists name")
+        try expect(reloaded.liveSmokeResults?.first?.detail == "cgWindowNotFound", "record live smoke result persists detail")
+        try expect(reloaded.liveSmokeResults?.first?.updatedAt == "2026-05-13T02:40:00.000Z", "record live smoke result uses supplied timestamp")
     }
 
     private static func testMissingPreviousImageReferenceAsksForSource() async throws {

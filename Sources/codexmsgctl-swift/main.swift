@@ -971,28 +971,3 @@ private func callbackSmokeTruncate(_ value: String, limit: Int) -> String {
     let index = value.index(value.startIndex, offsetBy: limit)
     return String(value[..<index])
 }
-
-private func liveSmokeStatus(from responseText: String) -> String {
-    if responseText.localizedCaseInsensitiveContains("BLOCKED") {
-        return "blocked"
-    }
-    if responseText.localizedCaseInsensitiveContains("SUCCESS") {
-        return "passed"
-    }
-    return "unknown"
-}
-
-private func recordLiveSmokeResult(stores: RuntimeStores, name: String, marker: String, status: String, detail: String, threadId: String?, turnId: String?) throws {
-    var state = try stores.state.load()
-    let result = LiveSmokeResult(
-        name: name,
-        marker: marker,
-        status: status,
-        detail: cleanPlainText(detail),
-        threadId: threadId,
-        turnId: turnId,
-        updatedAt: DateCodec.iso(Date())
-    )
-    state.liveSmokeResults = updatedLiveSmokeResults(state.liveSmokeResults ?? [], with: result)
-    try stores.state.save(state)
-}

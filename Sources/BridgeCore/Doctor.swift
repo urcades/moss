@@ -100,7 +100,7 @@ public final class Doctor: @unchecked Sendable {
         checks.append(checkTCC("Permission Broker Accessibility", services: ["kTCCServiceAccessibility"], clients: permissionBrokerClients(), missingDetail: "Grant Accessibility to Messages Codex Permission Broker so it can handle visible permission prompts."))
         checks.append(checkPermissionBrokerStatus())
         if includeComputerUseProbe {
-            checks.append(await computerUseProbe(config))
+            checks.append(await computerUseProbe(config, stores: stores))
         }
         return DoctorReport(ok: checks.allSatisfy(\.ok), checks: checks)
     }
@@ -338,7 +338,7 @@ public final class Doctor: @unchecked Sendable {
             : DoctorCheck(name: name, ok: true, detail: output.replacingOccurrences(of: "\n", with: "; "))
     }
 
-    private func computerUseProbe(_ config: BridgeConfig) async -> DoctorCheck {
+    private func computerUseProbe(_ config: BridgeConfig, stores: RuntimeStores) async -> DoctorCheck {
         let marker = "CODEX_DOCTOR_COMPUTER_USE_\(UUID().uuidString)"
         let prompt = bridgeCapabilitySmokePrompt(capability: "computer-use", marker: marker)
         let request = PromptRequest(promptText: prompt, attachments: [])
@@ -377,12 +377,40 @@ public final class Doctor: @unchecked Sendable {
             let detail = ok
                 ? response.text
                 : computerUseProbeDetailWithWindowDiagnostics(response.text, runner: runner)
+            try? recordLiveSmokeResult(
+                stores: stores,
+                name: "computer-use-doctor",
+                marker: marker,
+                status: ok ? "passed" : liveSmokeStatus(from: detail),
+                detail: detail,
+                threadId: response.sessionId,
+                turnId: nil
+            )
             return DoctorCheck(name: "Computer Use probe", ok: ok, detail: detail)
         } catch let error as CodexBackendFailure {
             let detail = computerUseProbeDetailWithWindowDiagnostics(error.blockedText ?? error.message, runner: runner)
+            try? recordLiveSmokeResult(
+                stores: stores,
+                name: "computer-use-doctor",
+                marker: marker,
+                status: liveSmokeStatus(from: detail),
+                detail: detail,
+                threadId: nil,
+                turnId: nil
+            )
             return DoctorCheck(name: "Computer Use probe", ok: false, detail: detail)
         } catch {
-            return DoctorCheck(name: "Computer Use probe", ok: false, detail: String(describing: error))
+            let detail = String(describing: error)
+            try? recordLiveSmokeResult(
+                stores: stores,
+                name: "computer-use-doctor",
+                marker: marker,
+                status: "failed",
+                detail: detail,
+                threadId: nil,
+                turnId: nil
+            )
+            return DoctorCheck(name: "Computer Use probe", ok: false, detail: detail)
         }
     }
 }

@@ -171,3 +171,28 @@ public func updatedLiveSmokeResults(_ existing: [LiveSmokeResult], with result: 
     }
     return Array(sorted.suffix(limit))
 }
+
+public func liveSmokeStatus(from responseText: String) -> String {
+    if responseText.localizedCaseInsensitiveContains("BLOCKED") {
+        return "blocked"
+    }
+    if responseText.localizedCaseInsensitiveContains("SUCCESS") {
+        return "passed"
+    }
+    return "unknown"
+}
+
+public func recordLiveSmokeResult(stores: RuntimeStores, name: String, marker: String, status: String, detail: String, threadId: String?, turnId: String?, updatedAt: Date = Date()) throws {
+    var state = try stores.state.load()
+    let result = LiveSmokeResult(
+        name: name,
+        marker: marker,
+        status: status,
+        detail: cleanPlainText(detail),
+        threadId: threadId,
+        turnId: turnId,
+        updatedAt: DateCodec.iso(updatedAt)
+    )
+    state.liveSmokeResults = updatedLiveSmokeResults(state.liveSmokeResults ?? [], with: result)
+    try stores.state.save(state)
+}
