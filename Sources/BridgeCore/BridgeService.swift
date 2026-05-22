@@ -1194,18 +1194,24 @@ public final class BridgeService: @unchecked Sendable {
     private func sendOutgoingReply(_ text: String, replySink: ReplySink, recipient: String, service: String, config: BridgeConfig, request: PromptRequest) async throws {
         let safeText = safeUserVisibleText(text)
         let outgoing = prepareOutgoingReply(safeText, config: config)
-        if !outgoing.text.isEmpty {
-            try await sendReplyRecording(replySink, recipient: recipient, service: service, text: outgoing.text)
-        }
-        for attachment in outgoing.attachments {
-            do {
-                try await sendAttachmentRecording(replySink, recipient: recipient, service: service, filePath: attachment)
-            } catch {
-                throw StoreError.validation("Could not send attachment \(attachment): \(error)")
+        if !outgoing.attachments.isEmpty {
+            for attachment in outgoing.attachments {
+                do {
+                    try await sendAttachmentRecording(replySink, recipient: recipient, service: service, filePath: attachment)
+                } catch {
+                    throw StoreError.validation("Could not send attachment \(attachment): \(error)")
+                }
             }
-        }
-        if outgoing.text.isEmpty && outgoing.attachments.isEmpty {
-            try await sendReplyRecording(replySink, recipient: recipient, service: service, text: safeText)
+            if !outgoing.text.isEmpty {
+                _ = try await replySink.sendReply(recipient: recipient, service: service, text: outgoing.text)
+            }
+        } else {
+            if !outgoing.text.isEmpty {
+                try await sendReplyRecording(replySink, recipient: recipient, service: service, text: outgoing.text)
+            }
+            if outgoing.text.isEmpty {
+                try await sendReplyRecording(replySink, recipient: recipient, service: service, text: safeText)
+            }
         }
     }
 

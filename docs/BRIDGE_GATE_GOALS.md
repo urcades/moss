@@ -41,6 +41,7 @@ Success means follow-up prompts like "modify that image" use a real previous cha
   - Recent inbound and outbound image refs persist in `BridgeState`.
   - A previous-image follow-up attaches the latest usable image for that chat.
   - A previous-image follow-up with no usable image asks for the source and does not start Codex.
+  - Final replies containing `BRIDGE_ATTACH:` send the attachment before any success text, and failed attachment delivery prevents the success text from being sent.
   - Messages DB ingress covers attachment-only rows, multiple attachments, `~/` path expansion, image/PDF/unsupported classification, and existence flags.
 - Live gates:
   - Send an inbound image, then ask for a marked modification; app-server receives a `localImage`.
@@ -59,6 +60,7 @@ Success means follow-up prompts like "modify that image" use a real previous cha
   - Current inbound-image smoke passed from persisted converted row 721 with marker `CODEXMSGCTL_SMOKE_INBOUND_IMAGE_5B6E7633-55B2-4AC4-84FC-CDF4BA033A67`, thread `019e4f1c-56de-7741-9a0f-34894af6d9c3`, and turn `019e4f1c-58e7-7122-a970-152c225300ba`.
   - `/codex smoke outbound-image-check` and `codexmsgctl-swift smoke outbound-image-check` now send a marked image, persist it as a recent outbound media ref, build a "that image" app-server request, and require marker plus `SUCCESS`.
   - Live `swift run codexmsgctl-swift smoke outbound-image-check` passed with marker `CODEXMSGCTL_SMOKE_OUTBOUND_IMAGE_D0F56FCE-D2CE-4953-9B01-C1022ADE34F0`: Messages DB row 753 (`message.error=0`, `transfer_state=5`, renamed to `IMG_7646.jpeg`), app-server thread `019e4f2f-3cf5-7b20-813b-d6c4598f6b0e`, and turn `019e4f2f-3f08-7961-a78c-490f507e8073`.
+  - Media final replies now send validated attachments before success text. Deterministic coverage verifies `Done.` is not sent when the attachment delivery path fails.
 
 ## Goal 3: Automation Truth
 

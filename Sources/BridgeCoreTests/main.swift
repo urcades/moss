@@ -81,6 +81,7 @@ struct BridgeCoreFocusedTests {
         try testCodexProgressSummaryHandlesAppServerNotifications()
         try testOutgoingAttachmentIntentGate()
         try await testBridgeAttachDirectiveAlwaysSendsValidatedAttachment()
+        try await testBridgeAttachDirectiveDoesNotSendSuccessTextWhenAttachmentFails()
         try await testProgressEventsUpdateStateWithoutSendingSms()
         try await testDeadActiveJobOnStartupNotifiesAndClears()
         try await testPendingInteractiveCallbackCapturesNextReply()
@@ -2002,12 +2003,47 @@ struct BridgeCoreFocusedTests {
 
         let replies = await sink.repliesSnapshot()
         let attachments = await sink.attachmentsSnapshot()
+        let events = await sink.eventsSnapshot()
         try expect(replies.map(\.text) == ["Done."], "visible attachment directive is stripped from text")
         try expect(attachments.map(\.filePath) == [attachment.path], "validated BRIDGE_ATTACH path sends even without prompt heuristics")
+        try expect(events == ["attachment:\(attachment.path)", "text:Done."], "attachment is sent before success text")
         let state = try stores.state.load()
         try expect(state.lastOutboundSend?.kind == "attachment", "last outbound send records attachment kind")
         try expect(state.lastOutboundSend?.status == "dbObserved", "last outbound send records database observation")
         try expect(service.runLocalCommand("/status").contains("Last outbound send: attachment dbObserved"), "status exposes outbound send evidence")
+    }
+
+    private static func testBridgeAttachDirectiveDoesNotSendSuccessTextWhenAttachmentFails() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        config.outgoingAttachmentMode = "fullAccess"
+        try stores.config.save(config)
+
+        let attachment = paths.stateDir.appendingPathComponent("generated.png")
+        try Data("image".utf8).write(to: attachment)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 1, guid: "guid-attach-fails", text: "make the picture", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink(failAttachments: true)
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in FakeProgressCodexBackend(events: [], response: "Done.\nBRIDGE_ATTACH: \(attachment.path)") },
+            now: { Date(timeIntervalSince1970: 1_777_777_777) }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        let replies = try await waitForReplies(sink, count: 1)
+        let events = await sink.eventsSnapshot()
+
+        try expect(!events.contains("text:Done."), "success text is not sent before a failed attachment")
+        try expect(replies.first?.text.contains("Could not send attachment") == true, "failed attachment sends visible error instead of success")
     }
 
     private static func testProgressEventsUpdateStateWithoutSendingSms() async throws {
@@ -2865,12 +2901,20 @@ private final class CapturingReplySink: ReplySink, @unchecked Sendable {
     }
 
     private let collector = ReplyCollector()
+    private let failAttachments: Bool
+
+    init(failAttachments: Bool = false) {
+        self.failAttachments = failAttachments
+    }
 
     func repliesSnapshot() async -> [Reply] {
         await collector.snapshot()
     }
     func attachmentsSnapshot() async -> [Attachment] {
         await collector.attachmentsSnapshot()
+    }
+    func eventsSnapshot() async -> [String] {
+        await collector.eventsSnapshot()
     }
 
     func sendReply(recipient: String, service: String, text: String) async throws -> OutboundDeliveryEvidence {
@@ -2880,6 +2924,9 @@ private final class CapturingReplySink: ReplySink, @unchecked Sendable {
 
     func sendAttachment(recipient: String, service: String, filePath: String) async throws -> OutboundDeliveryEvidence {
         await collector.append(Attachment(recipient: recipient, service: service, filePath: filePath))
+        if failAttachments {
+            throw OutboundDeliveryFailure(message: "simulated attachment failure")
+        }
         return OutboundDeliveryEvidence(transport: "test", dbRowId: 123, detail: "captured attachment")
     }
 }
@@ -2887,12 +2934,15 @@ private final class CapturingReplySink: ReplySink, @unchecked Sendable {
 private actor ReplyCollector {
     private var replies: [CapturingReplySink.Reply] = []
     private var attachments: [CapturingReplySink.Attachment] = []
+    private var events: [String] = []
 
     func append(_ reply: CapturingReplySink.Reply) {
         replies.append(reply)
+        events.append("text:\(reply.text)")
     }
     func append(_ attachment: CapturingReplySink.Attachment) {
         attachments.append(attachment)
+        events.append("attachment:\(attachment.filePath)")
     }
 
     func snapshot() -> [CapturingReplySink.Reply] {
@@ -2900,6 +2950,9 @@ private actor ReplyCollector {
     }
     func attachmentsSnapshot() -> [CapturingReplySink.Attachment] {
         attachments
+    }
+    func eventsSnapshot() -> [String] {
+        events
     }
 }
 

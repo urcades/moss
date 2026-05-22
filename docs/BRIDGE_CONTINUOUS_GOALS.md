@@ -42,7 +42,7 @@ Evidence:
 - A live generated-image `BRIDGE_ATTACH:` flow records delivery row/error/transfer state.
 - A live edit follow-up uses the previous real image or asks for the source.
 
-Current status: inbound/outbound continuity smoke exists; generated-image and live edit probes remain.
+Current status: inbound/outbound continuity smoke exists, and `BRIDGE_ATTACH:` final replies now send attachments before success text so failed media delivery cannot be preceded by a false `Done.` Generated-image and live edit probes remain.
 
 ## Goal E: State Owner And Process Supervision
 
