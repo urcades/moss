@@ -73,7 +73,7 @@ Success means app-server `item/tool/requestUserInput` and `mcpServer/elicitation
   - Inbound reply routing goes to the callback instead of a new prompt.
   - Cancel and timeout answer the app-server request and clear state.
 - Architecture gate:
-  - The backend needs a live JSON-RPC responder channel. Persisted state alone is not enough because the current `CodexBackend.invoke` call has no way to resume a held server request after the bridge waits for a future Messages row.
+  - The backend now has a JSON-RPC responder channel for app-server callbacks. The remaining proof is live installed-helper evidence from Apple Messages, including a real app-server-generated callback when one can be triggered reliably.
 - Current status:
   - State saves now preserve non-terminal `pendingInteractiveCallback` records across stale helper/CLI saves while still allowing terminal callbacks to clear.
   - Inbound trusted non-command replies now route to pending callback state instead of starting a new prompt batch, recording response text/row/guid and sending a visible acknowledgement.
@@ -81,6 +81,7 @@ Success means app-server `item/tool/requestUserInput` and `mcpServer/elicitation
   - `CodexAppServerBackend` now accepts an interactive callback responder and can return real JSON-RPC results for `item/tool/requestUserInput` and `mcpServer/elicitation/request` instead of always emitting the unsupported error.
   - The default bridge backend now persists a pending callback, messages the user, waits for the routed answer, returns app-server-shaped callback results, and clears terminal callback state.
   - Deterministic coverage now runs a `BridgeService` end-to-end callback flow through the default backend responder seam: fake app-server asks for input, the bridge sends the Messages prompt, the next trusted reply is captured, the responder returns structured answers, the original turn sends its final answer, and pending/active state clears.
+  - `/codex smoke callback` now creates a pending callback from Apple Messages and verifies that the next trusted non-command reply is captured by the callback route, reports the captured row/guid/text, clears pending state, and does not start a normal Codex job. Deterministic coverage exercises the two-message flow.
   - Remaining gap: this still needs a live Messages smoke that proves a real app-server callback from the installed helper pauses, receives the next trusted reply, and completes the original Codex turn end to end.
 
 ## Goal 5: Runtime State And Process Supervision
@@ -128,7 +129,7 @@ Success means the bridge continuously reports what Codex can really do from Mess
   - `codexmsgctl-swift smoke` now has standalone `chrome`, `browser`, and `computer-use` subcommands that print app-server pid, thread id, turn id, progress, final response, and blocker text.
   - `codexmsgctl-swift status` and `/codex status` now use the capability cache first and bound live refresh attempts, so a stuck app-server capability refresh cannot hang status. Deterministic coverage verifies the best-effort status lookup returns an existing cache even when the Codex command is unavailable.
   - Post-restart `swift run codexmsgctl-swift status` returned with `Codex capability cache: cached at 2026-05-22T08:38:33.701Z` and callable Chrome, Computer Use, and Apps/connectors invocation status.
-  - The Messages command surface now recognizes `/codex smoke automation`, `/codex smoke inbound-image-check`, `/codex smoke chrome`, `/codex smoke browser`, and `/codex smoke computer-use`, so capability probes can be launched from Apple Messages instead of only from the CLI. Deterministic coverage verifies `/codex smoke chrome` invokes the app-server probe path and returns thread/turn evidence in the reply.
+  - The Messages command surface now recognizes `/codex smoke automation`, `/codex smoke callback`, `/codex smoke inbound-image-check`, `/codex smoke chrome`, `/codex smoke browser`, and `/codex smoke computer-use`, so capability probes can be launched from Apple Messages instead of only from the CLI. Deterministic coverage verifies `/codex smoke chrome` invokes the app-server probe path and returns thread/turn evidence in the reply.
   - Post-restart `swift run codexmsgctl-swift smoke chrome` passed with marker `CODEXMSGCTL_SMOKE_CHROME_33E4142A-6BDF-4224-A9BD-2D7148DAACCA` and exact blocker `privileged native pipe bridge is not available; browser-client is not trusted`.
 
 ## Required Green Gate Set

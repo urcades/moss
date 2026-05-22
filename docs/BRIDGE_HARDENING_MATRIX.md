@@ -42,7 +42,7 @@ Use explicit markers in message text and filenames so live probes are searchable
 - Attachment probe: generate `bridge-smoke-attachment-<timestamp>.png`, send via `BRIDGE_ATTACH:`, and verify attachment evidence.
 - Inbound image probe: send an image into the trusted chat and verify app-server input includes a `localImage` item.
 - Capability probes: ask for marked Browser, Chrome, and Computer Use actions; require exact blocker text instead of fallback prose.
-- Messages command probes: send `/codex smoke chrome`, `/codex smoke browser`, `/codex smoke computer-use`, `/codex smoke automation`, and `/codex smoke inbound-image-check` from the trusted chat.
+- Messages command probes: send `/codex smoke chrome`, `/codex smoke browser`, `/codex smoke computer-use`, `/codex smoke automation`, `/codex smoke callback`, and `/codex smoke inbound-image-check` from the trusted chat.
 
 ## Codex Changelog Adoption
 

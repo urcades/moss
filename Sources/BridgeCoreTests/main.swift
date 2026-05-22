@@ -22,6 +22,7 @@ struct BridgeCoreFocusedTests {
         try await testMissingPreviousImageReferenceAsksForSource()
         try await testCodexSmokeAttachmentCommandSendsProbeAndSummary()
         try await testCodexSmokeCapabilityCommandRunsAppServerProbe()
+        try await testCodexSmokeCallbackCapturesNextReplyAndClearsState()
         try testInboundImageSmokeBuildsLocalImageRequest()
         try testInboundImageSmokeRequiresTrustedInboundImage()
         try await testInboundImageSmokeRecoversLatestTrustedImageFromMessagesDb()
@@ -89,6 +90,7 @@ struct BridgeCoreFocusedTests {
         try expect(bridgeLocalCommandName("/codex smoke chrome") == "/codex", "codex chrome smoke command")
         try expect(bridgeLocalCommandName("/codex smoke computer-use") == "/codex", "codex computer-use smoke command")
         try expect(bridgeLocalCommandName("/codex smoke automation") == "/codex", "codex automation smoke command")
+        try expect(bridgeLocalCommandName("/codex smoke callback") == "/codex", "codex callback smoke command")
         try expect(bridgeLocalCommandName("/codex smoke inbound-image-check") == "/codex", "codex inbound image smoke command")
         try expect(bridgeLocalCommandName("/codex smoke unknown") == nil, "unsupported codex smoke command is prompt text")
         try expect(bridgeLocalCommandName("/codex status please") == nil, "non-exact codex command is prompt text")
@@ -267,6 +269,46 @@ struct BridgeCoreFocusedTests {
         try expect(replies.first?.text.contains("Smoke chrome passed: CODEX_BRIDGE_SMOKE_CHROME_") == true, "codex smoke capability reports marker")
         try expect(replies.first?.text.contains("Thread id: thread-smoke") == true, "codex smoke capability reports thread id")
         try expect(request?.promptText.contains("Use @Chrome") == true, "codex smoke capability prompts app-server for Chrome")
+    }
+
+    private static func testCodexSmokeCallbackCapturesNextReplyAndClearsState() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        try stores.config.save(config)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 1, guid: "guid-smoke-callback", text: "/codex smoke callback", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in FakeProgressCodexBackend(events: [], response: "should not run") },
+            now: { Date(timeIntervalSince1970: 1_777_777_777) }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        var replies = await sink.repliesSnapshot()
+        var state = try stores.state.load()
+        try expect(replies.count == 1, "codex smoke callback sends pending instructions")
+        try expect(replies.first?.text.contains("Smoke callback pending: CODEX_BRIDGE_SMOKE_CALLBACK_") == true, "codex smoke callback reports pending marker")
+        try expect(state.pendingInteractiveCallback?.method == "bridge/smoke/interactiveCallback", "codex smoke callback persists pending callback")
+
+        source.append(MessageItem(rowId: 2, guid: "guid-smoke-callback-answer", text: "callback answer", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:01.000Z", attachments: []))
+        try await service.tick()
+        replies = await sink.repliesSnapshot()
+        state = try stores.state.load()
+
+        try expect(replies.count == 2, "codex smoke callback sends completion reply")
+        try expect(replies.last?.text.contains("Smoke callback passed: CODEX_BRIDGE_SMOKE_CALLBACK_") == true, "codex smoke callback reports success marker")
+        try expect(replies.last?.text.contains("Captured: callback answer") == true, "codex smoke callback reports captured reply")
+        try expect(state.pendingInteractiveCallback == nil, "codex smoke callback clears pending state")
+        try expect(state.activeJob == nil, "codex smoke callback does not start a codex job")
     }
 
     private static func testInboundImageSmokeBuildsLocalImageRequest() throws {

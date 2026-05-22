@@ -218,6 +218,23 @@ public final class BridgeService: @unchecked Sendable {
         }
         try stores.state.save(state)
         let config = try stores.config.load()
+        if callback.method == bridgeSmokeCallbackMethod {
+            state.pendingInteractiveCallback = nil
+            try stores.state.save(state)
+            let marker = callback.jsonRpcId ?? callback.callbackId
+            try await sendReplyRecording(
+                makeReplySink(config),
+                recipient: message.handleId,
+                service: message.service,
+                text: """
+                Smoke callback passed: \(marker)
+                Reply row: \(message.rowId)
+                Reply guid: \(message.guid)
+                Captured: \(message.text)
+                """
+            )
+            return
+        }
         try await sendReplyRecording(
             makeReplySink(config),
             recipient: message.handleId,
@@ -406,7 +423,7 @@ public final class BridgeService: @unchecked Sendable {
         case "/codex automations":
             return codexAutomationRoutesText()
         default:
-            return "Use /codex status, /codex open, /codex history, /codex automations, /codex retry-last-send, or /codex smoke text|attachment|automation|inbound-image-check|chrome|browser|computer-use."
+            return "Use /codex status, /codex open, /codex history, /codex automations, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|inbound-image-check|chrome|browser|computer-use."
         }
     }
 
@@ -471,6 +488,15 @@ public final class BridgeService: @unchecked Sendable {
                 Error: \(error)
                 """
             }
+        case "callback":
+            do {
+                summary = try await startBridgeCallbackSmoke(marker: marker, message: message, config: config)
+            } catch {
+                summary = """
+                Smoke callback failed: \(marker)
+                Error: \(error)
+                """
+            }
         case "inbound-image-check":
             var refs = state.recentMediaRefs ?? []
             if (try? buildInboundImageSmokeRequest(recipient: message.handleId, service: message.service, recentMediaRefs: refs)) == nil,
@@ -512,6 +538,38 @@ public final class BridgeService: @unchecked Sendable {
             summary = "Use /codex smoke text, attachment, automation, inbound-image-check, chrome, browser, or computer-use."
         }
         _ = try await sink.sendReply(recipient: message.handleId, service: message.service, text: summary)
+    }
+
+    private func startBridgeCallbackSmoke(marker: String, message: MessageItem, config: BridgeConfig) async throws -> String {
+        if let callback = state.pendingInteractiveCallback, callback.status == "pending" {
+            return """
+            Smoke callback skipped: \(marker)
+            Pending callback: \(callback.callbackId)
+            Send a reply for the existing callback or /cancel first.
+            """
+        }
+        guard state.activeJob == nil else {
+            return "Smoke callback skipped: \(marker)\nA Codex job is already active. Send /codex status or /cancel first."
+        }
+        let startedAt = now()
+        let callback = PendingInteractiveCallback(
+            callbackId: UUID().uuidString,
+            jobId: nil,
+            jsonRpcId: marker,
+            method: bridgeSmokeCallbackMethod,
+            recipient: message.handleId,
+            service: message.service,
+            prompt: "Reply with any short text to complete callback smoke \(marker).",
+            createdAt: DateCodec.iso(startedAt),
+            expiresAt: DateCodec.iso(startedAt.addingTimeInterval(120)),
+            status: "pending"
+        )
+        state.pendingInteractiveCallback = callback
+        try stores.state.save(state)
+        return """
+        Smoke callback pending: \(marker)
+        Reply here with any short text within 2 minutes. The next trusted non-command reply should complete this same pending callback instead of starting a new Codex job.
+        """
     }
 
     private func runBridgeAppServerSmoke(label: String, marker: String, request: PromptRequest, config: BridgeConfig, requireSuccessToken: Bool = false) async -> String {
@@ -759,6 +817,7 @@ public final class BridgeService: @unchecked Sendable {
             /codex smoke text - send a marked text probe and report delivery evidence
             /codex smoke attachment - send a marked image probe and report delivery evidence
             /codex smoke automation - create a paused marked automation and route
+            /codex smoke callback - create a pending callback and verify the next reply is routed to it
             /codex smoke inbound-image-check - verify the latest trusted inbound image reaches app-server
             /codex smoke chrome|browser|computer-use - verify delegated capability success or blocker text
             /cancel - stop the active Codex job
@@ -1552,11 +1611,14 @@ private let supportedBridgeCodexSmokeSubcommands: Set<String> = [
     "text",
     "attachment",
     "automation",
+    "callback",
     "inbound-image-check",
     "chrome",
     "browser",
     "computer-use"
 ]
+
+private let bridgeSmokeCallbackMethod = "bridge/smoke/interactiveCallback"
 
 private func bridgeCapabilitySmokePrompt(capability: String, marker: String) -> String {
     switch capability {
