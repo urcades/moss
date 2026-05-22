@@ -131,6 +131,7 @@ struct BridgeCoreFocusedTests {
 
     private static func testExactCodexCommandsBypassNormalPromptBatching() throws {
         try expect(bridgeLocalCommandName("/codex status") == "/codex", "exact codex status command")
+        try expect(bridgeLocalCommandName("/codex status verbose") == "/codex", "exact codex verbose status command")
         try expect(bridgeLocalCommandName("  /codex open  ") == "/codex", "exact codex open command")
         try expect(bridgeLocalCommandName("/codex history") == "/codex", "exact codex history command")
         try expect(bridgeLocalCommandName("/codex automations") == "/codex", "exact codex automations command")
@@ -3691,8 +3692,10 @@ struct BridgeCoreFocusedTests {
         try expect(replies.count == 1, "status command cuts through active job")
         let reply = try expectReply(replies.first)
         try expect(reply.text.contains("Codex bridge status:"), "status reply header")
-        try expect(reply.text.contains("Active backend: codex app-server"), "status reply backend")
-        try expect(reply.text.contains("Latest Codex progress: Running command."), "status reply progress")
+        try expect(reply.text.contains("Active job: running"), "status reply active job")
+        try expect(reply.text.contains("Recent media: 0 ref(s)"), "status reply summarizes media instead of dumping refs")
+        try expect(reply.text.contains("Use /codex status verbose for full diagnostics."), "status reply points to verbose diagnostics")
+        try expect(!reply.text.contains("Latest Codex progress: Running command."), "status reply is concise by default")
         try expect(reply.text.contains("Trusted Messages gates: 0/17 observed; 17 missing inbound; next /codex status (missing-inbound)"), "status reply summarizes trusted gate evidence")
     }
 

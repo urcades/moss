@@ -391,7 +391,7 @@ public final class BridgeService: @unchecked Sendable {
     private func runCodexCommand(_ command: String, config: BridgeConfig, recipient: String, service: String) async throws -> String {
         let normalized = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         switch normalized {
-        case "/codex status":
+        case "/codex status", "/codex status verbose":
             let snapshot = await cachedCodexCapabilitiesBestEffort(command: config.codex.command, paths: paths, ttlMs: Int.max, refreshTimeoutMs: 5_000)
             let trustedGateSummary: String
             do {
@@ -399,6 +399,9 @@ public final class BridgeService: @unchecked Sendable {
                 trustedGateSummary = trustedGateSummaryText(evidence)
             } catch {
                 trustedGateSummary = "unavailable: \(error)"
+            }
+            if normalized == "/codex status" {
+                return codexStatusSummaryText(capabilitySnapshot: snapshot, trustedGateSummary: trustedGateSummary)
             }
             return codexStatusText(capabilitySnapshot: snapshot, trustedGateSummary: trustedGateSummary)
         case "/codex open":
@@ -441,7 +444,7 @@ public final class BridgeService: @unchecked Sendable {
         case "/codex trusted-gates runbook":
             return trustedGateRunbookText()
         default:
-            return "Use /codex status, /codex open, /codex history, /codex automations, /codex gates, /codex trusted-gates, /codex trusted-gates runbook, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|bridge-attach|generated-image|edit-image-check|app-server-callback|mcp-elicitation-callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
+            return "Use /codex status, /codex status verbose, /codex open, /codex history, /codex automations, /codex gates, /codex trusted-gates, /codex trusted-gates runbook, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|bridge-attach|generated-image|edit-image-check|app-server-callback|mcp-elicitation-callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
         }
     }
 
@@ -1004,6 +1007,29 @@ public final class BridgeService: @unchecked Sendable {
         } else {
             lines.append("Codex capability cache: unavailable or timed out")
         }
+        return lines.joined(separator: "\n")
+    }
+
+    private func codexStatusSummaryText(capabilitySnapshot: CodexCapabilitySnapshot? = nil, trustedGateSummary: String? = nil) -> String {
+        var lines = [
+            "Codex bridge status:",
+            "Active job: \(state.activeJob?.status ?? "none")",
+            "Pending callback: \(pendingInteractiveCallbackStatusText())",
+            "Thread: \(state.codexSession.sessionId ?? "none")",
+            "Last outbound send: \(lastOutboundSendStatusText())",
+            "Recent media: \(state.recentMediaRefs?.count ?? 0) ref(s)",
+            "Live smoke: \(liveSmokeResultsStatusText(state.liveSmokeResults ?? []))",
+            "Trusted Messages gates: \(trustedGateSummary ?? "unavailable")",
+            "Bridge smoke automations: \(bridgeSmokeAutomationStatusText(activeBridgeSmokeAutomations(in: paths.codexAutomationsDir)))"
+        ]
+        if let capabilitySnapshot {
+            let capabilities = capabilitySnapshot.capabilities
+            lines.append("Codex: \(capabilities.version ?? "unknown"); app-server \(capabilities.appServerAvailable ? "yes" : "no"); remote-control \(capabilities.remoteControlAvailable ? "yes" : "no"); thread/read \(capabilities.threadReadAvailable ? "yes" : "no")")
+            lines.append(formatCodexCapabilityCacheLine(capabilitySnapshot))
+        } else {
+            lines.append("Codex capability cache: unavailable or timed out")
+        }
+        lines.append("Use /codex status verbose for full diagnostics.")
         return lines.joined(separator: "\n")
     }
 
@@ -1996,7 +2022,7 @@ private struct CancelTransition {
 
 public func bridgeLocalCommandName(_ text: String) -> String? {
     let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    if ["/codex status", "/codex open", "/codex history", "/codex automations", "/codex gates", "/codex trusted-gates", "/codex trusted-gates runbook", "/codex retry-last-send"].contains(normalized) || isCodexSmokeCommand(normalized) {
+    if ["/codex status", "/codex status verbose", "/codex open", "/codex history", "/codex automations", "/codex gates", "/codex trusted-gates", "/codex trusted-gates runbook", "/codex retry-last-send"].contains(normalized) || isCodexSmokeCommand(normalized) {
         return "/codex"
     }
     let command = normalized.split(separator: " ").first.map(String.init)
