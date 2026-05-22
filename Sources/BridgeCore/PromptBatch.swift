@@ -156,6 +156,7 @@ public func latestUsableImageRef(for handleId: String, service: String, recentMe
             ref.service == service &&
             ref.kind == "image" &&
             ref.exists &&
+            appServerSupportedLocalImagePath(ref.path) &&
             FileManager.default.fileExists(atPath: ref.path)
     }
 }

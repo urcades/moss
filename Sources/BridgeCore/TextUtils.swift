@@ -124,6 +124,9 @@ public func recentMediaRefsStatusText(_ refs: [RecentMediaRef]) -> String {
             ref.transferName ?? URL(fileURLWithPath: ref.path).lastPathComponent,
             ref.exists && FileManager.default.fileExists(atPath: ref.path) ? "exists" : "missing"
         ]
+        if ref.kind == "image", !appServerSupportedLocalImagePath(ref.path) {
+            parts.append("app-server-unsupported")
+        }
         parts.append(ref.path)
         return parts.joined(separator: " ")
     }.joined(separator: " | ")

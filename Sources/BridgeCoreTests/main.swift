@@ -21,6 +21,7 @@ struct BridgeCoreFocusedTests {
         try await testRecentMissingAttachmentDefersCursorUntilFileExists()
         try await testSQLiteMessageSourceAttachmentRowsAndClassification()
         try testPreviousImageReferenceAddsRecentImage()
+        try testPreviousImageReferenceSkipsUnsupportedRecentImage()
         try await testMissingPreviousImageReferenceAsksForSource()
         try await testCodexSmokeAttachmentCommandSendsProbeAndSummary()
         try await testCodexSmokeCapabilityCommandRunsAppServerProbe()
@@ -298,6 +299,30 @@ struct BridgeCoreFocusedTests {
 
         try expect(request.attachments.map(\.absolutePath) == [imagePath], "previous image reference attaches recent image")
         try expect(request.promptText.contains("Bridge media context:"), "previous image context is explicit")
+    }
+
+    private static func testPreviousImageReferenceSkipsUnsupportedRecentImage() throws {
+        let supportedPath = NSTemporaryDirectory() + "/bridge-recent-source-supported.png"
+        let unsupportedPath = NSTemporaryDirectory() + "/bridge-recent-source-newer.heic"
+        FileManager.default.createFile(atPath: supportedPath, contents: Data("png".utf8), attributes: nil)
+        FileManager.default.createFile(atPath: unsupportedPath, contents: Data("heic".utf8), attributes: nil)
+        let batch = PendingBatch(
+            handleId: "+1",
+            service: "iMessage",
+            startedAt: "2026-05-20T10:00:00.000Z",
+            deadlineAt: "2026-05-20T10:00:01.000Z",
+            items: [
+                MessageItem(rowId: 12, guid: "follow-up", text: "Modify that image to make the background blue.", handleId: "+1", service: "iMessage", receivedAt: "2026-05-20T10:00:00.000Z", attachments: [])
+            ]
+        )
+        let olderSupported = RecentMediaRef(direction: "inbound", rowId: 10, handleId: "+1", service: "iMessage", path: supportedPath, transferName: "source.png", kind: "image", createdAt: "2026-05-20T09:58:00.000Z", exists: true)
+        let newerUnsupported = RecentMediaRef(direction: "inbound", rowId: 11, handleId: "+1", service: "iMessage", path: unsupportedPath, transferName: "source.heic", kind: "image", createdAt: "2026-05-20T09:59:00.000Z", exists: true)
+
+        let request = buildPromptRequest(from: batch, recentMediaRefs: [olderSupported, newerUnsupported])
+
+        try expect(request.attachments.map(\.absolutePath) == [supportedPath], "previous image reference skips unsupported newer image and attaches older compatible image")
+        try expect(latestUsableImageRef(for: "+1", service: "iMessage", recentMediaRefs: [newerUnsupported]) == nil, "unsupported recent image is not usable for app-server image input")
+        try expect(recentMediaRefsStatusText([newerUnsupported]).contains("app-server-unsupported"), "status marks unsupported image refs")
     }
 
     private static func testMissingPreviousImageReferenceAsksForSource() async throws {
