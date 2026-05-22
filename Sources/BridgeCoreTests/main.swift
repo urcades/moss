@@ -58,6 +58,7 @@ struct BridgeCoreFocusedTests {
         try await testOutboundSmokeAttachmentEvidenceFindsMarkerInTransferName()
         try await testOutboundSmokeAttachmentEvidenceFallsBackToLatestAttachment()
         try await testTrustedGateEvidenceFindsInboundCommandAndOutboundReply()
+        try await testTrustedGateEvidenceTracksCallbackFollowUp()
         try await testClipboardAttachmentSendRetriesWhenNoDbRowAppears()
         try await testAttachmentSendWaitsForDelayedMessagesDbRow()
         try await testSmsAttachmentSendUsesSmsServiceAndReportsFailedRow()
@@ -1614,6 +1615,67 @@ struct BridgeCoreFocusedTests {
         try expect(formatted.contains("reply \"Smoke chrome failed: exact blocker\""), "trusted gate formatter includes reply snippet")
         try expect(formatted.contains("Missing trusted inbound commands: 1"), "trusted gate formatter summarizes missing inbound commands")
         try expect(formatted.contains("Next trusted command to send from Apple Messages: /codex smoke attachment"), "trusted gate formatter names the next missing command")
+    }
+
+    private static func testTrustedGateEvidenceTracksCallbackFollowUp() async throws {
+        let paths = testPaths()
+        let db = try makeSmokeMessagesDb(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.messagesDbPath = db.path
+        config.allowedSender = "+1-520-609-9095"
+        try runSQLite(db, """
+        INSERT INTO handle (ROWID, id, service)
+        VALUES (1, '+1 (520) 609-9095', 'iMessage');
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (90, 'inbound-callback', '/codex smoke callback', 0, 0, 0, 1000000000, 'iMessage', 1);
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (91, 'outbound-callback-prompt', 'Smoke callback pending: CODEX_BRIDGE_SMOKE_CALLBACK_1', 1, 0, 0, 1000000001, 'iMessage', 1);
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (100, 'inbound-app-callback', '/codex smoke app-server-callback', 0, 0, 0, 1000000010, 'iMessage', 1);
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (101, 'outbound-app-started', 'Smoke app-server-callback started: CODEX_BRIDGE_SMOKE_APP-SERVER-CALLBACK_1', 1, 0, 0, 1000000011, 'iMessage', 1);
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (102, 'outbound-app-prompt', 'Codex needs your input to continue: choose a color', 1, 0, 0, 1000000012, 'iMessage', 1);
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (103, 'inbound-app-answer', 'violet', 0, 0, 0, 1000000013, 'iMessage', 1);
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (104, 'outbound-app-ack', 'Got it. I captured that reply for the pending Codex prompt.', 1, 0, 0, 1000000014, 'iMessage', 1);
+        """)
+
+        var evidence = try await trustedGateEvidence(
+            config: config,
+            recipient: "+1-520-609-9095",
+            service: "iMessage",
+            commands: ["/codex smoke callback", "/codex smoke app-server-callback"]
+        )
+
+        try expect(evidence[0].status == "awaiting-followup", "bridge callback smoke prompt alone is not observed")
+        try expect(evidence[1].status == "awaiting-completion", "app-server callback smoke reply ack alone is not final completion")
+        var formatted = formatTrustedGateEvidence(evidence)
+        try expect(formatted.contains("Reply in Apple Messages to complete /codex smoke callback"), "formatter names callback follow-up action")
+        try expect(formatted.contains("Waiting for completion reply for /codex smoke app-server-callback"), "formatter names app-server completion action")
+
+        try runSQLite(db, """
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (92, 'inbound-callback-answer', 'callback answer', 0, 0, 0, 1000000002, 'iMessage', 1);
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (93, 'outbound-callback-complete', 'Smoke callback passed: CODEX_BRIDGE_SMOKE_CALLBACK_1', 1, 0, 0, 1000000003, 'iMessage', 1);
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (105, 'outbound-app-final', 'CODEX_BRIDGE_SMOKE_APP-SERVER-CALLBACK_1 SUCCESS callback reply: violet', 1, 0, 0, 1000000015, 'iMessage', 1);
+        """)
+
+        evidence = try await trustedGateEvidence(
+            config: config,
+            recipient: "+1-520-609-9095",
+            service: "iMessage",
+            commands: ["/codex smoke callback", "/codex smoke app-server-callback"]
+        )
+
+        try expect(evidence[0].status == "observed", "bridge callback smoke requires follow-up answer and completion reply")
+        try expect(evidence[1].status == "observed", "app-server callback smoke requires final completion reply")
+        formatted = formatTrustedGateEvidence(evidence)
+        try expect(formatted.contains("follow-up inbound row 92"), "formatter includes callback follow-up inbound row")
+        try expect(formatted.contains("completion outbound row 105"), "formatter includes app-server callback completion row")
     }
 
     private static func testClipboardAttachmentSendRetriesWhenNoDbRowAppears() async throws {

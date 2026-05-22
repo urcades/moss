@@ -10,6 +10,14 @@ public struct TrustedGateEvidence: Codable, Equatable, Sendable {
     public var outboundError: Int?
     public var outboundDateDelivered: Int64?
     public var outboundSnippet: String?
+    public var followUpInboundRowId: Int64?
+    public var followUpInboundGuid: String?
+    public var followUpInboundAt: String?
+    public var completionOutboundRowId: Int64?
+    public var completionOutboundGuid: String?
+    public var completionOutboundError: Int?
+    public var completionOutboundDateDelivered: Int64?
+    public var completionOutboundSnippet: String?
 
     public init(
         command: String,
@@ -20,7 +28,15 @@ public struct TrustedGateEvidence: Codable, Equatable, Sendable {
         outboundGuid: String? = nil,
         outboundError: Int? = nil,
         outboundDateDelivered: Int64? = nil,
-        outboundSnippet: String? = nil
+        outboundSnippet: String? = nil,
+        followUpInboundRowId: Int64? = nil,
+        followUpInboundGuid: String? = nil,
+        followUpInboundAt: String? = nil,
+        completionOutboundRowId: Int64? = nil,
+        completionOutboundGuid: String? = nil,
+        completionOutboundError: Int? = nil,
+        completionOutboundDateDelivered: Int64? = nil,
+        completionOutboundSnippet: String? = nil
     ) {
         self.command = command
         self.inboundRowId = inboundRowId
@@ -31,12 +47,27 @@ public struct TrustedGateEvidence: Codable, Equatable, Sendable {
         self.outboundError = outboundError
         self.outboundDateDelivered = outboundDateDelivered
         self.outboundSnippet = outboundSnippet
+        self.followUpInboundRowId = followUpInboundRowId
+        self.followUpInboundGuid = followUpInboundGuid
+        self.followUpInboundAt = followUpInboundAt
+        self.completionOutboundRowId = completionOutboundRowId
+        self.completionOutboundGuid = completionOutboundGuid
+        self.completionOutboundError = completionOutboundError
+        self.completionOutboundDateDelivered = completionOutboundDateDelivered
+        self.completionOutboundSnippet = completionOutboundSnippet
     }
 
     public var status: String {
         guard inboundRowId != nil else { return "missing-inbound" }
         guard outboundRowId != nil else { return "missing-outbound" }
         if let outboundError, outboundError != 0 { return "outbound-error-\(outboundError)" }
+        if commandRequiresTrustedFollowUp(command) {
+            guard followUpInboundRowId != nil else { return "awaiting-followup" }
+            guard completionOutboundRowId != nil else { return "awaiting-completion" }
+            if let completionOutboundError, completionOutboundError != 0 {
+                return "completion-outbound-error-\(completionOutboundError)"
+            }
+        }
         return "observed"
     }
 }
@@ -73,6 +104,9 @@ public func trustedGateEvidence(
     }
     let senderClause = trustedSenderSQLClause(column: "h.id", values: values)
     let outboundSenderClause = trustedSenderSQLClause(column: "oh.id", values: values)
+    let followUpSenderClause = trustedSenderSQLClause(column: "fh.id", values: values)
+    let completionOutboundSenderClause = trustedSenderSQLClause(column: "coh.id", values: values)
+    let nextInboundCommandSenderClause = trustedSenderSQLClause(column: "bh.id", values: values)
     let commandList = commands.map { sqliteStringLiteral($0.lowercased()) }.joined(separator: ", ")
     let serviceLiteral = sqliteStringLiteral(service)
     let sql = """
@@ -107,7 +141,15 @@ public func trustedGateEvidence(
       o.guid AS outboundGuid,
       COALESCE(o.error, 0) AS outboundError,
       COALESCE(o.date_delivered, 0) AS outboundDateDelivered,
-      substr(COALESCE(NULLIF(o.text, ''), CAST(o.attributedBody AS TEXT), ''), 1, 160) AS outboundSnippet
+      substr(COALESCE(NULLIF(o.text, ''), CAST(o.attributedBody AS TEXT), ''), 1, 160) AS outboundSnippet,
+      f.ROWID AS followUpInboundRowId,
+      f.guid AS followUpInboundGuid,
+      CAST(f.date AS TEXT) AS followUpInboundRawDate,
+      c.ROWID AS completionOutboundRowId,
+      c.guid AS completionOutboundGuid,
+      COALESCE(c.error, 0) AS completionOutboundError,
+      COALESCE(c.date_delivered, 0) AS completionOutboundDateDelivered,
+      substr(COALESCE(NULLIF(c.text, ''), CAST(c.attributedBody AS TEXT), ''), 1, 160) AS completionOutboundSnippet
     FROM latest_inbound li
     LEFT JOIN message o ON o.ROWID = (
       SELECT MIN(m2.ROWID)
@@ -117,6 +159,49 @@ public func trustedGateEvidence(
         AND m2.ROWID > li.inboundRowId
         AND COALESCE(m2.service, oh.service, \(serviceLiteral)) = \(serviceLiteral)
         AND (m2.handle_id IS NULL OR \(outboundSenderClause))
+    )
+    LEFT JOIN message f ON f.ROWID = (
+      SELECT MIN(m3.ROWID)
+      FROM message m3
+      LEFT JOIN handle fh ON fh.ROWID = m3.handle_id
+      WHERE li.command IN ('/codex smoke callback', '/codex smoke app-server-callback')
+        AND m3.is_from_me = 0
+        AND m3.ROWID > o.ROWID
+        AND COALESCE(m3.service, fh.service, \(serviceLiteral)) = \(serviceLiteral)
+        AND (\(followUpSenderClause))
+        AND trim(COALESCE(m3.text, '')) != ''
+        AND lower(trim(COALESCE(m3.text, ''))) NOT LIKE '/codex%'
+        AND m3.ROWID < COALESCE((
+          SELECT MIN(bound.ROWID)
+          FROM message bound
+          LEFT JOIN handle bh ON bh.ROWID = bound.handle_id
+          WHERE bound.is_from_me = 0
+            AND bound.ROWID > li.inboundRowId
+            AND COALESCE(bound.service, bh.service, \(serviceLiteral)) = \(serviceLiteral)
+            AND (\(nextInboundCommandSenderClause))
+            AND lower(trim(COALESCE(bound.text, ''))) IN (\(commandList))
+        ), 9223372036854775807)
+    )
+    LEFT JOIN message c ON c.ROWID = (
+      SELECT MIN(m4.ROWID)
+      FROM message m4
+      LEFT JOIN handle coh ON coh.ROWID = m4.handle_id
+      WHERE li.command IN ('/codex smoke callback', '/codex smoke app-server-callback')
+        AND f.ROWID IS NOT NULL
+        AND m4.is_from_me = 1
+        AND m4.ROWID > f.ROWID
+        AND COALESCE(m4.service, coh.service, \(serviceLiteral)) = \(serviceLiteral)
+        AND (m4.handle_id IS NULL OR \(completionOutboundSenderClause))
+        AND (
+          (li.command = '/codex smoke callback'
+            AND lower(COALESCE(NULLIF(m4.text, ''), CAST(m4.attributedBody AS TEXT), '')) LIKE '%smoke callback passed:%')
+          OR
+          (li.command = '/codex smoke app-server-callback'
+            AND (
+              lower(COALESCE(NULLIF(m4.text, ''), CAST(m4.attributedBody AS TEXT), '')) LIKE '%success callback reply:%'
+              OR lower(COALESCE(NULLIF(m4.text, ''), CAST(m4.attributedBody AS TEXT), '')) LIKE '%callback completed with%'
+            ))
+        )
     )
     ORDER BY li.inboundRowId DESC;
     """
@@ -136,7 +221,15 @@ public func trustedGateEvidence(
                 outboundGuid: row.string("outboundGuid"),
                 outboundError: row.int64("outboundError").map(Int.init),
                 outboundDateDelivered: row.int64("outboundDateDelivered"),
-                outboundSnippet: row.string("outboundSnippet")
+                outboundSnippet: row.string("outboundSnippet"),
+                followUpInboundRowId: row.int64("followUpInboundRowId"),
+                followUpInboundGuid: row.string("followUpInboundGuid"),
+                followUpInboundAt: appleTimestampToISO(row.string("followUpInboundRawDate")),
+                completionOutboundRowId: row.int64("completionOutboundRowId"),
+                completionOutboundGuid: row.string("completionOutboundGuid"),
+                completionOutboundError: row.int64("completionOutboundError").map(Int.init),
+                completionOutboundDateDelivered: row.int64("completionOutboundDateDelivered"),
+                completionOutboundSnippet: row.string("completionOutboundSnippet")
             )
         )
     })
@@ -162,6 +255,25 @@ public func formatTrustedGateEvidence(_ evidence: [TrustedGateEvidence]) -> Stri
         if let snippet = item.outboundSnippet, !snippet.isEmpty {
             parts.append("reply \"\(snippet)\"")
         }
+        if let followUpInboundRowId = item.followUpInboundRowId {
+            parts.append("follow-up inbound row \(followUpInboundRowId)")
+        }
+        if let completionOutboundRowId = item.completionOutboundRowId {
+            parts.append("completion outbound row \(completionOutboundRowId)")
+        }
+        if let completionOutboundError = item.completionOutboundError,
+           item.completionOutboundRowId != nil,
+           completionOutboundError != 0 {
+            parts.append("completion error \(completionOutboundError)")
+        }
+        if let completionSnippet = item.completionOutboundSnippet, !completionSnippet.isEmpty {
+            parts.append("completion \"\(completionSnippet)\"")
+        }
+        if item.status == "awaiting-followup" {
+            parts.append("Reply in Apple Messages to complete \(item.command)")
+        } else if item.status == "awaiting-completion" {
+            parts.append("Waiting for completion reply for \(item.command)")
+        }
         lines.append(parts.joined(separator: "; "))
     }
     let missingInbound = evidence.filter { $0.status == "missing-inbound" }
@@ -171,6 +283,11 @@ public func formatTrustedGateEvidence(_ evidence: [TrustedGateEvidence]) -> Stri
         lines.append("Next trusted command to send from Apple Messages: \(next.command)")
     }
     return lines.joined(separator: "\n")
+}
+
+private func commandRequiresTrustedFollowUp(_ command: String) -> Bool {
+    let normalized = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return normalized == "/codex smoke callback" || normalized == "/codex smoke app-server-callback"
 }
 
 private func trustedSenderSQLClause(column: String, values: [String]) -> String {
