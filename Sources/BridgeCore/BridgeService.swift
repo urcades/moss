@@ -75,6 +75,7 @@ public final class BridgeService: @unchecked Sendable {
         for message in messages {
             state.lastProcessedGuid = message.guid
             state.lastProcessedRowId = message.rowId
+            recordInboundMediaRefs(message)
             processIncoming(config: config, message: message)
         }
         try await syncPendingBatch(config: config)
@@ -170,6 +171,12 @@ public final class BridgeService: @unchecked Sendable {
 
     private func handleLocalCommand(_ command: String, message: MessageItem) async throws {
         let config = try stores.config.load()
+        if command == "/codex", message.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "/codex retry-last-send" {
+            let text = try await retryLastOutboundSend(config: config)
+            _ = try await makeReplySink(config).sendReply(recipient: message.handleId, service: message.service, text: text)
+            try stores.state.save(state)
+            return
+        }
         let text = command == "/codex"
             ? try await runCodexCommand(message.text, config: config)
             : runLocalCommand(message.text)
@@ -207,16 +214,62 @@ public final class BridgeService: @unchecked Sendable {
         case "/codex automations":
             return codexAutomationRoutesText()
         default:
-            return "Use /codex status, /codex open, /codex history, or /codex automations."
+            return "Use /codex status, /codex open, /codex history, /codex automations, or /codex retry-last-send."
         }
+    }
+
+    private func retryLastOutboundSend(config: BridgeConfig) async throws -> String {
+        guard let previous = state.lastOutboundSend else {
+            return "There is no outbound send to retry."
+        }
+        guard previous.retryable else {
+            return "The last outbound send is not retryable: \(outboundSendStatusText(previous))"
+        }
+        let sink = makeReplySink(config)
+        switch previous.kind {
+        case "text":
+            guard let body = previous.body, !body.isEmpty else {
+                return "The last text send has no recorded body to retry."
+            }
+            try await sendReplyRecording(sink, recipient: previous.recipient, service: previous.service, text: body)
+        case "attachment":
+            guard let artifact = previous.artifact, !artifact.isEmpty else {
+                return "The last attachment send has no recorded artifact path to retry."
+            }
+            try await sendAttachmentRecording(sink, recipient: previous.recipient, service: previous.service, filePath: artifact)
+        default:
+            return "The last outbound send kind is not retryable: \(previous.kind)."
+        }
+        return "Retried last outbound send: \(lastOutboundSendStatusText())"
     }
 
     private func codexAutomationRoutesText() -> String {
         let routes = state.automationRoutes ?? []
+        var lines: [String] = []
+        if let creation = state.automationCreationStatus, creation.phase != "confirmed" {
+            lines.append("Automation creation \(creation.phase): \(creation.name ?? creation.automationId ?? "pending")")
+            if let sourceRowId = creation.sourceRowId {
+                lines.append("Source row: \(sourceRowId)")
+            }
+            if let path = creation.createdFilePath {
+                lines.append("Created file: \(path)")
+            }
+            if let routeStatus = creation.routeStatus {
+                lines.append("Route status: \(routeStatus)")
+            }
+            if let sendStatus = creation.confirmationSendStatus {
+                lines.append("Confirmation send: \(sendStatus)")
+            }
+            if let failure = creation.failureText {
+                lines.append("Failure: \(failure)")
+            }
+        }
         guard !routes.isEmpty else {
+            if !lines.isEmpty { return lines.joined(separator: "\n") }
             return "No Codex automation routes are being bridged to Messages yet."
         }
-        var lines = ["Codex automation routes:"]
+        if !lines.isEmpty { lines.append("") }
+        lines.append("Codex automation routes:")
         for route in routes.sorted(by: { $0.automationId < $1.automationId }) {
             lines.append("- \(route.name) (\(route.automationId)) -> \(route.recipient) via \(route.service); last delivered: \(route.lastDeliveredAt ?? "never")")
         }
@@ -244,6 +297,7 @@ public final class BridgeService: @unchecked Sendable {
             "Active job thread: \(state.activeJob?.codexSessionId ?? state.codexSession.sessionId ?? "none")",
             "Active job turn: \(state.activeJob?.codexTurnId ?? "none")",
             "Active approval: \(activeApprovalStatusText())",
+            "Pending interactive callback: \(pendingInteractiveCallbackStatusText())",
             "Last outbound send: \(lastOutboundSendStatusText())"
         ]
         if let capabilitySnapshot {
@@ -262,6 +316,22 @@ public final class BridgeService: @unchecked Sendable {
         default:
             return "none"
         }
+    }
+
+    private func pendingInteractiveCallbackStatusText() -> String {
+        guard let callback = state.pendingInteractiveCallback else { return "none" }
+        var parts = [
+            callback.method,
+            callback.status,
+            "callback \(callback.callbackId)"
+        ]
+        if let expiresAt = callback.expiresAt {
+            parts.append("expires \(expiresAt)")
+        }
+        if let failure = callback.failureText {
+            parts.append("failure \(failure)")
+        }
+        return parts.joined(separator: "; ")
     }
 
     private func permissionsCommand(_ parts: [String]) -> String {
@@ -326,6 +396,7 @@ public final class BridgeService: @unchecked Sendable {
             /codex open - open the active Codex thread in Codex.app
             /codex history - summarize recent app-server thread history
             /codex automations - list Codex automation result routes bridged to Messages
+            /codex retry-last-send - retry the last retryable outbound text or attachment
             /cancel - stop the active Codex job
             /reset or /new - start a fresh Codex session
             /permissions status - show permission broker status
@@ -335,6 +406,9 @@ public final class BridgeService: @unchecked Sendable {
 
             Other slash commands and capability hints are forwarded to Codex.
             """
+        }
+        if verb == "/codex", parts.dropFirst().first?.lowercased() == "automations" {
+            return codexAutomationRoutesText()
         }
         if verb == "/permissions" {
             return permissionsCommand(parts)
@@ -348,6 +422,7 @@ public final class BridgeService: @unchecked Sendable {
             Active job: \(state.activeJob?.promptPreview ?? "none")
             Active job status: \(state.activeJob?.status ?? "none")
             Active job last update: \(state.activeJob?.lastObservedSummary ?? "none")
+            Pending interactive callback: \(pendingInteractiveCallbackStatusText())
             Last outbound send: \(lastOutboundSendStatusText())
             Queued next batch: \(state.pendingBatch.map { "\($0.items.count) item(s)" } ?? "none")
             Codex session id: \(state.codexSession.sessionId ?? "none")
@@ -361,22 +436,21 @@ public final class BridgeService: @unchecked Sendable {
     private func startPromptBatch(_ batch: PendingBatch) async throws {
         let config = try stores.config.load()
         let replySink = makeReplySink(config)
-        if shouldCreateCodexAutomation(from: batch.items.map(\.text).joined(separator: "\n\n")) {
-            let spec = await draftCodexAutomationSpec(for: batch, config: config)
-            let automation = try createCodexAutomationIfRequested(batch: batch, config: config, paths: paths, now: now(), spec: spec)
-            guard let automation else { return }
-            persistAutomationRoute(automation: automation, batch: batch)
-            try stores.state.save(state)
+        if shouldAskForMissingSourceImage(batch) {
             try await sendReplyRecording(
                 replySink,
                 recipient: batch.handleId,
                 service: batch.service,
-                text: "Created Codex automation: \(automation.name)\nSchedule: \(automation.rrule)"
+                text: "Please send the image you want me to modify, then tell me the edit you want."
             )
             return
         }
+        if shouldCreateCodexAutomation(from: batch.items.map(\.text).joined(separator: "\n\n")) {
+            try await createAutomationFromMessagesBatch(batch, config: config, replySink: replySink)
+            return
+        }
         state.codexSession.lastPromptAt = DateCodec.iso(now())
-        let request = buildPromptRequest(from: batch)
+        let request = buildPromptRequest(from: batch, recentMediaRefs: state.recentMediaRefs ?? [])
         let longTask = usesLongTaskTimeout(request.promptText)
         let jobId = UUID().uuidString
         state.activeJob = ActiveJob(
@@ -429,6 +503,50 @@ public final class BridgeService: @unchecked Sendable {
         } catch {
             return nil
         }
+    }
+
+    private func createAutomationFromMessagesBatch(_ batch: PendingBatch, config: BridgeConfig, replySink: ReplySink) async throws {
+        setAutomationCreationStatus(batch: batch, phase: "drafting")
+        do {
+            let spec = await draftCodexAutomationSpec(for: batch, config: config)
+            setAutomationCreationStatus(batch: batch, phase: "creating", name: spec?.name)
+            let automation = try createCodexAutomationIfRequested(batch: batch, config: config, paths: paths, now: now(), spec: spec)
+            guard let automation else {
+                setAutomationCreationStatus(batch: batch, phase: "failed", failureText: "Request looked like automation creation, but no automation was produced.")
+                return
+            }
+            setAutomationCreationStatus(batch: batch, phase: "created", automationId: automation.id, name: automation.name, createdFilePath: automation.path)
+            persistAutomationRoute(automation: automation, batch: batch)
+            setAutomationCreationStatus(batch: batch, phase: "routed", automationId: automation.id, name: automation.name, createdFilePath: automation.path, routeStatus: "route persisted")
+            try stores.state.save(state)
+            try await sendReplyRecording(
+                replySink,
+                recipient: batch.handleId,
+                service: batch.service,
+                text: "Created Codex automation: \(automation.name)\nSchedule: \(automation.rrule)"
+            )
+            setAutomationCreationStatus(batch: batch, phase: "confirmed", automationId: automation.id, name: automation.name, createdFilePath: automation.path, routeStatus: "route persisted", confirmationSendStatus: outboundSendStatusText(state.lastOutboundSend))
+        } catch {
+            setAutomationCreationStatus(batch: batch, phase: "failed", failureText: String(describing: error))
+            throw error
+        }
+    }
+
+    private func setAutomationCreationStatus(batch: PendingBatch, phase: String, automationId: String? = nil, name: String? = nil, createdFilePath: String? = nil, routeStatus: String? = nil, confirmationSendStatus: String? = nil, failureText: String? = nil) {
+        let origin = batch.items.last
+        state.automationCreationStatus = AutomationCreationStatus(
+            automationId: automationId ?? state.automationCreationStatus?.automationId,
+            name: name ?? state.automationCreationStatus?.name,
+            sourceRowId: origin?.rowId,
+            sourceGuid: origin?.guid,
+            phase: phase,
+            createdFilePath: createdFilePath ?? state.automationCreationStatus?.createdFilePath,
+            routeStatus: routeStatus ?? state.automationCreationStatus?.routeStatus,
+            confirmationSendStatus: confirmationSendStatus ?? state.automationCreationStatus?.confirmationSendStatus,
+            failureText: failureText,
+            updatedAt: DateCodec.iso(now())
+        )
+        try? stores.state.save(state)
     }
 
     private func persistAutomationRoute(automation: CreatedCodexAutomation, batch: PendingBatch) {
@@ -602,7 +720,7 @@ public final class BridgeService: @unchecked Sendable {
     }
 
     private func sendReplyRecording(_ replySink: ReplySink, recipient: String, service: String, text: String) async throws {
-        let attemptId = recordOutboundSendStarted(kind: "text", recipient: recipient, service: service, artifact: nil)
+        let attemptId = recordOutboundSendStarted(kind: "text", recipient: recipient, service: service, artifact: nil, body: text)
         do {
             let evidence = try await replySink.sendReply(recipient: recipient, service: service, text: text)
             recordOutboundSendCompleted(attemptId: attemptId, evidence: evidence)
@@ -617,13 +735,14 @@ public final class BridgeService: @unchecked Sendable {
         do {
             let evidence = try await replySink.sendAttachment(recipient: recipient, service: service, filePath: filePath)
             recordOutboundSendCompleted(attemptId: attemptId, evidence: evidence)
+            recordOutboundMediaRef(recipient: recipient, service: service, filePath: filePath, evidence: evidence)
         } catch {
             recordOutboundSendFailed(attemptId: attemptId, error: error, retryable: true)
             throw error
         }
     }
 
-    private func recordOutboundSendStarted(kind: String, recipient: String, service: String, artifact: String?) -> String {
+    private func recordOutboundSendStarted(kind: String, recipient: String, service: String, artifact: String?, body: String? = nil) -> String {
         let attemptId = UUID().uuidString
         state.lastOutboundSend = OutboundSendRecord(
             attemptId: attemptId,
@@ -631,7 +750,8 @@ public final class BridgeService: @unchecked Sendable {
             recipient: recipient,
             service: service,
             artifact: artifact,
-            status: "sending",
+            body: body,
+            status: "queued",
             startedAt: DateCodec.iso(now()),
             retryable: false
         )
@@ -641,7 +761,7 @@ public final class BridgeService: @unchecked Sendable {
 
     private func recordOutboundSendCompleted(attemptId: String, evidence: OutboundDeliveryEvidence) {
         guard state.lastOutboundSend?.attemptId == attemptId else { return }
-        state.lastOutboundSend?.status = "sent"
+        state.lastOutboundSend?.status = outboundSendCompletedStatus(evidence)
         state.lastOutboundSend?.completedAt = DateCodec.iso(now())
         state.lastOutboundSend?.retryable = false
         state.lastOutboundSend?.evidence = evidence
@@ -654,12 +774,78 @@ public final class BridgeService: @unchecked Sendable {
         state.lastOutboundSend?.status = "failed"
         state.lastOutboundSend?.completedAt = DateCodec.iso(now())
         state.lastOutboundSend?.retryable = retryable
-        state.lastOutboundSend?.error = String(describing: error)
+        if let failure = error as? OutboundDeliveryFailure {
+            state.lastOutboundSend?.evidence = failure.evidence
+            state.lastOutboundSend?.error = failure.description
+        } else {
+            state.lastOutboundSend?.error = String(describing: error)
+        }
         try? stores.state.save(state)
+    }
+
+    private func outboundSendCompletedStatus(_ evidence: OutboundDeliveryEvidence) -> String {
+        if let error = evidence.dbError, error != 0 { return "failed" }
+        if let rowId = evidence.dbRowId, rowId > 0 {
+            if let delivered = evidence.dateDelivered, delivered > 0 { return "delivered" }
+            return "dbObserved"
+        }
+        return "sentToMessages"
     }
 
     private func lastOutboundSendStatusText() -> String {
         outboundSendStatusText(state.lastOutboundSend)
+    }
+
+    private func recordInboundMediaRefs(_ message: MessageItem) {
+        for attachment in message.attachments where attachment.kind == "image" {
+            guard let path = attachment.absolutePath else { continue }
+            appendRecentMediaRef(RecentMediaRef(
+                direction: "inbound",
+                rowId: message.rowId,
+                handleId: message.handleId,
+                service: message.service,
+                path: path,
+                transferName: attachment.transferName,
+                kind: attachment.kind,
+                createdAt: message.receivedAt ?? DateCodec.iso(now()),
+                exists: FileManager.default.fileExists(atPath: path)
+            ))
+        }
+    }
+
+    private func recordOutboundMediaRef(recipient: String, service: String, filePath: String, evidence: OutboundDeliveryEvidence) {
+        guard imageKindForPath(filePath) == "image" else { return }
+        appendRecentMediaRef(RecentMediaRef(
+            direction: "outbound",
+            rowId: evidence.dbRowId,
+            handleId: recipient,
+            service: service,
+            path: filePath,
+            transferName: URL(fileURLWithPath: filePath).lastPathComponent,
+            kind: "image",
+            createdAt: DateCodec.iso(now()),
+            exists: FileManager.default.fileExists(atPath: filePath)
+        ))
+    }
+
+    private func appendRecentMediaRef(_ ref: RecentMediaRef) {
+        var refs = state.recentMediaRefs ?? []
+        refs.removeAll { $0.direction == ref.direction && $0.rowId == ref.rowId && $0.path == ref.path && $0.handleId == ref.handleId }
+        refs.append(ref)
+        state.recentMediaRefs = Array(refs.suffix(30))
+        try? stores.state.save(state)
+    }
+
+    private func shouldAskForMissingSourceImage(_ batch: PendingBatch) -> Bool {
+        guard batch.items.allSatisfy({ $0.attachments.isEmpty }) else { return false }
+        let text = batch.items.map(\.text).joined(separator: "\n")
+        guard promptReferencesPreviousImage(text) else { return false }
+        return latestUsableImageRef(for: batch.handleId, service: batch.service, recentMediaRefs: state.recentMediaRefs ?? []) == nil
+    }
+
+    private func imageKindForPath(_ path: String) -> String? {
+        let imageExtensions = ["png", "jpg", "jpeg", "gif", "heic", "tif", "tiff", "bmp", "webp"]
+        return imageExtensions.contains(URL(fileURLWithPath: path).pathExtension.lowercased()) ? "image" : nil
     }
 
     private func shouldAttemptPermissionRecovery(_ error: CodexBackendFailure, config: BridgeConfig, attempts: Int) -> Bool {
@@ -811,7 +997,8 @@ public final class BridgeService: @unchecked Sendable {
         guard let job = state.activeJob else { return "No active job is running." }
         state.activeJob?.status = "canceling"
         if let pid = job.codexPid {
-            _ = try? ProcessRunner().runSync("/bin/kill", ["-TERM", "\(pid)"])
+            _ = terminateProcessTree(rootPid: pid)
+            activeCodexTask?.cancel()
             return "Canceling the active Codex job."
         }
         activeCodexTask?.cancel()
@@ -863,7 +1050,7 @@ private enum Job {
 
 public func bridgeLocalCommandName(_ text: String) -> String? {
     let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    if ["/codex status", "/codex open", "/codex history", "/codex automations"].contains(normalized) {
+    if ["/codex status", "/codex open", "/codex history", "/codex automations", "/codex retry-last-send"].contains(normalized) {
         return "/codex"
     }
     let command = normalized.split(separator: " ").first.map(String.init)

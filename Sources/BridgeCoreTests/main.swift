@@ -18,9 +18,14 @@ struct BridgeCoreFocusedTests {
         try testBridgeInstructionsRouteAutomationAndPluginRequests()
         try testAutomationRequestsGetRoutingGuard()
         try testPromptBatchPreservesPluginIntentAndOrder()
+        try testPreviousImageReferenceAddsRecentImage()
+        try await testMissingPreviousImageReferenceAsksForSource()
         try testDiagnosticMentionOfDailyBriefingDoesNotCreateAutomation()
         try testCodexAutomationCreationWritesAppAutomationToml()
         try testCapabilityFormattingAndCacheSnapshot()
+        try await testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb()
+        try await testOutboundSmokeAttachmentEvidenceFindsMarkerInTransferName()
+        try await testRecentFailedOutboundEvidenceFindsFailedTextAndAttachmentRows()
         try testCodexMentionExtraction()
         try testNaturalLanguageCodexMentionExtraction()
         try await testAppServerClientCapabilityInventory()
@@ -45,9 +50,12 @@ struct BridgeCoreFocusedTests {
         try await testBridgeAttachDirectiveAlwaysSendsValidatedAttachment()
         try await testProgressEventsUpdateStateWithoutSendingSms()
         try await testDeadActiveJobOnStartupNotifiesAndClears()
+        try testCorruptedStateJsonBacksUpAndDefaults()
         try await testAutomationRequestCreatesCodexAutomationFromInterpretedSpec()
+        try await testCodexAutomationsReportsCreationInProgress()
         try await testCompletedAutomationSessionIsForwardedOnce()
         try testCompletedAutomationScanUsesDeliveredSessionLowerBound()
+        try testTerminateProcessTreeIncludesRoot()
         try await testOrdinaryTextDuringActiveJobQueuesNextBatchWhileCodexStatusCutsThrough()
         print("BridgeCoreTests passed.")
     }
@@ -57,6 +65,7 @@ struct BridgeCoreFocusedTests {
         try expect(bridgeLocalCommandName("  /codex open  ") == "/codex", "exact codex open command")
         try expect(bridgeLocalCommandName("/codex history") == "/codex", "exact codex history command")
         try expect(bridgeLocalCommandName("/codex automations") == "/codex", "exact codex automations command")
+        try expect(bridgeLocalCommandName("/codex retry-last-send") == "/codex", "exact codex retry command")
         try expect(bridgeLocalCommandName("/codex status please") == nil, "non-exact codex command is prompt text")
         try expect(bridgeLocalCommandName("what does /codex status show?") == nil, "natural language codex mention is prompt text")
         try expect(bridgeLocalCommandName("/status please") == "/status", "existing command arguments still work")
@@ -121,6 +130,52 @@ struct BridgeCoreFocusedTests {
         try expect(request.promptText.contains("page.png (image/png) at \(attachmentPath)"), "attachment path is preserved")
         try expect(request.attachments.first?.absolutePath == attachmentPath, "image attachment is passed through")
         try expect(extractCodexMentionRefs(from: request.promptText).contains(CodexMentionRef(name: "Chrome", path: "plugin://chrome@openai-bundled")), "batch preamble does not hide Chrome intent")
+    }
+
+    private static func testPreviousImageReferenceAddsRecentImage() throws {
+        let imagePath = NSTemporaryDirectory() + "/bridge-recent-source.png"
+        FileManager.default.createFile(atPath: imagePath, contents: Data("image".utf8), attributes: nil)
+        let batch = PendingBatch(
+            handleId: "+1",
+            service: "iMessage",
+            startedAt: "2026-05-20T10:00:00.000Z",
+            deadlineAt: "2026-05-20T10:00:01.000Z",
+            items: [
+                MessageItem(rowId: 12, guid: "follow-up", text: "Modify that image to make the background blue.", handleId: "+1", service: "iMessage", receivedAt: "2026-05-20T10:00:00.000Z", attachments: [])
+            ]
+        )
+        let recent = RecentMediaRef(direction: "inbound", rowId: 11, handleId: "+1", service: "iMessage", path: imagePath, transferName: "source.png", kind: "image", createdAt: "2026-05-20T09:59:00.000Z", exists: true)
+
+        let request = buildPromptRequest(from: batch, recentMediaRefs: [recent])
+
+        try expect(request.attachments.map(\.absolutePath) == [imagePath], "previous image reference attaches recent image")
+        try expect(request.promptText.contains("Bridge media context:"), "previous image context is explicit")
+    }
+
+    private static func testMissingPreviousImageReferenceAsksForSource() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        try stores.config.save(config)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 1, guid: "guid-image-followup", text: "Can you modify that image to add a hat?", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in FakeProgressCodexBackend(events: [], response: "should not run") },
+            now: { Date(timeIntervalSince1970: 1_777_777_777) }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        let replies = await sink.repliesSnapshot()
+        try expect(replies.map(\.text) == ["Please send the image you want me to modify, then tell me the edit you want."], "missing image follow-up asks for source")
     }
 
     private static func testDiagnosticMentionOfDailyBriefingDoesNotCreateAutomation() throws {
@@ -196,6 +251,71 @@ struct BridgeCoreFocusedTests {
         try expect(formatted.contains("Codex invocation status: Chrome: callable"), "capability formatter separates invocation status")
         let snapshot = CodexCapabilitySnapshot(capabilities: capabilities, cachedAt: "2026-05-09T00:00:00.000Z", refreshed: false, cacheAgeSeconds: 12)
         try expect(formatCodexCapabilityCacheLine(snapshot) == "Codex capability cache: cached at 2026-05-09T00:00:00.000Z, age 12s", "capability cache formatter")
+    }
+
+    private static func testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb() async throws {
+        let paths = testPaths()
+        let db = try makeSmokeMessagesDb(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.messagesDbPath = db.path
+        try runSQLite(db, """
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered)
+        VALUES (10, 'smoke-guid', 'hello CODEXMSGCTL_SMOKE_TEXT_TEST', 1, 0, 123);
+        """)
+
+        let evidence = try await outboundSmokeTextEvidence(marker: "CODEXMSGCTL_SMOKE_TEXT_TEST", afterRowId: 1, config: config)
+
+        try expect(evidence?.rowId == 10, "smoke text evidence row id")
+        try expect(evidence?.guid == "smoke-guid", "smoke text evidence guid")
+        try expect(evidence?.dbError == 0, "smoke text evidence error")
+        try expect(evidence?.dateDelivered == 123, "smoke text evidence delivered")
+    }
+
+    private static func testRecentFailedOutboundEvidenceFindsFailedTextAndAttachmentRows() async throws {
+        let paths = testPaths()
+        let db = try makeSmokeMessagesDb(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.messagesDbPath = db.path
+        try runSQLite(db, """
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered)
+        VALUES (20, 'failed-text', 'failed outbound', 1, 42, 0);
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered)
+        VALUES (21, 'failed-attachment', '', 1, 0, 0);
+        INSERT INTO attachment (ROWID, transfer_name, transfer_state)
+        VALUES (5, 'probe.txt', 6);
+        INSERT INTO message_attachment_join (message_id, attachment_id)
+        VALUES (21, 5);
+        """)
+
+        let failures = try await recentFailedOutboundEvidence(config: config, limit: 5)
+
+        try expect(failures.map(\.rowId) == [21, 20], "recent failures are newest first")
+        try expect(failures.first?.attachmentName == "probe.txt", "failed attachment name")
+        try expect(failures.first?.transferState == 6, "failed attachment transfer state")
+        try expect(failures.last?.dbError == 42, "failed text error")
+        try expect(formatRecentFailedOutboundEvidence(failures).contains("row 21"), "recent failure formatter includes row")
+    }
+
+    private static func testOutboundSmokeAttachmentEvidenceFindsMarkerInTransferName() async throws {
+        let paths = testPaths()
+        let db = try makeSmokeMessagesDb(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.messagesDbPath = db.path
+        try runSQLite(db, """
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered)
+        VALUES (30, 'smoke-attachment-guid', '', 1, 0, 456);
+        INSERT INTO attachment (ROWID, transfer_name, transfer_state)
+        VALUES (7, 'codexmsgctl-smoke-CODEXMSGCTL_SMOKE_ATTACHMENT_TEST.txt', 5);
+        INSERT INTO message_attachment_join (message_id, attachment_id)
+        VALUES (30, 7);
+        """)
+
+        let evidence = try await outboundSmokeAttachmentEvidence(marker: "CODEXMSGCTL_SMOKE_ATTACHMENT_TEST", afterRowId: 1, config: config)
+
+        try expect(evidence?.rowId == 30, "smoke attachment evidence row id")
+        try expect(evidence?.guid == "smoke-attachment-guid", "smoke attachment evidence guid")
+        try expect(evidence?.attachmentName == "codexmsgctl-smoke-CODEXMSGCTL_SMOKE_ATTACHMENT_TEST.txt", "smoke attachment evidence transfer name")
+        try expect(evidence?.transferState == 5, "smoke attachment evidence transfer state")
     }
 
     private static func testCodexMentionExtraction() throws {
@@ -634,8 +754,8 @@ struct BridgeCoreFocusedTests {
         try expect(attachments.map(\.filePath) == [attachment.path], "validated BRIDGE_ATTACH path sends even without prompt heuristics")
         let state = try stores.state.load()
         try expect(state.lastOutboundSend?.kind == "attachment", "last outbound send records attachment kind")
-        try expect(state.lastOutboundSend?.status == "sent", "last outbound send records success")
-        try expect(service.runLocalCommand("/status").contains("Last outbound send: attachment sent"), "status exposes outbound send evidence")
+        try expect(state.lastOutboundSend?.status == "dbObserved", "last outbound send records database observation")
+        try expect(service.runLocalCommand("/status").contains("Last outbound send: attachment dbObserved"), "status exposes outbound send evidence")
     }
 
     private static func testProgressEventsUpdateStateWithoutSendingSms() async throws {
@@ -737,6 +857,20 @@ struct BridgeCoreFocusedTests {
         try expect(state.activeJob == nil, "dead startup job is cleared after notification")
     }
 
+    private static func testCorruptedStateJsonBacksUpAndDefaults() throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        try "{".write(to: paths.statePath, atomically: true, encoding: .utf8)
+        let stores = RuntimeStores(paths: paths)
+
+        let state = try stores.state.load()
+
+        try expect(state.lastProcessedRowId == 0, "corrupted state falls back to default state")
+        let backups = try FileManager.default.contentsOfDirectory(atPath: paths.stateDir.path)
+            .filter { $0.hasPrefix("state.json.corrupt-") }
+        try expect(!backups.isEmpty, "corrupted state is backed up for diagnosis")
+    }
+
     private static func testAutomationRequestCreatesCodexAutomationFromInterpretedSpec() async throws {
         let paths = testPaths()
         try ensureRuntimeDirectories(paths)
@@ -780,11 +914,42 @@ struct BridgeCoreFocusedTests {
         let state = try stores.state.load()
         try expect(state.activeJob == nil, "automation creation does not start Codex job")
         try expect(state.codexSession.sessionId == nil, "automation creation does not mutate Codex session")
+        try expect(state.automationCreationStatus?.phase == "confirmed", "automation creation status records confirmation")
+        try expect(state.automationCreationStatus?.createdFilePath?.hasSuffix("automation.toml") == true, "automation creation status records file path")
         let route = try expectRoute(state.automationRoutes?.first)
         try expect(route.automationId == "morning-news-and-weather-digest", "automation route id persisted")
         try expect(route.recipient == "+1", "automation route recipient comes from Messages batch")
         try expect(route.service == "iMessage", "automation route service comes from Messages batch")
         try expect(route.createdFromGuid == "guid-auto", "automation route source guid persisted")
+    }
+
+    private static func testCodexAutomationsReportsCreationInProgress() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        try stores.config.save(defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo"))
+        var state = defaultBridgeState()
+        state.automationCreationStatus = AutomationCreationStatus(
+            name: "Bridge Smoke Test",
+            sourceRowId: 725,
+            sourceGuid: "guid-smoke",
+            phase: "creating",
+            updatedAt: "2026-05-22T00:00:00.000Z"
+        )
+        try stores.state.save(state)
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in QueueMessageSource(messages: []) },
+            makeReplySink: { _ in CapturingReplySink() },
+            makeCodex: { _ in FakeProgressCodexBackend(events: [], response: "unused") }
+        )
+
+        try await service.initialize()
+        let text = service.runLocalCommand("/codex automations")
+
+        try expect(text.contains("Automation creation creating: Bridge Smoke Test"), "/codex automations reports in-flight creation")
+        try expect(text.contains("Source row: 725"), "/codex automations includes source row")
     }
 
     private static func testCompletedAutomationSessionIsForwardedOnce() async throws {
@@ -883,6 +1048,24 @@ struct BridgeCoreFocusedTests {
         try expect(scan.readFileCount == 1, "scan reads only the new session inside the read budget")
         try expect(scan.runs.map(\.sessionId) == [newSessionId], "scan finds new automation result after lower bound")
         try expect(scan.runs.first?.message == "Fresh digest", "scan parses fresh automation message")
+    }
+
+    private static func testTerminateProcessTreeIncludesRoot() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "/bin/sleep 60 & wait"]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+        defer {
+            if process.isRunning { process.terminate() }
+        }
+        Thread.sleep(forTimeInterval: 0.2)
+
+        let result = terminateProcessTree(rootPid: process.processIdentifier)
+
+        try expect(result.rootPid == process.processIdentifier, "process cleanup records root pid")
+        try expect(result.terminatedPids.contains(process.processIdentifier), "process cleanup terminates root pid")
     }
 
     private static func testOrdinaryTextDuringActiveJobQueuesNextBatchWhileCodexStatusCutsThrough() async throws {
@@ -1138,6 +1321,43 @@ private func testPaths() -> RuntimePaths {
             "CODEX_HOME": root.appendingPathComponent(".codex").path
         ]
     )
+}
+
+private func makeSmokeMessagesDb(paths: RuntimePaths) throws -> URL {
+    try FileManager.default.createDirectory(at: paths.tmpDir, withIntermediateDirectories: true)
+    let db = paths.tmpDir.appendingPathComponent("chat.db")
+    try runSQLite(db, """
+    CREATE TABLE message (
+      ROWID INTEGER PRIMARY KEY,
+      guid TEXT,
+      text TEXT,
+      attributedBody BLOB,
+      is_from_me INTEGER,
+      error INTEGER,
+      date_delivered INTEGER
+    );
+    CREATE TABLE attachment (
+      ROWID INTEGER PRIMARY KEY,
+      transfer_name TEXT,
+      transfer_state INTEGER
+    );
+    CREATE TABLE message_attachment_join (
+      message_id INTEGER,
+      attachment_id INTEGER
+    );
+    """)
+    return db
+}
+
+private func runSQLite(_ db: URL, _ sql: String) throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+    process.arguments = [db.path, sql]
+    try process.run()
+    process.waitUntilExit()
+    if process.terminationStatus != 0 {
+        throw TestFailure(description: "sqlite3 failed with status \(process.terminationStatus)")
+    }
 }
 
 private func message(rowId: Int64, text: String) -> MessageItem {

@@ -5,6 +5,66 @@ public protocol ReplySink: Sendable {
     func sendAttachment(recipient: String, service: String, filePath: String) async throws -> OutboundDeliveryEvidence
 }
 
+public struct OutboundDeliveryFailure: Error, CustomStringConvertible, Sendable {
+    public var message: String
+    public var evidence: OutboundDeliveryEvidence?
+
+    public init(message: String, evidence: OutboundDeliveryEvidence? = nil) {
+        self.message = message
+        self.evidence = evidence
+    }
+
+    public var description: String { message }
+}
+
+public func sqliteStringLiteral(_ value: String) -> String {
+    "'\(value.replacingOccurrences(of: "'", with: "''"))'"
+}
+
+public func outgoingTextEvidenceSQL(afterRowId: Int64, text: String) -> String {
+    let literal = sqliteStringLiteral(text)
+    return """
+    SELECT m.ROWID || '|' || COALESCE(m.error, 0) || '|' || COALESCE(m.date_delivered, 0)
+    FROM message m
+    WHERE m.is_from_me = 1
+      AND m.ROWID > \(afterRowId)
+      AND (
+        COALESCE(m.text, '') = \(literal)
+        OR instr(COALESCE(m.attributedBody, x''), CAST(\(literal) AS BLOB)) > 0
+      )
+    ORDER BY m.ROWID DESC
+    LIMIT 1;
+    """
+}
+
+public func messagesTextDeliveryEvidence(messagesDbPath: String, afterRowId: Int64, text: String, runner: ProcessRunner = ProcessRunner()) async throws -> OutboundDeliveryEvidence {
+    let result = try await runner.run("/usr/bin/sqlite3", ["-readonly", messagesDbPath, outgoingTextEvidenceSQL(afterRowId: afterRowId, text: text)])
+    let fields = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "|").map(String.init)
+    guard fields.count == 3 else {
+        throw OutboundDeliveryFailure(message: "Messages did not create an outgoing text row containing the sent text.")
+    }
+    let rowId = Int64(fields[0])
+    let error = Int(fields[1]) ?? 0
+    let delivered = Int64(fields[2]) ?? 0
+    let detail = delivered > 0
+        ? "Messages created and delivered an outgoing text row."
+        : "Messages created an outgoing text row that is not yet delivered."
+    let evidence = OutboundDeliveryEvidence(
+        transport: "AppleScript+MessagesDB",
+        dbRowId: rowId,
+        dbError: error,
+        dateDelivered: delivered,
+        detail: detail
+    )
+    if error != 0 {
+        throw OutboundDeliveryFailure(
+            message: "Messages created an outgoing text row \(fields[0]), but recorded error=\(error), date_delivered=\(delivered).",
+            evidence: evidence
+        )
+    }
+    return evidence
+}
+
 public final class AppleMessagesReplySink: ReplySink {
     private let osascriptCommand: String
     private let chunkSize: Int
@@ -19,10 +79,18 @@ public final class AppleMessagesReplySink: ReplySink {
     }
 
     public func sendReply(recipient: String, service: String, text: String) async throws -> OutboundDeliveryEvidence {
-        for chunk in chunkMessageText(text, chunkSize: chunkSize) {
+        let chunks = chunkMessageText(text, chunkSize: chunkSize)
+        var lastEvidence: OutboundDeliveryEvidence?
+        for chunk in chunks {
+            let beforeRowId = try await latestOutgoingMessageRowId()
             try await sendChunk(recipient: recipient, service: service, text: chunk)
+            lastEvidence = try await verifyTextSend(afterRowId: beforeRowId, text: chunk)
         }
-        return OutboundDeliveryEvidence(transport: "AppleScript", detail: "Messages accepted \(chunkMessageText(text, chunkSize: chunkSize).count) text chunk(s).")
+        if var evidence = lastEvidence {
+            evidence.detail = [evidence.detail, "Messages accepted \(chunks.count) text chunk(s)."].compactMap { $0 }.joined(separator: " ")
+            return evidence
+        }
+        return OutboundDeliveryEvidence(transport: "AppleScript", detail: "No non-empty text chunks to send.")
     }
 
     public func sendAttachment(recipient: String, service: String, filePath: String) async throws -> OutboundDeliveryEvidence {
@@ -77,6 +145,24 @@ public final class AppleMessagesReplySink: ReplySink {
         return Int64(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
     }
 
+    private func verifyTextSend(afterRowId: Int64, text: String) async throws -> OutboundDeliveryEvidence {
+        guard let messagesDbPath else {
+            return OutboundDeliveryEvidence(transport: "AppleScript", detail: "No Messages database configured for text verification.")
+        }
+        let deadline = Date().addingTimeInterval(3)
+        var lastFailure: OutboundDeliveryFailure?
+        repeat {
+            do {
+                return try await messagesTextDeliveryEvidence(messagesDbPath: messagesDbPath, afterRowId: afterRowId, text: text, runner: runner)
+            } catch let error as OutboundDeliveryFailure {
+                if error.evidence != nil { throw error }
+                lastFailure = error
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        } while Date() < deadline
+        throw lastFailure ?? OutboundDeliveryFailure(message: "Messages did not create an outgoing text row containing the sent text.")
+    }
+
     private func verifyAttachmentSend(afterRowId: Int64, originalFileName: String?) async throws -> OutboundDeliveryEvidence {
         guard let messagesDbPath else {
             return OutboundDeliveryEvidence(transport: "AppleScript", detail: "No Messages database configured for attachment verification.")
@@ -103,24 +189,30 @@ public final class AppleMessagesReplySink: ReplySink {
         let result = try await runner.run("/usr/bin/sqlite3", ["-readonly", messagesDbPath, sql])
         let fields = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "|").map(String.init)
         guard fields.count == 4 else {
-            throw StoreError.validation("Messages did not create an outgoing attachment row.")
+            throw OutboundDeliveryFailure(message: "Messages did not create an outgoing attachment row.")
         }
         let rowId = fields[0]
         let rowIdValue = Int64(rowId)
         let error = Int(fields[1]) ?? 0
         let transferState = Int(fields[2]) ?? 0
         let delivered = Int64(fields[3]) ?? 0
-        if error != 0 || transferState == 6 || delivered == 0 {
-            throw StoreError.validation("Messages created an outgoing attachment row \(rowId), but did not deliver it: error=\(error), transfer_state=\(transferState), date_delivered=\(delivered).")
-        }
-        return OutboundDeliveryEvidence(
+        let evidence = OutboundDeliveryEvidence(
             transport: "AppleScript+MessagesDB",
             dbRowId: rowIdValue,
             dbError: error,
             transferState: transferState,
             dateDelivered: delivered,
-            detail: "Messages created and delivered an outgoing attachment row."
+            detail: "Messages created an outgoing attachment row."
         )
+        if error != 0 || transferState == 6 || delivered == 0 {
+            throw OutboundDeliveryFailure(
+                message: "Messages created an outgoing attachment row \(rowId), but did not deliver it: error=\(error), transfer_state=\(transferState), date_delivered=\(delivered).",
+                evidence: evidence
+            )
+        }
+        var deliveredEvidence = evidence
+        deliveredEvidence.detail = "Messages created and delivered an outgoing attachment row."
+        return deliveredEvidence
     }
 
     private func sendChunk(recipient: String, service: String, text: String) async throws {

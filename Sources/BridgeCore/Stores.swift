@@ -209,7 +209,13 @@ public final class JSONFileStore<Value: Codable> {
             return defaultValue()
         }
         let data = try Data(contentsOf: url)
-        return try JSONDecoder().decode(Value.self, from: data)
+        do {
+            return try JSONDecoder().decode(Value.self, from: data)
+        } catch {
+            let backup = url.deletingLastPathComponent().appendingPathComponent("\(url.lastPathComponent).corrupt-\(Int(Date().timeIntervalSince1970))")
+            try? FileManager.default.copyItem(at: url, to: backup)
+            return defaultValue()
+        }
     }
 
     public func save(_ value: Value) throws {

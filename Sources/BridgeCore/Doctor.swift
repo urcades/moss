@@ -22,6 +22,26 @@ public struct DoctorReport: Equatable, Sendable {
     }
 }
 
+public struct OutboundSmokeEvidence: Codable, Equatable, Sendable {
+    public var rowId: Int64
+    public var guid: String?
+    public var dbError: Int
+    public var transferState: Int?
+    public var dateDelivered: Int64
+    public var attachmentName: String?
+    public var detail: String?
+
+    public init(rowId: Int64, guid: String?, dbError: Int, transferState: Int? = nil, dateDelivered: Int64, attachmentName: String? = nil, detail: String? = nil) {
+        self.rowId = rowId
+        self.guid = guid
+        self.dbError = dbError
+        self.transferState = transferState
+        self.dateDelivered = dateDelivered
+        self.attachmentName = attachmentName
+        self.detail = detail
+    }
+}
+
 public final class Doctor: @unchecked Sendable {
     private let paths: RuntimePaths
     private let runner: ProcessRunner
@@ -40,6 +60,8 @@ public final class Doctor: @unchecked Sendable {
         checks.append(contentsOf: await checkCodexCapabilities(config))
         checks.append(checkTrustedSenders(config))
         checks.append(checkMessagesDb(config))
+        checks.append(await checkRecentFailedOutboundEvidence(config))
+        checks.append(checkCodexAppServerProcessSnapshot())
         checks.append(await checkMessagesAutomation(config))
         checks.append(checkTCC("Full Disk Access", services: ["kTCCServiceSystemPolicyAllFiles"], clients: bridgeClients(), missingDetail: "Grant Full Disk Access to Messages Codex Bridge so it can read Messages DB."))
         checks.append(checkTCC("Codex Accessibility", services: ["kTCCServiceAccessibility"], clients: codexComputerUseClients(), missingDetail: "Grant Accessibility to Codex and Codex Computer Use."))
@@ -117,10 +139,31 @@ public final class Doctor: @unchecked Sendable {
         )
     }
 
+    private func checkRecentFailedOutboundEvidence(_ config: BridgeConfig) async -> DoctorCheck {
+        do {
+            let failures = try await recentFailedOutboundEvidence(config: config, limit: 3, runner: runner)
+            guard !failures.isEmpty else {
+                return DoctorCheck(name: "Recent failed outbound evidence", ok: true, detail: "No recent failed outgoing Messages rows found.")
+            }
+            return DoctorCheck(name: "Recent failed outbound evidence", ok: false, detail: formatRecentFailedOutboundEvidence(failures))
+        } catch {
+            return DoctorCheck(name: "Recent failed outbound evidence", ok: true, detail: "Unavailable: \(error)")
+        }
+    }
+
+    private func checkCodexAppServerProcessSnapshot() -> DoctorCheck {
+        let output = (try? runner.runSync("/usr/bin/pgrep", ["-f", "codex.*app-server"])) ?? ""
+        let lines = output.split(whereSeparator: \.isNewline).map(String.init)
+        guard !lines.isEmpty else {
+            return DoctorCheck(name: "Codex app-server processes", ok: true, detail: "none")
+        }
+        return DoctorCheck(name: "Codex app-server processes", ok: true, detail: "\(lines.count) running pid(s): \(lines.prefix(8).joined(separator: ", "))")
+    }
+
     private func checkMessagesAutomation(_ config: BridgeConfig) async -> DoctorCheck {
         let script = #"tell application "Messages" to get id of 1st service whose service type = iMessage"#
         do {
-            let result = try await runner.run(config.osascriptCommand, ["-e", script])
+            let result = try await runner.run(config.osascriptCommand, ["-e", script], timeoutMs: 10_000)
             return DoctorCheck(name: "Messages automation reachable", ok: true, detail: result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
         } catch {
             return DoctorCheck(name: "Messages automation reachable", ok: false, detail: "macOS Automation is likely blocking Messages access. Open Automation Settings from the menu, then allow Messages access for Messages Codex Bridge. Detail: \(error)")
@@ -195,8 +238,37 @@ public final class Doctor: @unchecked Sendable {
     private func computerUseProbe(_ config: BridgeConfig) async -> DoctorCheck {
         let prompt = "Use Computer Use to inspect Safari. First call list_apps, then get_app_state for Safari. Do not navigate or click. Reply only with SUCCESS and the Safari window title, or BLOCKED and the exact blocker text."
         let request = PromptRequest(promptText: prompt, attachments: [])
+        let pidBox = LockedPid()
         do {
-            let response = try await CodexAppServerBackend(config: config, paths: paths).invoke(request, sessionId: nil, onEvent: nil)
+            let response = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CodexResponse, Error>) in
+                let resumeOnce = ResumeOnce()
+                let probeTask = Task {
+                    do {
+                        let response = try await CodexAppServerBackend(config: config, paths: paths).invoke(request, sessionId: nil) { event in
+                            if case .processStarted(let pid) = event {
+                                pidBox.set(pid)
+                            }
+                        }
+                        resumeOnce.run {
+                            continuation.resume(returning: response)
+                        }
+                    } catch {
+                        resumeOnce.run {
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                }
+                Task {
+                    try? await Task.sleep(nanoseconds: 45_000_000_000)
+                    resumeOnce.run {
+                        probeTask.cancel()
+                        if let pid = pidBox.get() {
+                            terminateProcessTree(rootPid: pid)
+                        }
+                        continuation.resume(throwing: StoreError.validation("Computer Use probe timed out after 45s."))
+                    }
+                }
+            }
             let ok = response.text.localizedCaseInsensitiveContains("SUCCESS")
             return DoctorCheck(name: "Computer Use probe", ok: ok, detail: response.text)
         } catch let error as CodexBackendFailure {
@@ -204,6 +276,39 @@ public final class Doctor: @unchecked Sendable {
         } catch {
             return DoctorCheck(name: "Computer Use probe", ok: false, detail: String(describing: error))
         }
+    }
+}
+
+private final class LockedPid: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Int32?
+
+    func set(_ newValue: Int32) {
+        lock.lock()
+        value = newValue
+        lock.unlock()
+    }
+
+    func get() -> Int32? {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
+
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didResume = false
+
+    func run(_ body: () -> Void) {
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            return
+        }
+        didResume = true
+        lock.unlock()
+        body()
     }
 }
 
@@ -283,4 +388,117 @@ public extension ProcessRunner {
         process.waitUntilExit()
         return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
+}
+
+public func latestOutgoingMessageRowId(config: BridgeConfig, runner: ProcessRunner = ProcessRunner()) async throws -> Int64 {
+    let sql = "SELECT COALESCE(MAX(ROWID), 0) FROM message WHERE is_from_me = 1;"
+    let result = try await runner.run("/usr/bin/sqlite3", ["-readonly", config.messagesDbPath, sql])
+    return Int64(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+}
+
+public func outboundSmokeTextEvidence(marker: String, afterRowId: Int64, config: BridgeConfig, runner: ProcessRunner = ProcessRunner()) async throws -> OutboundSmokeEvidence? {
+    let markerLiteral = sqliteStringLiteral("%\(marker)%")
+    let markerExact = sqliteStringLiteral(marker)
+    let sql = """
+    SELECT m.ROWID || '|' || COALESCE(m.guid, '') || '|' || COALESCE(m.error, 0) || '|' || COALESCE(m.date_delivered, 0)
+    FROM message m
+    WHERE m.is_from_me = 1
+      AND m.ROWID > \(afterRowId)
+      AND (
+        COALESCE(m.text, '') LIKE \(markerLiteral)
+        OR instr(COALESCE(m.attributedBody, x''), CAST(\(markerExact) AS BLOB)) > 0
+      )
+    ORDER BY m.ROWID DESC
+    LIMIT 1;
+    """
+    let result = try await runner.run("/usr/bin/sqlite3", ["-readonly", config.messagesDbPath, sql])
+    let fields = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+    guard fields.count == 4, let rowId = Int64(fields[0]) else { return nil }
+    return OutboundSmokeEvidence(
+        rowId: rowId,
+        guid: fields[1].isEmpty ? nil : fields[1],
+        dbError: Int(fields[2]) ?? 0,
+        dateDelivered: Int64(fields[3]) ?? 0,
+        detail: "matched outbound marker"
+    )
+}
+
+public func outboundSmokeAttachmentEvidence(marker: String, afterRowId: Int64, config: BridgeConfig, runner: ProcessRunner = ProcessRunner()) async throws -> OutboundSmokeEvidence? {
+    let literal = sqliteStringLiteral(marker)
+    let sql = """
+    SELECT m.ROWID || '|' || COALESCE(m.guid, '') || '|' || COALESCE(m.error, 0) || '|' || COALESCE(a.transfer_state, '') || '|' || COALESCE(m.date_delivered, 0) || '|' || COALESCE(a.transfer_name, '')
+    FROM message m
+    JOIN message_attachment_join maj ON maj.message_id = m.ROWID
+    JOIN attachment a ON a.ROWID = maj.attachment_id
+    WHERE m.is_from_me = 1
+      AND m.ROWID > \(afterRowId)
+      AND instr(COALESCE(a.transfer_name, ''), \(literal)) > 0
+    ORDER BY m.ROWID DESC
+    LIMIT 1;
+    """
+    let result = try await runner.run("/usr/bin/sqlite3", ["-readonly", config.messagesDbPath, sql])
+    let fields = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+    guard fields.count == 6, let rowId = Int64(fields[0]) else { return nil }
+    return OutboundSmokeEvidence(
+        rowId: rowId,
+        guid: fields[1].isEmpty ? nil : fields[1],
+        dbError: Int(fields[2]) ?? 0,
+        transferState: fields[3].isEmpty ? nil : Int(fields[3]),
+        dateDelivered: Int64(fields[4]) ?? 0,
+        attachmentName: fields[5].isEmpty ? nil : fields[5],
+        detail: "matched outbound attachment marker"
+    )
+}
+
+public func recentFailedOutboundEvidence(config: BridgeConfig, limit: Int = 5, runner: ProcessRunner = ProcessRunner()) async throws -> [OutboundSmokeEvidence] {
+    let boundedLimit = max(1, min(limit, 50))
+    let sql = """
+    SELECT m.ROWID || '|' || COALESCE(m.guid, '') || '|' || COALESCE(m.error, 0) || '|' || COALESCE(a.transfer_state, '') || '|' || COALESCE(m.date_delivered, 0) || '|' || COALESCE(a.transfer_name, '')
+    FROM message m
+    LEFT JOIN message_attachment_join maj ON maj.message_id = m.ROWID
+    LEFT JOIN attachment a ON a.ROWID = maj.attachment_id
+    WHERE m.is_from_me = 1
+      AND (
+        COALESCE(m.error, 0) != 0
+        OR COALESCE(a.transfer_state, 0) = 6
+        OR (a.ROWID IS NOT NULL AND COALESCE(m.date_delivered, 0) = 0)
+      )
+    ORDER BY m.ROWID DESC
+    LIMIT \(boundedLimit);
+    """
+    let result = try await runner.run("/usr/bin/sqlite3", ["-readonly", config.messagesDbPath, sql])
+    return result.stdout
+        .split(separator: "\n")
+        .compactMap { line -> OutboundSmokeEvidence? in
+            let fields = line.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+            guard fields.count == 6, let rowId = Int64(fields[0]) else { return nil }
+            return OutboundSmokeEvidence(
+                rowId: rowId,
+                guid: fields[1].isEmpty ? nil : fields[1],
+                dbError: Int(fields[2]) ?? 0,
+                transferState: fields[3].isEmpty ? nil : Int(fields[3]),
+                dateDelivered: Int64(fields[4]) ?? 0,
+                attachmentName: fields[5].isEmpty ? nil : fields[5],
+                detail: "recent failed outbound Messages row"
+            )
+        }
+}
+
+public func formatRecentFailedOutboundEvidence(_ failures: [OutboundSmokeEvidence]) -> String {
+    guard !failures.isEmpty else { return "No recent failed outbound Messages rows found." }
+    return failures.map { failure in
+        var parts = [
+            "row \(failure.rowId)",
+            "guid \(failure.guid ?? "unknown")",
+            "error \(failure.dbError)",
+            "date_delivered \(failure.dateDelivered)"
+        ]
+        if let transferState = failure.transferState {
+            parts.append("transfer_state \(transferState)")
+        }
+        if let attachmentName = failure.attachmentName {
+            parts.append("attachment \(attachmentName)")
+        }
+        return parts.joined(separator: "; ")
+    }.joined(separator: "\n")
 }

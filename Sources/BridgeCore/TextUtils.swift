@@ -90,6 +90,15 @@ public func outboundSendStatusText(_ send: OutboundSendRecord?) -> String {
     if let rowId = send.evidence?.dbRowId {
         parts.append("db row \(rowId)")
     }
+    if let dbError = send.evidence?.dbError {
+        parts.append("db error \(dbError)")
+    }
+    if let transferState = send.evidence?.transferState {
+        parts.append("transfer_state \(transferState)")
+    }
+    if let delivered = send.evidence?.dateDelivered {
+        parts.append("date_delivered \(delivered)")
+    }
     if send.retryable {
         parts.append("retryable")
     }

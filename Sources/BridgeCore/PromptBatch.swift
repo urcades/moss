@@ -38,6 +38,10 @@ private func promptExplicitlyTargetsBridgeSource(_ normalized: String) -> Bool {
 }
 
 public func buildPromptRequest(from batch: PendingBatch) -> PromptRequest {
+    buildPromptRequest(from: batch, recentMediaRefs: [])
+}
+
+public func buildPromptRequest(from batch: PendingBatch, recentMediaRefs: [RecentMediaRef]) -> PromptRequest {
     var lines = [
         "These Apple Messages arrived within one short window. Interpret them as a single prompt.",
         "Preserve chronological order and the combined intent across all message parts.",
@@ -58,6 +62,26 @@ public func buildPromptRequest(from batch: PendingBatch) -> PromptRequest {
         }
     }
 
+    let combinedText = batch.items.map(\.text).joined(separator: "\n")
+    if batch.items.allSatisfy({ $0.attachments.isEmpty }),
+       promptReferencesPreviousImage(combinedText),
+       let recent = latestUsableImageRef(for: batch.handleId, service: batch.service, recentMediaRefs: recentMediaRefs) {
+        let attachment = AttachmentRef(
+            attachmentId: Int64(abs(recent.path.hashValue)),
+            transferName: recent.transferName ?? URL(fileURLWithPath: recent.path).lastPathComponent,
+            mimeType: mimeTypeForImagePath(recent.path),
+            uti: nil,
+            absolutePath: recent.path,
+            kind: "image",
+            exists: true
+        )
+        lines.append("")
+        lines.append("Bridge media context:")
+        lines.append("The user appears to refer to the most recent image in this Messages chat. Attach that image as the source image for this follow-up.")
+        lines.append(describeAttachment(attachment))
+        attachments.append(attachment)
+    }
+
     if promptLooksLikeCodexAutomationRequest(batch.items.map(\.text).joined(separator: "\n")) {
         lines.insert("""
         Bridge routing guard:
@@ -67,6 +91,33 @@ public func buildPromptRequest(from batch: PendingBatch) -> PromptRequest {
     }
 
     return PromptRequest(promptText: lines.joined(separator: "\n"), attachments: attachments, threadName: buildBatchPreview(batch))
+}
+
+public func promptReferencesPreviousImage(_ text: String) -> Bool {
+    let normalized = text.lowercased()
+    let imageTerms = ["that image", "this image", "that picture", "this picture", "modify it", "edit it", "change it", "use it"]
+    return imageTerms.contains { normalized.contains($0) }
+}
+
+public func latestUsableImageRef(for handleId: String, service: String, recentMediaRefs: [RecentMediaRef]) -> RecentMediaRef? {
+    recentMediaRefs.reversed().first { ref in
+        ref.handleId == handleId &&
+            ref.service == service &&
+            ref.kind == "image" &&
+            ref.exists &&
+            FileManager.default.fileExists(atPath: ref.path)
+    }
+}
+
+private func mimeTypeForImagePath(_ path: String) -> String {
+    switch URL(fileURLWithPath: path).pathExtension.lowercased() {
+    case "jpg", "jpeg": return "image/jpeg"
+    case "gif": return "image/gif"
+    case "heic": return "image/heic"
+    case "tif", "tiff": return "image/tiff"
+    case "webp": return "image/webp"
+    default: return "image/png"
+    }
 }
 
 private func refreshAttachment(_ attachment: AttachmentRef) -> AttachmentRef {

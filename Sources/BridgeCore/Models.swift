@@ -378,6 +378,7 @@ public struct OutboundSendRecord: Codable, Equatable, Sendable {
     public var recipient: String
     public var service: String
     public var artifact: String?
+    public var body: String?
     public var status: String
     public var startedAt: String
     public var completedAt: String?
@@ -391,6 +392,7 @@ public struct OutboundSendRecord: Codable, Equatable, Sendable {
         recipient: String,
         service: String,
         artifact: String?,
+        body: String? = nil,
         status: String,
         startedAt: String,
         completedAt: String? = nil,
@@ -403,12 +405,91 @@ public struct OutboundSendRecord: Codable, Equatable, Sendable {
         self.recipient = recipient
         self.service = service
         self.artifact = artifact
+        self.body = body
         self.status = status
         self.startedAt = startedAt
         self.completedAt = completedAt
         self.retryable = retryable
         self.evidence = evidence
         self.error = error
+    }
+}
+
+public struct RecentMediaRef: Codable, Equatable, Sendable {
+    public var direction: String
+    public var rowId: Int64?
+    public var handleId: String
+    public var service: String
+    public var path: String
+    public var transferName: String?
+    public var kind: String
+    public var createdAt: String
+    public var exists: Bool
+
+    public init(direction: String, rowId: Int64? = nil, handleId: String, service: String, path: String, transferName: String? = nil, kind: String, createdAt: String, exists: Bool) {
+        self.direction = direction
+        self.rowId = rowId
+        self.handleId = handleId
+        self.service = service
+        self.path = path
+        self.transferName = transferName
+        self.kind = kind
+        self.createdAt = createdAt
+        self.exists = exists
+    }
+}
+
+public struct AutomationCreationStatus: Codable, Equatable, Sendable {
+    public var automationId: String?
+    public var name: String?
+    public var sourceRowId: Int64?
+    public var sourceGuid: String?
+    public var phase: String
+    public var createdFilePath: String?
+    public var routeStatus: String?
+    public var confirmationSendStatus: String?
+    public var failureText: String?
+    public var updatedAt: String
+
+    public init(automationId: String? = nil, name: String? = nil, sourceRowId: Int64? = nil, sourceGuid: String? = nil, phase: String, createdFilePath: String? = nil, routeStatus: String? = nil, confirmationSendStatus: String? = nil, failureText: String? = nil, updatedAt: String) {
+        self.automationId = automationId
+        self.name = name
+        self.sourceRowId = sourceRowId
+        self.sourceGuid = sourceGuid
+        self.phase = phase
+        self.createdFilePath = createdFilePath
+        self.routeStatus = routeStatus
+        self.confirmationSendStatus = confirmationSendStatus
+        self.failureText = failureText
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct PendingInteractiveCallback: Codable, Equatable, Sendable {
+    public var callbackId: String
+    public var jobId: String?
+    public var jsonRpcId: String?
+    public var method: String
+    public var recipient: String
+    public var service: String
+    public var prompt: String
+    public var createdAt: String
+    public var expiresAt: String?
+    public var status: String
+    public var failureText: String?
+
+    public init(callbackId: String, jobId: String? = nil, jsonRpcId: String? = nil, method: String, recipient: String, service: String, prompt: String, createdAt: String, expiresAt: String? = nil, status: String, failureText: String? = nil) {
+        self.callbackId = callbackId
+        self.jobId = jobId
+        self.jsonRpcId = jsonRpcId
+        self.method = method
+        self.recipient = recipient
+        self.service = service
+        self.prompt = prompt
+        self.createdAt = createdAt
+        self.expiresAt = expiresAt
+        self.status = status
+        self.failureText = failureText
     }
 }
 
@@ -420,8 +501,11 @@ public struct BridgeState: Codable, Equatable, Sendable {
     public var codexSession: CodexSessionState
     public var automationRoutes: [CodexAutomationRoute]?
     public var lastOutboundSend: OutboundSendRecord?
+    public var recentMediaRefs: [RecentMediaRef]?
+    public var automationCreationStatus: AutomationCreationStatus?
+    public var pendingInteractiveCallback: PendingInteractiveCallback?
 
-    public init(lastProcessedGuid: String?, lastProcessedRowId: Int64, pendingBatch: PendingBatch?, activeJob: ActiveJob?, codexSession: CodexSessionState, automationRoutes: [CodexAutomationRoute]? = nil, lastOutboundSend: OutboundSendRecord? = nil) {
+    public init(lastProcessedGuid: String?, lastProcessedRowId: Int64, pendingBatch: PendingBatch?, activeJob: ActiveJob?, codexSession: CodexSessionState, automationRoutes: [CodexAutomationRoute]? = nil, lastOutboundSend: OutboundSendRecord? = nil, recentMediaRefs: [RecentMediaRef]? = nil, automationCreationStatus: AutomationCreationStatus? = nil, pendingInteractiveCallback: PendingInteractiveCallback? = nil) {
         self.lastProcessedGuid = lastProcessedGuid
         self.lastProcessedRowId = lastProcessedRowId
         self.pendingBatch = pendingBatch
@@ -429,6 +513,9 @@ public struct BridgeState: Codable, Equatable, Sendable {
         self.codexSession = codexSession
         self.automationRoutes = automationRoutes
         self.lastOutboundSend = lastOutboundSend
+        self.recentMediaRefs = recentMediaRefs
+        self.automationCreationStatus = automationCreationStatus
+        self.pendingInteractiveCallback = pendingInteractiveCallback
     }
 }
 

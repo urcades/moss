@@ -22,6 +22,7 @@ struct CodexMsgCtlSwift {
           codexmsgctl-swift configure --safety standard|permissive|preserve
           codexmsgctl-swift configure --preserve-safety
           codexmsgctl-swift doctor [--probe-computer-use]
+          codexmsgctl-swift smoke text|attachment [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift broker start|stop|status|doctor|events|dry-run-scan
           codexmsgctl-swift reset
         """)
@@ -102,6 +103,12 @@ struct CodexMsgCtlSwift {
             print("Active job Codex thread id: \(state.activeJob?.codexSessionId ?? "none")")
             print("Active job Codex turn id: \(state.activeJob?.codexTurnId ?? "none")")
             print("Last outbound send: \(outboundSendStatusText(state.lastOutboundSend))")
+            do {
+                let failures = try await recentFailedOutboundEvidence(config: config, limit: 3)
+                print("Recent failed outbound evidence: \(formatRecentFailedOutboundEvidence(failures))")
+            } catch {
+                print("Recent failed outbound evidence: unavailable (\(error))")
+            }
             if let brokerStatus = readPermissionBrokerStatus(paths: paths) {
                 print("Permission broker accessibility trusted: \(brokerStatus.accessibilityTrusted ? "yes" : "no")")
                 print("Permission broker last update: \(brokerStatus.lastSummary ?? "none")")
@@ -122,6 +129,8 @@ struct CodexMsgCtlSwift {
             let report = await Doctor(paths: paths).run(includeComputerUseProbe: rest.contains("--probe-computer-use"))
             print(Doctor(paths: paths).format(report))
             if !report.ok { Foundation.exit(1) }
+        case "smoke":
+            try await runSmokeCommand(rest, paths: paths, stores: stores)
         case "reset":
             var state = try stores.state.load()
             if state.activeJob != nil {
@@ -135,6 +144,148 @@ struct CodexMsgCtlSwift {
         default:
             throw StoreError.validation("Unknown command: \(command)")
         }
+    }
+
+    private static func runSmokeCommand(_ args: [String], paths: RuntimePaths, stores: RuntimeStores) async throws {
+        let subcommand = args.first ?? "help"
+        if subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
+            print("Usage: codexmsgctl-swift smoke text|attachment [--recipient HANDLE] [--service iMessage|SMS]")
+            return
+        }
+        let config = try stores.config.load()
+        let recipient = smokeOption("--recipient", in: args) ?? config.allowedSender
+        let service = smokeOption("--service", in: args) ?? "iMessage"
+        guard !recipient.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw StoreError.validation("Smoke requires --recipient or a configured allowedSender.")
+        }
+        switch subcommand {
+        case "text":
+            try await runTextSmoke(recipient: recipient, service: service, config: config)
+        case "attachment":
+            try await runAttachmentSmoke(recipient: recipient, service: service, config: config, paths: paths)
+        default:
+            throw StoreError.validation("Unknown smoke command: \(subcommand)")
+        }
+    }
+
+    private static func smokeOption(_ name: String, in args: [String]) -> String? {
+        guard let index = args.firstIndex(of: name) else { return nil }
+        let valueIndex = args.index(after: index)
+        guard valueIndex < args.endIndex else { return nil }
+        return args[valueIndex]
+    }
+
+    private static func runTextSmoke(recipient: String, service: String, config: BridgeConfig) async throws {
+        let marker = "CODEXMSGCTL_SMOKE_TEXT_\(UUID().uuidString)"
+        let beforeRowId = try await latestOutgoingMessageRowId(config: config)
+        print("Smoke text marker: \(marker)")
+        print("Recipient: \(recipient) via \(service)")
+        print("Messages DB baseline row: \(beforeRowId)")
+        let sendError = await smokeSendError {
+            let evidence = try await AppleMessagesReplySink(osascriptCommand: config.osascriptCommand, chunkSize: config.chunkSize, messagesDbPath: config.messagesDbPath)
+                .sendReply(recipient: recipient, service: service, text: marker)
+            print("Send result: \(outboundDeliveryEvidenceText(evidence))")
+        }
+        if let sendError {
+            print("Send result: FAIL \(sendError)")
+        }
+        let matched = try await waitForSmokeEvidence {
+            try await outboundSmokeTextEvidence(marker: marker, afterRowId: beforeRowId, config: config)
+        }
+        printSmokeEvidence(matched)
+        if let sendError {
+            throw StoreError.validation("Smoke text send failed before DB evidence could pass: \(sendError)")
+        }
+        guard let matched, matched.dbError == 0 else {
+            throw StoreError.validation("Smoke text failed: marker was not found in a successful outgoing Messages DB row.")
+        }
+        print("Smoke text passed.")
+    }
+
+    private static func runAttachmentSmoke(recipient: String, service: String, config: BridgeConfig, paths: RuntimePaths) async throws {
+        let marker = "CODEXMSGCTL_SMOKE_ATTACHMENT_\(UUID().uuidString)"
+        try FileManager.default.createDirectory(at: paths.tmpDir, withIntermediateDirectories: true)
+        let attachment = paths.tmpDir.appendingPathComponent("codexmsgctl-smoke-\(marker).txt")
+        try "Messages Codex Bridge smoke attachment marker: \(marker)\n".write(to: attachment, atomically: true, encoding: .utf8)
+        let beforeRowId = try await latestOutgoingMessageRowId(config: config)
+        print("Smoke attachment marker: \(marker)")
+        print("Attachment path: \(attachment.path)")
+        print("Recipient: \(recipient) via \(service)")
+        print("Messages DB baseline row: \(beforeRowId)")
+        let sendError = await smokeSendError {
+            let evidence = try await AppleMessagesReplySink(osascriptCommand: config.osascriptCommand, chunkSize: config.chunkSize, messagesDbPath: config.messagesDbPath)
+                .sendAttachment(recipient: recipient, service: service, filePath: attachment.path)
+            print("Send result: \(outboundDeliveryEvidenceText(evidence))")
+        }
+        if let sendError {
+            print("Send result: FAIL \(sendError)")
+        }
+        let matched = try await waitForSmokeEvidence {
+            try await outboundSmokeAttachmentEvidence(marker: marker, afterRowId: beforeRowId, config: config)
+        }
+        printSmokeEvidence(matched)
+        if let sendError {
+            throw StoreError.validation("Smoke attachment send failed before DB evidence could pass: \(sendError)")
+        }
+        guard let matched, matched.dbError == 0, matched.transferState != 6 else {
+            throw StoreError.validation("Smoke attachment failed: marker was not found in a successful outgoing attachment DB row.")
+        }
+        print("Smoke attachment passed.")
+    }
+
+    private static func smokeSendError(_ send: () async throws -> Void) async -> Error? {
+        do {
+            try await send()
+            return nil
+        } catch {
+            return error
+        }
+    }
+
+    private static func waitForSmokeEvidence(_ probe: () async throws -> OutboundSmokeEvidence?) async throws -> OutboundSmokeEvidence? {
+        var last: OutboundSmokeEvidence?
+        for attempt in 1...10 {
+            last = try await probe()
+            if last != nil { return last }
+            if attempt < 10 {
+                try await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+        return last
+    }
+
+    private static func printSmokeEvidence(_ evidence: OutboundSmokeEvidence?) {
+        guard let evidence else {
+            print("DB evidence: FAIL marker not found")
+            return
+        }
+        print("DB evidence: row \(evidence.rowId), guid \(evidence.guid ?? "unknown"), error \(evidence.dbError), date_delivered \(evidence.dateDelivered)")
+        if let transferState = evidence.transferState {
+            print("Attachment transfer_state: \(transferState)")
+        }
+        if let attachmentName = evidence.attachmentName {
+            print("Attachment name: \(attachmentName)")
+        }
+    }
+
+    private static func outboundDeliveryEvidenceText(_ evidence: OutboundDeliveryEvidence) -> String {
+        var parts = [evidence.transport]
+        if let rowId = evidence.dbRowId {
+            parts.append("row \(rowId)")
+        }
+        if let dbError = evidence.dbError {
+            parts.append("error \(dbError)")
+        }
+        if let transferState = evidence.transferState {
+            parts.append("transfer_state \(transferState)")
+        }
+        if let delivered = evidence.dateDelivered {
+            parts.append("date_delivered \(delivered)")
+        }
+        if let detail = evidence.detail {
+            parts.append(detail)
+        }
+        return parts.joined(separator: ", ")
     }
 
     private static func configure(_ args: [String], paths: RuntimePaths, stores: RuntimeStores) throws {
