@@ -40,6 +40,20 @@ public struct CodexAutomationScanResult: Equatable, Sendable {
     }
 }
 
+public struct CodexAutomationFileSummary: Equatable, Sendable {
+    public var id: String
+    public var name: String
+    public var status: String
+    public var path: String
+
+    public init(id: String, name: String, status: String, path: String) {
+        self.id = id
+        self.name = name
+        self.status = status
+        self.path = path
+    }
+}
+
 public func upsertCodexAutomationRoute(_ route: CodexAutomationRoute, into routes: [CodexAutomationRoute]) -> [CodexAutomationRoute] {
     var updated = routes
     if let index = updated.firstIndex(where: { $0.automationId == route.automationId }) {
@@ -157,6 +171,28 @@ public func automationMetadata(at url: URL) -> (id: String, name: String, create
     return (id, name, createdAt)
 }
 
+public func activeBridgeSmokeAutomations(in automationsDir: URL) -> [CodexAutomationFileSummary] {
+    automationFileSummaries(in: automationsDir)
+        .filter { summary in
+            isBridgeSmokeAutomation(summary) && summary.status != "INACTIVE"
+        }
+        .sorted { lhs, rhs in
+            if lhs.id == rhs.id { return lhs.path < rhs.path }
+            return lhs.id < rhs.id
+        }
+}
+
+public func bridgeSmokeAutomationStatusText(_ summaries: [CodexAutomationFileSummary]) -> String {
+    guard !summaries.isEmpty else {
+        return "No active bridge smoke automations found."
+    }
+    let detail = summaries.prefix(8).map { summary in
+        "\(summary.id) status \(summary.status) path \(summary.path)"
+    }.joined(separator: "; ")
+    let suffix = summaries.count > 8 ? "; ... \(summaries.count - 8) more" : ""
+    return "warning: \(summaries.count) active bridge smoke automation(s): \(detail)\(suffix)"
+}
+
 private func codexSessionFiles(in sessionsDir: URL) -> [URL] {
     guard let enumerator = FileManager.default.enumerator(
         at: sessionsDir,
@@ -172,6 +208,29 @@ private func codexSessionFiles(in sessionsDir: URL) -> [URL] {
         let right = rolloutSessionId(from: $1) ?? $1.path
         return left < right
     }
+}
+
+private func automationFileSummaries(in automationsDir: URL) -> [CodexAutomationFileSummary] {
+    guard let entries = try? FileManager.default.contentsOfDirectory(
+        at: automationsDir,
+        includingPropertiesForKeys: [.isDirectoryKey],
+        options: [.skipsHiddenFiles]
+    ) else { return [] }
+    return entries.compactMap { entry in
+        let file = entry.appendingPathComponent("automation.toml")
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        let values = tomlScalarValues(from: text)
+        guard let id = values["id"], let name = values["name"] else { return nil }
+        let status = (values["status"] ?? "ACTIVE")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+        return CodexAutomationFileSummary(id: id, name: name, status: status.isEmpty ? "ACTIVE" : status, path: file.path)
+    }
+}
+
+private func isBridgeSmokeAutomation(_ summary: CodexAutomationFileSummary) -> Bool {
+    summary.id.hasPrefix("bridge-smoke-test") ||
+        summary.name.localizedCaseInsensitiveContains("Bridge Smoke Test")
 }
 
 private func sessionIdLowerBound(from routes: [CodexAutomationRoute]) -> String? {

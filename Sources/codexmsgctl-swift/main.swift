@@ -107,6 +107,7 @@ struct CodexMsgCtlSwift {
             print("Last outbound send: \(outboundSendStatusText(state.lastOutboundSend))")
             print("Recent media refs: \(recentMediaRefsStatusText(state.recentMediaRefs ?? []))")
             print("Live smoke results: \(liveSmokeResultsStatusText(state.liveSmokeResults ?? []))")
+            print("Bridge smoke automations: \(bridgeSmokeAutomationStatusText(activeBridgeSmokeAutomations(in: paths.codexAutomationsDir)))")
             print("Automation creation status: \(automationCreationStatusText(state.automationCreationStatus))")
             print("Automation routes: \(automationRoutesStatusText(state.automationRoutes ?? []))")
             do {

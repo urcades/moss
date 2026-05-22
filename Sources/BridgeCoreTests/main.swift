@@ -49,6 +49,7 @@ struct BridgeCoreFocusedTests {
         try testAutomationCreationClassifierMatrix()
         try testCodexAutomationCreationWritesAppAutomationToml()
         try testCodexAutomationSmokeCreatesRouteAndStatus()
+        try testActiveBridgeSmokeAutomationDiagnostics()
         try await testCodexAutomationsReportsCreationInProgress()
         try await testCodexAutomationsReportsConfirmedCreationEvidence()
         try testBridgeStateSavePreservesConcurrentAutomationFields()
@@ -1260,6 +1261,36 @@ struct BridgeCoreFocusedTests {
         try expect(state.automationRoutes?.contains(where: { $0.automationId == result.automation.id && $0.recipient == "+1" }) == true, "automation smoke route persisted")
         try expect(state.automationCreationStatus?.automationId == result.automation.id, "automation smoke creation status automation id")
         try expect(state.automationCreationStatus?.phase == "confirmed", "automation smoke creation status confirmed")
+    }
+
+    private static func testActiveBridgeSmokeAutomationDiagnostics() throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        try writeAutomationToml(
+            id: "bridge-smoke-test-active",
+            name: "Bridge Smoke Test Active",
+            status: "ACTIVE",
+            paths: paths
+        )
+        try writeAutomationToml(
+            id: "bridge-smoke-test-inactive",
+            name: "Bridge Smoke Test Inactive",
+            status: "INACTIVE",
+            paths: paths
+        )
+        try writeAutomationToml(
+            id: "ordinary-active",
+            name: "Ordinary Active",
+            status: "ACTIVE",
+            paths: paths
+        )
+
+        let summaries = activeBridgeSmokeAutomations(in: paths.codexAutomationsDir)
+        try expect(summaries.map(\.id) == ["bridge-smoke-test-active"], "only active bridge smoke automations are reported")
+        let check = bridgeSmokeAutomationDiagnosticCheck(paths: paths)
+        try expect(check.ok, "active bridge smoke automation diagnostic is informational")
+        try expect(check.detail.contains("bridge-smoke-test-active"), "active bridge smoke automation diagnostic names active artifact")
+        try expect(!check.detail.contains("bridge-smoke-test-inactive"), "active bridge smoke automation diagnostic ignores inactive artifact")
     }
 
     private static func testBridgeStateSavePreservesConcurrentAutomationFields() throws {
@@ -3963,6 +3994,26 @@ private func makeSmokeMessagesDb(paths: RuntimePaths) throws -> URL {
     );
     """)
     return db
+}
+
+private func writeAutomationToml(id: String, name: String, status: String, paths: RuntimePaths) throws {
+    let dir = paths.codexAutomationsDir.appendingPathComponent(id)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let toml = """
+    version = 1
+    id = "\(id)"
+    kind = "cron"
+    name = "\(name)"
+    prompt = "test"
+    status = "\(status)"
+    rrule = "FREQ=YEARLY;BYMONTH=12;BYMONTHDAY=31;BYHOUR=23;BYMINUTE=59;BYSECOND=0"
+    model = "gpt-test"
+    execution_environment = "local"
+    cwds = ["~"]
+    created_at = 1778640000000
+    updated_at = 1778640000000
+    """
+    try Data(toml.utf8).write(to: dir.appendingPathComponent("automation.toml"))
 }
 
 private func runSQLite(_ db: URL, _ sql: String) throws {

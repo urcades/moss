@@ -76,6 +76,7 @@ public final class Doctor: @unchecked Sendable {
         checks.append(checkMessagesDb(config))
         checks.append(checkLastOutboundSend(state?.lastOutboundSend))
         checks.append(checkLiveSmokeResults(state?.liveSmokeResults))
+        checks.append(bridgeSmokeAutomationDiagnosticCheck(paths: paths))
         checks.append(await checkRecentFailedOutboundEvidence(config))
         checks.append(checkCodexAppServerProcessSnapshot())
         checks.append(await checkMessagesAutomation(config))
@@ -596,6 +597,11 @@ public func runtimeDiagnosticChecks(paths: RuntimePaths = .current()) -> [Doctor
             installed: paths.installedPermissionBrokerExecutablePath
         )
     ]
+}
+
+public func bridgeSmokeAutomationDiagnosticCheck(paths: RuntimePaths = .current()) -> DoctorCheck {
+    let active = activeBridgeSmokeAutomations(in: paths.codexAutomationsDir)
+    return DoctorCheck(name: "Bridge smoke automations", ok: true, detail: bridgeSmokeAutomationStatusText(active))
 }
 
 public func runtimeExecutableIdentityCheck(name: String, built: URL, installed: URL) -> DoctorCheck {
