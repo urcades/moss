@@ -41,6 +41,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 - State recovery: corrupted state JSON is backed up and defaulted.
 - State merge safety: stale saves preserve automation routes/status, recent media refs, pending callbacks, outbound delivery evidence, and same-active-job runtime metadata; path-scoped store locking covers independent store instances writing the same `state.json`.
 - Capability drift: status and doctor expose stale capability caches after 24h instead of showing only an unqualified timestamp.
+- Gate harness: `codexmsgctl-swift gates` enumerates deterministic local gates, explicit live CLI smoke commands, trusted Messages commands, current readiness, and the remaining proof gaps.
 
 ## Live Smoke Tests
 

@@ -22,7 +22,8 @@ struct CodexMsgCtlSwift {
           codexmsgctl-swift configure --safety standard|permissive|preserve
           codexmsgctl-swift configure --preserve-safety
           codexmsgctl-swift doctor [--probe-computer-use]
-          codexmsgctl-swift smoke text|attachment|automation|app-server|inbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
+          codexmsgctl-swift gates
+          codexmsgctl-swift smoke text|attachment|automation|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift broker start|stop|status|doctor|events|dry-run-scan
           codexmsgctl-swift reset
         """)
@@ -135,6 +136,18 @@ struct CodexMsgCtlSwift {
             let report = await Doctor(paths: paths).run(includeComputerUseProbe: rest.contains("--probe-computer-use"))
             print(Doctor(paths: paths).format(report))
             if !report.ok { Foundation.exit(1) }
+        case "gates":
+            let config = try stores.config.load()
+            let state = try stores.state.load()
+            let context = BridgeGateChecklistContext(
+                allowedSender: config.allowedSender,
+                service: smokeOption("--service", in: rest) ?? "iMessage",
+                hasActiveJob: state.activeJob != nil,
+                hasPendingInteractiveCallback: state.pendingInteractiveCallback != nil,
+                hasRecentInboundImage: hasUsableRecentMedia(direction: "inbound", recipient: config.allowedSender, service: smokeOption("--service", in: rest) ?? "iMessage", state: state),
+                hasRecentOutboundImage: hasUsableRecentMedia(direction: "outbound", recipient: config.allowedSender, service: smokeOption("--service", in: rest) ?? "iMessage", state: state)
+            )
+            print(bridgeGateChecklistText(context: context))
         case "smoke":
             try await runSmokeCommand(rest, paths: paths, stores: stores)
         case "reset":
@@ -189,6 +202,18 @@ struct CodexMsgCtlSwift {
         let valueIndex = args.index(after: index)
         guard valueIndex < args.endIndex else { return nil }
         return args[valueIndex]
+    }
+
+    private static func hasUsableRecentMedia(direction: String, recipient: String, service: String, state: BridgeState) -> Bool {
+        state.recentMediaRefs?.contains(where: { ref in
+            ref.direction == direction &&
+                ref.handleId == recipient &&
+                ref.service == service &&
+                ref.kind == "image" &&
+                ref.exists &&
+                appServerSupportedLocalImagePath(ref.path) &&
+                FileManager.default.fileExists(atPath: ref.path)
+        }) == true
     }
 
     private static func runTextSmoke(recipient: String, service: String, config: BridgeConfig) async throws {

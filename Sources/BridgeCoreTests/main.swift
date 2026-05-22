@@ -87,6 +87,7 @@ struct BridgeCoreFocusedTests {
         try testStateRecoveryBackupDiagnosticsReportBackupPath()
         try testLaunchAgentProgramDiagnostics()
         try testRuntimeExecutableIdentityDiagnostics()
+        try testBridgeGateChecklistEnumeratesLocalAndTrustedGates()
         try await testAutomationRequestCreatesCodexAutomationFromInterpretedSpec()
         try await testCodexAutomationsReportsCreationInProgress()
         try await testCompletedAutomationSessionIsForwardedOnce()
@@ -2233,6 +2234,23 @@ struct BridgeCoreFocusedTests {
         )
         try expect(notComparable.ok, "runtime identity is non-fatal when built artifact is absent")
         try expect(notComparable.detail.contains("Not comparable"), "runtime identity explains missing built artifact")
+    }
+
+    private static func testBridgeGateChecklistEnumeratesLocalAndTrustedGates() throws {
+        let text = bridgeGateChecklistText(context: BridgeGateChecklistContext(
+            allowedSender: "+1",
+            service: "iMessage",
+            hasActiveJob: false,
+            hasPendingInteractiveCallback: false,
+            hasRecentInboundImage: false,
+            hasRecentOutboundImage: false
+        ))
+        try expect(text.contains("swift run BridgeCoreTests"), "gate checklist includes focused tests")
+        try expect(text.contains("swift run codexmsgctl-swift doctor --probe-computer-use"), "gate checklist includes doctor probe")
+        try expect(text.contains("swift run codexmsgctl-swift smoke outbound-image-check --recipient +1 --service iMessage"), "gate checklist includes outbound image smoke")
+        try expect(text.contains("/codex smoke callback, then reply with any short text"), "gate checklist includes two-step trusted callback smoke")
+        try expect(text.contains("needs trusted inbound image first"), "gate checklist reports inbound image readiness")
+        try expect(text.contains("will create a marked outbound image"), "gate checklist reports outbound image readiness")
     }
 
     private static func testAutomationRequestCreatesCodexAutomationFromInterpretedSpec() async throws {
