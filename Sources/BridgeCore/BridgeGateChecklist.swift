@@ -53,6 +53,7 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
     - swift run codexmsgctl-swift smoke text\(liveSuffix)
     - swift run codexmsgctl-swift smoke attachment\(liveSuffix)
     - swift run codexmsgctl-swift smoke bridge-attach\(liveSuffix)
+    - swift run codexmsgctl-swift smoke generated-image\(liveSuffix)
     - swift run codexmsgctl-swift smoke app-server
     - swift run codexmsgctl-swift smoke inbound-image-check\(liveSuffix)
     - swift run codexmsgctl-swift smoke outbound-image-check\(liveSuffix)

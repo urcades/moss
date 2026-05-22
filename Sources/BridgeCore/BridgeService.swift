@@ -1895,7 +1895,7 @@ private func bridgeAppServerCallbackSmokePrompt(marker: String) -> String {
     """
 }
 
-private func bridgeGeneratedImageSmokePrompt(marker: String, artifactPath: String) -> String {
+public func bridgeGeneratedImageSmokePrompt(marker: String, artifactPath: String) -> String {
     """
     This is an Apple Messages bridge generated-image smoke test.
     Create a small valid PNG image file at this exact path: \(artifactPath)

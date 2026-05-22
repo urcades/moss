@@ -30,7 +30,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 - Dynamic app-server tools: MCP forwarding now has contract coverage for unsupported namespaces, malformed requests, stalled MCP calls, error responses, images, primitives, and unknown JSON object content.
 - Natural-language capability mentions: `use Computer Use`, `use Chrome`, and `use Browser` become structured plugin mentions.
 - Explicit attachment handoff: a valid `BRIDGE_ATTACH:` line sends the file even when the original prompt did not match attachment-request heuristics.
-- BRIDGE_ATTACH smoke: marked bridge-attach smoke verifies directive parsing, attachment-first delivery, and Messages DB evidence before success text; generated-image smoke asks a real app-server turn to create and attach the artifact.
+- BRIDGE_ATTACH smoke: marked bridge-attach smoke verifies directive parsing, attachment-first delivery, and Messages DB evidence before success text; generated-image smoke asks a real app-server turn to create and attach the artifact from both CLI and Messages command surfaces.
 - Last outbound send evidence: bridge state and `/status` expose the latest text/attachment attempt, DB row, delivery state, and retry eligibility.
 - Outbound attachment verification: fake-runtime tests cover delayed Messages DB rows, failed attachment rows, clipboard retry, and SMS service selection.
 - Media continuity: previous-image follow-ups attach the latest app-server-compatible chat image or ask for the source image instead of inventing a new one.

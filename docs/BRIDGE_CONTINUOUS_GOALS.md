@@ -43,7 +43,7 @@ Evidence:
 - A live generated-image `BRIDGE_ATTACH:` flow records delivery row/error/transfer state.
 - A live edit follow-up uses the previous real image or asks for the source.
 
-Current status: inbound/outbound continuity smoke exists, `BRIDGE_ATTACH:` final replies now send attachments before success text, `codexmsgctl-swift smoke bridge-attach` verifies the directive handoff with Messages DB evidence, and `/codex smoke generated-image` asks a real app-server turn to create and attach a marked PNG. Live trusted-chat generated-image and edit probes remain.
+Current status: inbound/outbound continuity smoke exists, `BRIDGE_ATTACH:` final replies now send attachments before success text, `codexmsgctl-swift smoke bridge-attach` verifies the directive handoff with Messages DB evidence, `codexmsgctl-swift smoke generated-image` asks a real app-server turn to create and attach a marked PNG, and `/codex smoke generated-image` exposes the same generated-media gate from Messages. Live trusted-chat generated-image and edit probes remain.
 
 ## Goal E: State Owner And Process Supervision
 
