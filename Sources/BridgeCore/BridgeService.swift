@@ -866,6 +866,27 @@ public final class BridgeService: @unchecked Sendable {
         }
     }
 
+    private func recordMessagesSmokeFinalResultIfNeeded(request: PromptRequest, responseText: String, jobId: String, forcedStatus: String? = nil) {
+        guard let marker = bridgeSmokeMarker(in: request.promptText),
+              let name = bridgeSmokeName(from: marker) else {
+            return
+        }
+        try? mutateStateAndSave { state in
+            let job = state.activeJob?.jobId == jobId ? state.activeJob : nil
+            let detectedStatus = liveSmokeStatus(from: responseText)
+            let result = LiveSmokeResult(
+                name: "messages-\(name)",
+                marker: marker,
+                status: forcedStatus ?? (detectedStatus == "unknown" ? bridgeSmokeSummaryStatus(responseText) : detectedStatus),
+                detail: cleanPlainText(responseText),
+                threadId: job?.codexSessionId,
+                turnId: job?.codexTurnId,
+                updatedAt: DateCodec.iso(now())
+            )
+            state.liveSmokeResults = updatedLiveSmokeResults(state.liveSmokeResults ?? [], with: result)
+        }
+    }
+
     private func retryLastOutboundSend(config: BridgeConfig) async throws -> String {
         guard let previous = state.lastOutboundSend else {
             return "There is no outbound send to retry."
@@ -1294,6 +1315,7 @@ public final class BridgeService: @unchecked Sendable {
                 do {
                     let response = try await invokeCodexWithRecovery(config: config, request: currentRequest, jobId: jobId, replySink: replySink, recipient: batch.handleId, service: batch.service)
                     try await sendOutgoingReply(response, replySink: replySink, recipient: batch.handleId, service: batch.service, config: config, request: currentRequest)
+                    recordMessagesSmokeFinalResultIfNeeded(request: currentRequest, responseText: response, jobId: jobId)
                     break
                 } catch let error as CodexBackendFailure where shouldAttemptPermissionRecovery(error, config: config, attempts: recoveryAttempts) {
                     recoveryAttempts += 1
@@ -1330,6 +1352,7 @@ public final class BridgeService: @unchecked Sendable {
                 job.status = "failed"
                 job.lastObservedSummary = error.blockedText ?? error.message
             }
+            recordMessagesSmokeFinalResultIfNeeded(request: currentRequest, responseText: error.blockedText ?? error.message, jobId: jobId, forcedStatus: "failed")
             try? await sendReplyRecording(replySink, recipient: batch.handleId, service: batch.service, text: failureText(error))
         } catch {
             if activeJobStatus(jobId: jobId) == "canceling" {
@@ -1344,6 +1367,7 @@ public final class BridgeService: @unchecked Sendable {
                 job.status = "failed"
                 job.lastObservedSummary = detail
             }
+            recordMessagesSmokeFinalResultIfNeeded(request: currentRequest, responseText: detail, jobId: jobId, forcedStatus: "failed")
             try? await sendReplyRecording(replySink, recipient: batch.handleId, service: batch.service, text: "I hit an error while working on that:\n\(detail)")
         }
         clearActiveJob(jobId: jobId)
@@ -2000,6 +2024,20 @@ private func bridgeSmokeSummaryValue(prefix: String, in summary: String) -> Stri
             return value.isEmpty || value == "none" ? nil : value
         }
         .first
+}
+
+private func bridgeSmokeMarker(in text: String) -> String? {
+    text
+        .components(separatedBy: CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).subtracting(CharacterSet(charactersIn: "_-")))
+        .first { $0.hasPrefix("CODEX_BRIDGE_SMOKE_") }
+}
+
+private func bridgeSmokeName(from marker: String) -> String? {
+    let prefix = "CODEX_BRIDGE_SMOKE_"
+    guard marker.hasPrefix(prefix) else { return nil }
+    let suffix = String(marker.dropFirst(prefix.count))
+    guard let separator = suffix.firstIndex(of: "_") else { return nil }
+    return suffix[..<separator].lowercased()
 }
 
 private let supportedBridgeCodexSmokeSubcommands: Set<String> = [

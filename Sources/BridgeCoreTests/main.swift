@@ -558,6 +558,8 @@ struct BridgeCoreFocusedTests {
         let replies = try await waitForReplies(sink, count: 2)
         let events = await sink.eventsSnapshot()
         let promptText = await backend.promptText()
+        let state = try stores.state.load()
+        let smokeResult = state.liveSmokeResults?.first { $0.name == "messages-generated-image" }
 
         try expect(promptText?.contains("BRIDGE_ATTACH:") == true, "generated-image smoke prompt asks for bridge attachment")
         try expect(attachments.count == 1, "generated-image smoke sends generated attachment")
@@ -569,6 +571,10 @@ struct BridgeCoreFocusedTests {
             throw TestFailure(description: "Expected generated image attachment and final success text events")
         }
         try expect(attachmentIndex < finalTextIndex, "generated-image smoke sends attachment before success text")
+        try expect(smokeResult?.status == "passed", "generated-image smoke persists final pass status")
+        try expect(smokeResult?.threadId == "thread-generated-image", "generated-image smoke persists final thread id")
+        try expect(smokeResult?.turnId == "turn-generated-image", "generated-image smoke persists final turn id")
+        try expect(smokeResult?.detail.contains("SUCCESS generated image ready") == true, "generated-image smoke persists final response")
     }
 
     private static func testCodexSmokeEditImageCheckUsesPreviousImageAndAttachesResult() async throws {
@@ -932,11 +938,16 @@ struct BridgeCoreFocusedTests {
         try await service.tick()
         replies = try await waitForReplies(sink, count: 4)
         try expect(replies.contains { $0.text == "Got it. I captured that reply for the pending Codex prompt." }, "app-server callback answer is acknowledged")
-        try expect(replies.contains { $0.text == "Callback completed with violet." }, "app-server callback smoke completes original turn")
+        try expect(replies.contains { $0.text.contains("SUCCESS callback reply: violet") }, "app-server callback smoke completes original turn")
         state = try await waitForState(stores, timeout: 3) { state in
             state.pendingInteractiveCallback == nil && state.activeJob == nil
         }
         try expect(state.codexSession.sessionId == "thread-callback", "app-server callback smoke preserves Codex thread id")
+        let smokeResult = state.liveSmokeResults?.first { $0.name == "messages-app-server-callback" }
+        try expect(smokeResult?.status == "passed", "app-server callback smoke persists final pass status")
+        try expect(smokeResult?.threadId == "thread-callback", "app-server callback smoke persists thread id")
+        try expect(smokeResult?.turnId == "turn-callback", "app-server callback smoke persists turn id")
+        try expect(smokeResult?.detail.contains("SUCCESS callback reply: violet") == true, "app-server callback smoke persists final callback reply")
     }
 
     private static func testInboundImageSmokeBuildsLocalImageRequest() throws {
@@ -3666,8 +3677,12 @@ private final class ResponderCodexBackend: CodexBackend, @unchecked Sendable {
         let choice = answers?["choice"] as? [String: Any]
         let values = choice?["answers"] as? [String]
         let answer = values?.first ?? ""
+        let marker = request.promptText.components(separatedBy: .whitespacesAndNewlines)
+            .first { $0.hasPrefix("CODEX_BRIDGE_SMOKE_APP-SERVER-CALLBACK_") }?
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".,:;"))
+        let text = marker.map { "\($0) SUCCESS callback reply: \(answer)" } ?? "Callback completed with \(answer)."
         return CodexResponse(
-            text: "Callback completed with \(answer).",
+            text: text,
             sessionId: "thread-callback",
             stdout: "",
             stderr: "",
