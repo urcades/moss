@@ -254,6 +254,10 @@ private func mergeBridgeStateForConcurrentSave(incoming: BridgeState, existing: 
         incoming: incoming.automationCreationStatus,
         existing: existing.automationCreationStatus
     )
+    merged.pendingInteractiveCallback = mergePendingInteractiveCallback(
+        incoming: incoming.pendingInteractiveCallback,
+        existing: existing.pendingInteractiveCallback
+    )
     return merged
 }
 
@@ -314,6 +318,23 @@ private func latestAutomationCreationStatus(incoming: AutomationCreationStatus?,
     case (nil, nil):
         return nil
     }
+}
+
+private func mergePendingInteractiveCallback(incoming: PendingInteractiveCallback?, existing: PendingInteractiveCallback?) -> PendingInteractiveCallback? {
+    switch (incoming, existing) {
+    case let (incoming?, existing?):
+        return incoming.createdAt >= existing.createdAt ? incoming : existing
+    case let (incoming?, nil):
+        return incoming
+    case let (nil, existing?):
+        return pendingInteractiveCallbackIsTerminal(existing) ? nil : existing
+    case (nil, nil):
+        return nil
+    }
+}
+
+private func pendingInteractiveCallbackIsTerminal(_ callback: PendingInteractiveCallback) -> Bool {
+    ["completed", "answered", "canceled", "cancelled", "timedOut", "timeout", "failed"].contains(callback.status)
 }
 
 private func latestNonNilTimestamp(_ lhs: String?, _ rhs: String?) -> String? {

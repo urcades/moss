@@ -63,6 +63,8 @@ Success means app-server `item/tool/requestUserInput` and `mcpServer/elicitation
   - Cancel and timeout answer the app-server request and clear state.
 - Architecture gate:
   - The backend needs a live JSON-RPC responder channel. Persisted state alone is not enough because the current `CodexBackend.invoke` call has no way to resume a held server request after the bridge waits for a future Messages row.
+- Current status:
+  - State saves now preserve non-terminal `pendingInteractiveCallback` records across stale helper/CLI saves while still allowing terminal callbacks to clear.
 
 ## Goal 5: Runtime State And Process Supervision
 
@@ -74,6 +76,7 @@ Success means bridge state writes cannot clobber each other and cancellation lea
   - Simultaneous tick/callback/cancel/send-record updates preserve unrelated fields.
 - Current status:
   - Deterministic coverage now verifies stale state saves preserve concurrently added automation route/status fields and recent media refs while still accepting incoming cursor updates.
+  - The same stale-save coverage now includes non-terminal pending interactive callbacks.
 - Live gates:
   - Doctor reports app-server process snapshots without hanging.
   - Cancel/timeout leaves no bridge-owned orphan `codex app-server` or Computer Use child process.

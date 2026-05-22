@@ -339,6 +339,18 @@ struct BridgeCoreFocusedTests {
                 exists: true
             )
         ]
+        existing.pendingInteractiveCallback = PendingInteractiveCallback(
+            callbackId: "callback-1",
+            jobId: "job-1",
+            jsonRpcId: "70",
+            method: "item/tool/requestUserInput",
+            recipient: "+1",
+            service: "iMessage",
+            prompt: "Choose one",
+            createdAt: "2026-05-22T07:02:00.000Z",
+            expiresAt: "2026-05-22T07:07:00.000Z",
+            status: "pending"
+        )
         try stores.state.save(existing)
 
         var staleTickState = defaultBridgeState()
@@ -352,6 +364,19 @@ struct BridgeCoreFocusedTests {
         try expect(reloaded.automationCreationStatus?.automationId == "bridge-smoke-test", "state save preserves concurrent automation creation status")
         try expect(reloaded.recentMediaRefs?.contains(where: { $0.rowId == 43 && $0.path == "/tmp/source.png" }) == true, "state save preserves concurrent recent media refs")
         try expect(recentMediaRefsStatusText(reloaded.recentMediaRefs ?? []).contains("source.png"), "recent media status exposes latest image ref")
+        try expect(reloaded.pendingInteractiveCallback?.callbackId == "callback-1", "state save preserves non-terminal pending interactive callback")
+
+        if var completed = reloaded.pendingInteractiveCallback {
+            var terminalState = reloaded
+            completed.status = "completed"
+            terminalState.pendingInteractiveCallback = completed
+            try stores.state.save(terminalState)
+        }
+        var clearState = try stores.state.load()
+        clearState.pendingInteractiveCallback = nil
+        try stores.state.save(clearState)
+        let cleared = try stores.state.load()
+        try expect(cleared.pendingInteractiveCallback == nil, "terminal pending interactive callback can be cleared")
     }
 
     private static func testCapabilityFormattingAndCacheSnapshot() throws {
