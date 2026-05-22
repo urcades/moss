@@ -28,8 +28,10 @@ struct BridgeCoreFocusedTests {
         try await testCodexSmokeCapabilityCommandRunsAppServerProbe()
         try await testCodexSmokeCallbackCapturesNextReplyAndClearsState()
         try testInboundImageSmokeBuildsLocalImageRequest()
+        try testOutboundImageSmokeBuildsLocalImageRequest()
         try testInboundImageSmokeRequiresTrustedInboundImage()
         try await testInboundImageSmokeRecoversLatestTrustedImageFromMessagesDb()
+        try await testCodexSmokeOutboundImageCheckSendsProbeAndBuildsFollowUp()
         try testDiagnosticMentionOfDailyBriefingDoesNotCreateAutomation()
         try testAutomationCreationClassifierMatrix()
         try testCodexAutomationCreationWritesAppAutomationToml()
@@ -109,6 +111,7 @@ struct BridgeCoreFocusedTests {
         try expect(bridgeLocalCommandName("/codex smoke callback") == "/codex", "codex callback smoke command")
         try expect(bridgeLocalCommandName("/codex smoke app-server") == "/codex", "codex app-server smoke command")
         try expect(bridgeLocalCommandName("/codex smoke inbound-image-check") == "/codex", "codex inbound image smoke command")
+        try expect(bridgeLocalCommandName("/codex smoke outbound-image-check") == "/codex", "codex outbound image smoke command")
         try expect(bridgeLocalCommandName("/codex smoke unknown") == nil, "unsupported codex smoke command is prompt text")
         try expect(bridgeLocalCommandName("/codex status please") == nil, "non-exact codex command is prompt text")
         try expect(bridgeLocalCommandName("what does /codex status show?") == nil, "natural language codex mention is prompt text")
@@ -457,6 +460,44 @@ struct BridgeCoreFocusedTests {
         try expect(request?.promptText.contains("Do not call tools") == true, "codex smoke app-server asks for a no-tool final answer")
     }
 
+    private static func testCodexSmokeOutboundImageCheckSendsProbeAndBuildsFollowUp() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        try stores.config.save(config)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 1, guid: "guid-smoke-outbound-image", text: "/codex smoke outbound-image-check", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let backend = CapturingCodexBackend(response: "outbound image attached")
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in backend },
+            now: { Date(timeIntervalSince1970: 1_777_777_777) }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        let attachments = await sink.attachmentsSnapshot()
+        let replies = await sink.repliesSnapshot()
+        let request = await backend.requestSnapshot()
+        let state = try stores.state.load()
+
+        try expect(attachments.count == 1, "codex smoke outbound-image-check sends one image probe")
+        try expect(attachments.first?.filePath.hasSuffix(".png") == true, "codex smoke outbound-image-check creates png probe")
+        try expect(replies.count == 1, "codex smoke outbound-image-check sends one summary reply")
+        try expect(replies.first?.text.contains("Smoke outbound-image-check delivery: CODEX_BRIDGE_SMOKE_OUTBOUND-IMAGE-CHECK_") == true, "codex smoke outbound-image-check reports delivery marker")
+        try expect(replies.first?.text.contains("Smoke outbound-image-check passed: CODEX_BRIDGE_SMOKE_OUTBOUND-IMAGE-CHECK_") == true, "codex smoke outbound-image-check reports app-server pass")
+        try expect(request?.attachments.count == 1, "codex smoke outbound-image-check passes one image to app-server")
+        try expect(request?.attachments.first?.absolutePath == attachments.first?.filePath, "codex smoke outbound-image-check passes the sent image to app-server")
+        try expect(state.recentMediaRefs?.contains(where: { $0.direction == "outbound" && $0.path == attachments.first?.filePath }) == true, "codex smoke outbound-image-check records outbound media ref")
+    }
+
     private static func testCodexSmokeCallbackCapturesNextReplyAndClearsState() async throws {
         let paths = testPaths()
         try ensureRuntimeDirectories(paths)
@@ -515,6 +556,26 @@ struct BridgeCoreFocusedTests {
         try expect(smoke.request.attachments.count == 1, "inbound image smoke attaches exactly one image")
         try expect(smoke.request.attachments.first?.absolutePath == imagePath, "inbound image smoke passes local image path")
         try expect(smoke.request.promptText.contains("Bridge media context:"), "inbound image smoke uses previous-image bridge context")
+    }
+
+    private static func testOutboundImageSmokeBuildsLocalImageRequest() throws {
+        let imagePath = NSTemporaryDirectory() + "/bridge-outbound-smoke-source.png"
+        FileManager.default.createFile(atPath: imagePath, contents: Data("image".utf8), attributes: nil)
+        let olderInbound = RecentMediaRef(direction: "inbound", rowId: 30, handleId: "+1", service: "iMessage", path: imagePath, transferName: "inbound.png", kind: "image", createdAt: "2026-05-20T09:00:00.000Z", exists: true)
+        let outbound = RecentMediaRef(direction: "outbound", rowId: 31, handleId: "+1", service: "iMessage", path: imagePath, transferName: "outbound.png", kind: "image", createdAt: "2026-05-20T10:00:00.000Z", exists: true)
+
+        let smoke = try buildOutboundImageSmokeRequest(
+            recipient: "+1",
+            service: "iMessage",
+            recentMediaRefs: [olderInbound, outbound],
+            now: Date(timeIntervalSince1970: 1_778_640_000),
+            marker: "CODEXMSGCTL_SMOKE_OUTBOUND_IMAGE_TEST"
+        )
+
+        try expect(smoke.mediaRef == outbound, "outbound image smoke chooses recent trusted outbound image")
+        try expect(smoke.request.attachments.count == 1, "outbound image smoke attaches exactly one image")
+        try expect(smoke.request.attachments.first?.absolutePath == imagePath, "outbound image smoke passes local image path")
+        try expect(smoke.request.promptText.contains("Bridge media context:"), "outbound image smoke uses previous-image bridge context")
     }
 
     private static func testInboundImageSmokeRequiresTrustedInboundImage() throws {

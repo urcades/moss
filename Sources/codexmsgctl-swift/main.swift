@@ -155,7 +155,7 @@ struct CodexMsgCtlSwift {
     private static func runSmokeCommand(_ args: [String], paths: RuntimePaths, stores: RuntimeStores) async throws {
         let subcommand = args.first ?? "help"
         if subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
-            print("Usage: codexmsgctl-swift smoke text|attachment|automation|app-server|inbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]")
+            print("Usage: codexmsgctl-swift smoke text|attachment|automation|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]")
             return
         }
         let config = try stores.config.load()
@@ -175,6 +175,8 @@ struct CodexMsgCtlSwift {
             try await runAppServerFinalAnswerSmoke(config: config, paths: paths)
         case "inbound-image-check":
             try await runInboundImageCheckSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
+        case "outbound-image-check":
+            try await runOutboundImageCheckSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
         case "chrome", "browser", "computer-use":
             try await runCapabilitySmoke(subcommand, config: config, paths: paths)
         default:
@@ -293,6 +295,54 @@ struct CodexMsgCtlSwift {
         print("Inbound image transfer name: \(smoke.mediaRef.transferName ?? "unknown")")
         try await runAppServerMarkerSmoke(
             label: "inbound-image-check",
+            marker: smoke.marker,
+            request: smoke.request,
+            config: config,
+            paths: paths,
+            requireSuccessToken: true
+        )
+    }
+
+    private static func runOutboundImageCheckSmoke(recipient: String, service: String, config: BridgeConfig, paths: RuntimePaths, stores: RuntimeStores) async throws {
+        let marker = "CODEXMSGCTL_SMOKE_OUTBOUND_IMAGE_\(UUID().uuidString)"
+        try FileManager.default.createDirectory(at: paths.tmpDir, withIntermediateDirectories: true)
+        let attachment = paths.tmpDir.appendingPathComponent("codexmsgctl-smoke-\(marker).png")
+        try smokePNGData().write(to: attachment)
+        let beforeRowId = try await latestOutgoingMessageRowId(config: config)
+        print("Smoke outbound-image-check marker: \(marker)")
+        print("Attachment path: \(attachment.path)")
+        print("Recipient: \(recipient) via \(service)")
+        print("Messages DB baseline row: \(beforeRowId)")
+        let evidence = try await AppleMessagesReplySink(osascriptCommand: config.osascriptCommand, chunkSize: config.chunkSize, messagesDbPath: config.messagesDbPath)
+            .sendAttachment(recipient: recipient, service: service, filePath: attachment.path)
+        print("Send result: \(outboundDeliveryEvidenceText(evidence))")
+        let matched = try await waitForSmokeEvidence {
+            try await outboundSmokeAttachmentEvidence(marker: marker, afterRowId: beforeRowId, config: config)
+        }
+        printSmokeEvidence(matched)
+        guard let matched, matched.dbError == 0, matched.transferState != 6 else {
+            throw StoreError.validation("Smoke outbound-image-check failed: marker was not found in a successful outgoing attachment DB row.")
+        }
+        var state = try stores.state.load()
+        var refs = state.recentMediaRefs ?? []
+        refs.append(RecentMediaRef(
+            direction: "outbound",
+            rowId: matched.rowId,
+            handleId: recipient,
+            service: service,
+            path: attachment.path,
+            transferName: attachment.lastPathComponent,
+            kind: "image",
+            createdAt: DateCodec.iso(Date()),
+            exists: FileManager.default.fileExists(atPath: attachment.path)
+        ))
+        state.recentMediaRefs = Array(refs.suffix(30))
+        try stores.state.save(state)
+        let smoke = try buildOutboundImageSmokeRequest(recipient: recipient, service: service, recentMediaRefs: state.recentMediaRefs ?? [], marker: marker)
+        print("Outbound image row: \(matched.rowId)")
+        print("Outbound image path: \(smoke.mediaRef.path)")
+        try await runAppServerMarkerSmoke(
+            label: "outbound-image-check",
             marker: smoke.marker,
             request: smoke.request,
             config: config,

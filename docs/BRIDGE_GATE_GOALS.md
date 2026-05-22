@@ -43,6 +43,7 @@ Success means follow-up prompts like "modify that image" use a real previous cha
 - Live gates:
   - Send an inbound image, then ask for a marked modification; app-server receives a `localImage`.
   - Ask for a generated image and verify `BRIDGE_ATTACH` delivery evidence.
+  - Send a marked outbound image through the bridge, then ask app-server about "that image" and verify it receives the exact outbound image as a `localImage`.
 - Current status:
   - `codexmsgctl-swift status` and `/codex status` now expose the recent media registry.
   - State saves now merge `recentMediaRefs` so unrelated helper/CLI saves cannot erase the image registry used by "that image" follow-ups.
@@ -54,6 +55,8 @@ Success means follow-up prompts like "modify that image" use a real previous cha
   - Live `swift run codexmsgctl-swift smoke inbound-image-check` passed with marker `CODEXMSGCTL_SMOKE_INBOUND_IMAGE_3A6D9799-EE48-453C-8220-AA8C2F255A3B`: it recovered trusted inbound row 721 (`IMG_5685.HEIC`), converted it to a temp JPEG, and app-server replied `SUCCESS`.
   - A second live inbound-image smoke passed from the persisted converted media ref with marker `CODEXMSGCTL_SMOKE_INBOUND_IMAGE_5BF48A3C-C0CA-4A82-BAC3-52019F6E86F6`, proving the registry path works after recovery.
   - Current inbound-image smoke passed from persisted converted row 721 with marker `CODEXMSGCTL_SMOKE_INBOUND_IMAGE_5B6E7633-55B2-4AC4-84FC-CDF4BA033A67`, thread `019e4f1c-56de-7741-9a0f-34894af6d9c3`, and turn `019e4f1c-58e7-7122-a970-152c225300ba`.
+  - `/codex smoke outbound-image-check` and `codexmsgctl-swift smoke outbound-image-check` now send a marked image, persist it as a recent outbound media ref, build a "that image" app-server request, and require marker plus `SUCCESS`.
+  - Live `swift run codexmsgctl-swift smoke outbound-image-check` passed with marker `CODEXMSGCTL_SMOKE_OUTBOUND_IMAGE_D0F56FCE-D2CE-4953-9B01-C1022ADE34F0`: Messages DB row 753 (`message.error=0`, `transfer_state=5`, renamed to `IMG_7646.jpeg`), app-server thread `019e4f2f-3cf5-7b20-813b-d6c4598f6b0e`, and turn `019e4f2f-3f08-7961-a78c-490f507e8073`.
 
 ## Goal 3: Automation Truth
 
@@ -173,6 +176,7 @@ Before this workstream is complete, the installed helper must satisfy:
 - `swift run codexmsgctl-swift smoke attachment`
 - `swift run codexmsgctl-swift smoke app-server`
 - `swift run codexmsgctl-swift smoke inbound-image-check`
+- `swift run codexmsgctl-swift smoke outbound-image-check`
 - `/codex status` from the trusted Messages chat
 - A live inbound-image follow-up edit probe
 - A live automation creation/list/delivery probe

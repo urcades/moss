@@ -15,7 +15,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 | Outbound text | AppleScript accepts send but delivery is unknown | Bridge verifies outgoing rows in `message.text` and `message.attributedBody`, records DB row/error/delivery evidence, exposes retry eligibility, and has live CLI smoke evidence | Add `/codex smoke text` evidence from the trusted Messages chat |
 | Outbound attachments | Valid `BRIDGE_ATTACH` stripped or ignored by prompt heuristics | Valid bridge directives are now explicit transport handoffs with live marked image-attachment smoke evidence | Add `/codex smoke attachment` evidence from the trusted Messages chat |
 | Outbound attachments | Messages delivery row delayed or failed | Attachment sink returns DB evidence when available, preserves failed DB rows such as `error=25`, records retry eligibility, and has fake-runtime coverage for delayed rows plus SMS service selection | Add live evidence if SMS-specific attachment behavior diverges from iMessage |
-| Media continuity | Follow-up says "that image" but Codex receives no source image | Recent inbound/outbound image refs are persisted and attached to image follow-up prompts when the file still exists and is app-server-compatible; status marks unsupported image refs | Add live inbound-image and generated-image editing probes |
+| Media continuity | Follow-up says "that image" but Codex receives no source image | Recent inbound/outbound image refs are persisted and attached to image follow-up prompts when the file still exists and is app-server-compatible; status marks unsupported image refs; outbound-image smoke verifies a sent image can be reused as app-server image input | Add live inbound-image and generated-image editing probes |
 | Active jobs | Helper restarts or stale saves lose active-job provenance | Dead job recovery notifies and clears; cancel now terminates known descendant processes as well as the root pid; same-job saves merge process/thread/turn/output metadata | Move all state mutation behind one owner/actor |
 | State files | `state.json` is truncated, corrupt, or stale saves clobber bridge evidence | JSON store backs up corrupt files, falls back to defaults, serializes same-path writes across store instances, preserves concurrent automation/media/callback/outbound-send fields, and doctor reports corrupt-state backup paths when present | Add live evidence the next time a real corrupt-state recovery happens |
 | Automations | Poll loop rereads all historical session JSONL | Bounded scan API skips delivered lower-bound sessions and has read-budget coverage | Persist scan watermarks if session-id ordering proves insufficient |
@@ -33,6 +33,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 - Last outbound send evidence: bridge state and `/status` expose the latest text/attachment attempt, DB row, delivery state, and retry eligibility.
 - Outbound attachment verification: fake-runtime tests cover delayed Messages DB rows, failed attachment rows, clipboard retry, and SMS service selection.
 - Media continuity: previous-image follow-ups attach the latest app-server-compatible chat image or ask for the source image instead of inventing a new one.
+- Outbound media continuity: marked outbound-image smoke sends an image, records the recent outbound media ref, then verifies a "that image" app-server request carries the exact file as image input.
 - Delayed inbound attachments: recent missing attachment files defer cursor advancement and are retried; stale missing files do not wedge the bridge forever.
 - SQLite ingress fixtures: attachment-only rows, multi-attachment rows, image/PDF/unsupported classification, existence flags, and `~/` expansion are covered.
 - Automation scan budget: repeated automation forwarding can avoid rereading delivered historical rollout files.
@@ -49,7 +50,7 @@ Use explicit markers in message text and filenames so live probes are searchable
 - Attachment probe: generate `bridge-smoke-attachment-<timestamp>.png`, send via `BRIDGE_ATTACH:`, and verify attachment evidence.
 - Inbound image probe: send an image into the trusted chat and verify app-server input includes a `localImage` item.
 - Capability probes: ask for marked Browser, Chrome, and Computer Use actions; require exact blocker text instead of fallback prose.
-- Messages command probes: send `/codex smoke app-server`, `/codex smoke chrome`, `/codex smoke browser`, `/codex smoke computer-use`, `/codex smoke automation`, `/codex smoke callback`, and `/codex smoke inbound-image-check` from the trusted chat.
+- Messages command probes: send `/codex smoke app-server`, `/codex smoke chrome`, `/codex smoke browser`, `/codex smoke computer-use`, `/codex smoke automation`, `/codex smoke callback`, `/codex smoke inbound-image-check`, and `/codex smoke outbound-image-check` from the trusted chat.
 
 ## Codex Changelog Adoption
 
