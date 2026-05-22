@@ -16,7 +16,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 | Outbound attachments | Valid `BRIDGE_ATTACH` stripped or ignored by prompt heuristics | Valid bridge directives are now explicit transport handoffs with live marked image-attachment smoke evidence | Add `/codex smoke attachment` evidence from the trusted Messages chat |
 | Outbound attachments | Messages delivery row delayed or failed | Attachment sink returns DB evidence when available, preserves failed DB rows such as `error=25`, records retry eligibility, and has fake-runtime coverage for delayed rows plus SMS service selection | Add live evidence if SMS-specific attachment behavior diverges from iMessage |
 | Media continuity | Follow-up says "that image" but Codex receives no source image | Recent inbound/outbound image refs are persisted and attached to image follow-up prompts when the file still exists and is app-server-compatible; status marks unsupported image refs | Add live inbound-image and generated-image editing probes |
-| Active jobs | Helper restarts with stale active job | Dead job recovery notifies and clears; cancel now terminates known descendant processes as well as the root pid | Move all state mutation behind one owner/actor |
+| Active jobs | Helper restarts or stale saves lose active-job provenance | Dead job recovery notifies and clears; cancel now terminates known descendant processes as well as the root pid; same-job saves merge process/thread/turn/output metadata | Move all state mutation behind one owner/actor |
 | State files | `state.json` is truncated, corrupt, or stale saves clobber bridge evidence | JSON store backs up corrupt files, falls back to defaults, preserves concurrent automation/media/callback/outbound-send fields, and doctor reports corrupt-state backup paths when present | Add live evidence the next time a real corrupt-state recovery happens |
 | Automations | Poll loop rereads all historical session JSONL | Bounded scan API skips delivered lower-bound sessions and has read-budget coverage | Persist scan watermarks if session-id ordering proves insufficient |
 | Automations | Diagnostic prompt creates automation | Classifier regression tests cover management/debug/list/status false positives, schedule/calendar false positives, and reminder/monitor/follow-up positives | Keep expanding phrase fixtures from live trusted-chat misses |
@@ -38,7 +38,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 - Automation scan budget: repeated automation forwarding can avoid rereading delivered historical rollout files.
 - Automation creation status: `/codex automations` can show in-flight creation state instead of only stale routes.
 - State recovery: corrupted state JSON is backed up and defaulted.
-- State merge safety: stale saves preserve automation routes/status, recent media refs, pending callbacks, and outbound delivery evidence.
+- State merge safety: stale saves preserve automation routes/status, recent media refs, pending callbacks, outbound delivery evidence, and same-active-job runtime metadata.
 - Capability drift: status and doctor expose stale capability caches after 24h instead of showing only an unqualified timestamp.
 
 ## Live Smoke Tests

@@ -35,6 +35,7 @@ struct BridgeCoreFocusedTests {
         try testCodexAutomationCreationWritesAppAutomationToml()
         try testCodexAutomationSmokeCreatesRouteAndStatus()
         try testBridgeStateSavePreservesConcurrentAutomationFields()
+        try testBridgeStateSaveMergesSameActiveJobDetails()
         try testCapabilityFormattingAndCacheSnapshot()
         try await testCapabilityBestEffortPrefersCache()
         try await testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb()
@@ -798,6 +799,81 @@ struct BridgeCoreFocusedTests {
         try stores.state.save(staleSendUpdate)
         let preservedOutbound = try stores.state.load()
         try expect(preservedOutbound.lastOutboundSend?.status == "dbObserved", "stale outbound send update cannot downgrade completed evidence")
+    }
+
+    private static func testBridgeStateSaveMergesSameActiveJobDetails() throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var existing = defaultBridgeState()
+        existing.activeJob = ActiveJob(
+            jobId: "job-1",
+            guid: "guid-1",
+            rowId: 1,
+            type: "promptBatch",
+            receivedAt: "2026-05-22T08:00:00.000Z",
+            promptPreview: "do work",
+            recipient: "+1",
+            service: "iMessage",
+            startedAt: "2026-05-22T08:00:00.000Z",
+            lastProgressAt: "2026-05-22T08:00:02.000Z",
+            lastUserUpdateAt: nil,
+            lastEventAt: "2026-05-22T08:00:02.000Z",
+            codexPid: 123,
+            codexSessionId: "thread-1",
+            codexTurnId: "turn-1",
+            outputPath: "/tmp/output.txt",
+            sessionLogPath: "/tmp/session.jsonl",
+            status: "running",
+            lastObservedSummary: "Started tool call.",
+            permissionRecoveryAttempts: 1,
+            waitingForPermissionSince: "2026-05-22T08:00:03.000Z",
+            lastPermissionEventId: "event-1"
+        )
+        try stores.state.save(existing)
+
+        var incoming = defaultBridgeState()
+        incoming.activeJob = ActiveJob(
+            jobId: "job-1",
+            guid: "guid-1",
+            rowId: 1,
+            type: "promptBatch",
+            receivedAt: "2026-05-22T08:00:00.000Z",
+            promptPreview: "do work",
+            recipient: "+1",
+            service: "iMessage",
+            startedAt: "2026-05-22T08:00:00.000Z",
+            lastProgressAt: "2026-05-22T08:00:04.000Z",
+            lastUserUpdateAt: nil,
+            lastEventAt: "2026-05-22T08:00:04.000Z",
+            codexPid: nil,
+            codexSessionId: nil,
+            codexTurnId: nil,
+            outputPath: nil,
+            sessionLogPath: nil,
+            status: "running",
+            lastObservedSummary: "Waiting for final answer.",
+            permissionRecoveryAttempts: 0,
+            waitingForPermissionSince: nil,
+            lastPermissionEventId: nil
+        )
+        try stores.state.save(incoming)
+
+        let merged = try stores.state.load().activeJob
+        try expect(merged?.codexPid == 123, "same active job merge preserves process id")
+        try expect(merged?.codexSessionId == "thread-1", "same active job merge preserves thread id")
+        try expect(merged?.codexTurnId == "turn-1", "same active job merge preserves turn id")
+        try expect(merged?.outputPath == "/tmp/output.txt", "same active job merge preserves output path")
+        try expect(merged?.lastProgressAt == "2026-05-22T08:00:04.000Z", "same active job merge keeps latest progress timestamp")
+        try expect(merged?.lastObservedSummary == "Waiting for final answer.", "same active job merge keeps latest summary")
+        try expect(merged?.permissionRecoveryAttempts == 1, "same active job merge keeps highest recovery attempts")
+        try expect(merged?.waitingForPermissionSince == "2026-05-22T08:00:03.000Z", "same active job merge preserves permission wait timestamp")
+
+        var clear = try stores.state.load()
+        clear.activeJob = nil
+        try stores.state.save(clear)
+        let cleared = try stores.state.load()
+        try expect(cleared.activeJob == nil, "active job merge still allows terminal clear")
     }
 
     private static func testCapabilityFormattingAndCacheSnapshot() throws {

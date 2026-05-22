@@ -107,6 +107,7 @@ Success means bridge state writes cannot clobber each other and cancellation lea
 - Current status:
   - Deterministic coverage now verifies stale state saves preserve concurrently added automation route/status fields and recent media refs while still accepting incoming cursor updates.
   - The same stale-save coverage now includes non-terminal pending interactive callbacks and last outbound send evidence, including protection against downgrading completed send evidence back to an in-flight state.
+  - Same-active-job state saves now merge process/thread/turn/output metadata, latest progress timestamps, permission recovery fields, and still allow terminal active-job clears.
   - App-server connection close now terminates the process tree before closing stdin, preventing timeout cleanup from orphaning app-server child processes.
   - Deterministic coverage now runs a fake app-server that spawns a child process and verifies timeout cleanup removes the child.
   - Doctor now parses app-server process snapshots by pid, parent pid, process group, elapsed time, and transport, and flags orphaned `stdio://` app-server processes separately from long-lived `unix://` or desktop app-server processes.

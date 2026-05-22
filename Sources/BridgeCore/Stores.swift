@@ -262,6 +262,10 @@ private func mergeBridgeStateForConcurrentSave(incoming: BridgeState, existing: 
         incoming: incoming.lastOutboundSend,
         existing: existing.lastOutboundSend
     )
+    merged.activeJob = mergeActiveJob(
+        incoming: incoming.activeJob,
+        existing: existing.activeJob
+    )
     return merged
 }
 
@@ -351,6 +355,36 @@ private func mergeLastOutboundSend(incoming: OutboundSendRecord?, existing: Outb
     case (nil, nil):
         return nil
     }
+}
+
+private func mergeActiveJob(incoming: ActiveJob?, existing: ActiveJob?) -> ActiveJob? {
+    guard var incoming, let existing else { return incoming }
+    guard let incomingJobId = incoming.jobId,
+          let existingJobId = existing.jobId,
+          incomingJobId == existingJobId else {
+        return incoming
+    }
+    incoming.codexPid = incoming.codexPid ?? existing.codexPid
+    incoming.codexSessionId = incoming.codexSessionId ?? existing.codexSessionId
+    incoming.codexTurnId = incoming.codexTurnId ?? existing.codexTurnId
+    incoming.outputPath = incoming.outputPath ?? existing.outputPath
+    incoming.sessionLogPath = incoming.sessionLogPath ?? existing.sessionLogPath
+    incoming.lastProgressAt = latestNonNilTimestamp(incoming.lastProgressAt, existing.lastProgressAt)
+    incoming.lastUserUpdateAt = latestNonNilTimestamp(incoming.lastUserUpdateAt, existing.lastUserUpdateAt)
+    incoming.lastEventAt = latestNonNilTimestamp(incoming.lastEventAt, existing.lastEventAt)
+    incoming.lastObservedSummary = latestActiveJobSummary(incoming: incoming, existing: existing)
+    incoming.permissionRecoveryAttempts = max(incoming.permissionRecoveryAttempts ?? 0, existing.permissionRecoveryAttempts ?? 0)
+    incoming.waitingForPermissionSince = incoming.waitingForPermissionSince ?? existing.waitingForPermissionSince
+    incoming.lastPermissionEventId = incoming.lastPermissionEventId ?? existing.lastPermissionEventId
+    return incoming
+}
+
+private func latestActiveJobSummary(incoming: ActiveJob, existing: ActiveJob) -> String? {
+    guard let incomingSummary = incoming.lastObservedSummary else { return existing.lastObservedSummary }
+    guard let existingSummary = existing.lastObservedSummary else { return incomingSummary }
+    let incomingDate = DateCodec.parse(incoming.lastEventAt) ?? DateCodec.parse(incoming.lastProgressAt) ?? .distantPast
+    let existingDate = DateCodec.parse(existing.lastEventAt) ?? DateCodec.parse(existing.lastProgressAt) ?? .distantPast
+    return incomingDate >= existingDate ? incomingSummary : existingSummary
 }
 
 private func outboundSendRecordRank(_ record: OutboundSendRecord) -> Int {
