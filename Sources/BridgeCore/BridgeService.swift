@@ -747,35 +747,36 @@ public final class BridgeService: @unchecked Sendable {
             if let processPid = events.processPid() {
                 _ = terminateProcessTree(rootPid: processPid)
             }
-            guard response.text.contains(marker) else {
+            let responseText = computerUseProbeDetailWithWindowDiagnostics(response.text)
+            guard responseText.contains(marker) else {
                 return """
                 Smoke \(label) failed: \(marker)
                 Error: response did not contain marker.
                 Thread id: \(response.sessionId ?? events.threadId() ?? "none")
                 Turn id: \(events.turnId() ?? "none")
-                Response: \(response.text)
+                Response: \(responseText)
                 """
             }
-            if requireSuccessToken, !response.text.localizedCaseInsensitiveContains("SUCCESS") {
+            if requireSuccessToken, !responseText.localizedCaseInsensitiveContains("SUCCESS") {
                 return """
                 Smoke \(label) failed: \(marker)
                 Error: response contained marker but did not report SUCCESS.
                 Thread id: \(response.sessionId ?? events.threadId() ?? "none")
                 Turn id: \(events.turnId() ?? "none")
-                Response: \(response.text)
+                Response: \(responseText)
                 """
             }
             return """
             Smoke \(label) passed: \(marker)
             Thread id: \(response.sessionId ?? events.threadId() ?? "none")
             Turn id: \(events.turnId() ?? "none")
-            Response: \(response.text)
+            Response: \(responseText)
             """
         } catch let error as CodexBackendFailure {
             if let processPid = events.processPid() {
                 _ = terminateProcessTree(rootPid: processPid)
             }
-            let detail = error.blockedText ?? error.message
+            let detail = computerUseProbeDetailWithWindowDiagnostics(error.blockedText ?? error.message)
             return """
             Smoke \(label) failed: \(marker)
             Error: \(detail)

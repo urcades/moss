@@ -371,15 +371,22 @@ public final class Doctor: @unchecked Sendable {
             let ok = response.text.contains(marker) && response.text.localizedCaseInsensitiveContains("SUCCESS")
             let detail = ok
                 ? response.text
-                : computerUseProbeDetailWithWindowDiagnostics(response.text, windowSummary: localAccessibilityWindowSummary(runner: runner))
+                : computerUseProbeDetailWithWindowDiagnostics(response.text, runner: runner)
             return DoctorCheck(name: "Computer Use probe", ok: ok, detail: detail)
         } catch let error as CodexBackendFailure {
-            let detail = computerUseProbeDetailWithWindowDiagnostics(error.blockedText ?? error.message, windowSummary: localAccessibilityWindowSummary(runner: runner))
+            let detail = computerUseProbeDetailWithWindowDiagnostics(error.blockedText ?? error.message, runner: runner)
             return DoctorCheck(name: "Computer Use probe", ok: false, detail: detail)
         } catch {
             return DoctorCheck(name: "Computer Use probe", ok: false, detail: String(describing: error))
         }
     }
+}
+
+public func computerUseProbeDetailWithWindowDiagnostics(_ detail: String, runner: ProcessRunner = ProcessRunner()) -> String {
+    guard permissionBlock(in: detail)?.contains("cgWindowNotFound") == true else {
+        return detail
+    }
+    return computerUseProbeDetailWithWindowDiagnostics(detail, windowSummary: localAccessibilityWindowSummary(runner: runner))
 }
 
 public func computerUseProbeDetailWithWindowDiagnostics(_ detail: String, windowSummary: String) -> String {

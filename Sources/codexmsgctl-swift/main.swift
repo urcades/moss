@@ -454,21 +454,22 @@ struct CodexMsgCtlSwift {
             if let processPid = events.processPid() {
                 _ = terminateProcessTree(rootPid: processPid)
             }
-            print("Response: \(response.text)")
+            let responseText = computerUseProbeDetailWithWindowDiagnostics(response.text)
+            print("Response: \(responseText)")
             print("Thread id: \(response.sessionId ?? events.threadId() ?? "none")")
             print("Turn id: \(events.turnId() ?? "none")")
-            guard response.text.contains(marker) else {
+            guard responseText.contains(marker) else {
                 throw StoreError.validation("Smoke \(label) failed: response did not contain marker \(marker).")
             }
-            if requireSuccessToken, !response.text.localizedCaseInsensitiveContains("SUCCESS") {
-                throw StoreError.validation("Smoke \(label) failed: response contained marker but did not report SUCCESS. Response: \(response.text)")
+            if requireSuccessToken, !responseText.localizedCaseInsensitiveContains("SUCCESS") {
+                throw StoreError.validation("Smoke \(label) failed: response contained marker but did not report SUCCESS. Response: \(responseText)")
             }
             print("Smoke \(label) passed.")
         } catch let error as CodexBackendFailure {
             if let processPid = events.processPid() {
                 _ = terminateProcessTree(rootPid: processPid)
             }
-            let detail = error.blockedText ?? error.message
+            let detail = computerUseProbeDetailWithWindowDiagnostics(error.blockedText ?? error.message)
             print("Smoke \(label) blocker/failure: \(detail)")
             throw StoreError.validation("Smoke \(label) failed: \(detail)")
         } catch {
