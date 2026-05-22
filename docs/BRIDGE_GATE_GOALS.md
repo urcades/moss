@@ -16,9 +16,11 @@ Success means outbound text and media can never look successful when Messages re
   - `swift run codexmsgctl-swift smoke attachment` passes for an image attachment row, or fails with exact DB evidence.
 - Current status:
   - Text smoke passed on row 731.
+  - Current text smoke passed on row 745 with marker `CODEXMSGCTL_SMOKE_TEXT_4900E017-5AB5-482C-A02E-47099DB5664A`.
   - Old file-attachment smoke exposed row 732 with `error=25`, `transfer_state=6`; this was useful evidence but not the final image-media gate.
   - Image attachment smoke passed on row 737 after normalizing the configured phone handle before opening the `sms:` URL; Messages renamed the pasted image to `IMG_5972.jpeg`, so verification uses the DB baseline row instead of requiring the marker in `transfer_name`.
   - A later image attachment smoke hit a no-row AppleScript/clipboard failure after baseline row 743. Attachment verification now polls longer and retries once only when no Messages DB row appears; the hardened smoke then passed on row 744 with `transfer_state=5`.
+  - Current attachment smoke passed on row 746 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_B28DE88E-10AF-44FA-8043-A8FE4EAE37AE` after clipboard retry 2; Messages renamed the image to `IMG_1669.jpeg`.
   - `/codex smoke attachment` now sends a marked image probe from the Messages command surface and keeps the probe as `lastOutboundSend` while sending an unrecorded summary reply.
 
 ## Goal 2: Media Continuity
@@ -56,6 +58,7 @@ Success means Messages-triggered automation creation is bridge-owned, synchronou
 - Current status:
   - `swift run codexmsgctl-swift smoke automation` creates a real paused `automation.toml`, persists its route, and records `automationCreationStatus`.
   - Live smoke passed for `bridge-smoke-test-7431ce30` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_B219F241-59D2-449C-BF80-244C7431CE30`.
+  - Current live smoke passed for `bridge-smoke-test-8fd10e85` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_2B366AD1-1F91-45B3-99C9-6B728FD10E85`.
   - `codexmsgctl-swift status` now reports automation creation status and the latest automation routes.
   - State saves now merge automation route/status fields so a helper tick with stale in-memory state cannot erase a newly persisted route.
 
@@ -112,11 +115,14 @@ Success means the bridge continuously reports what Codex can really do from Mess
   - Later `swift run codexmsgctl-swift doctor --probe-computer-use` runs failed twice with exact live blocker `Computer Use server error -10005: cgWindowNotFound`; this is now recorded as a live runtime condition rather than a silent fallback.
   - Current `swift run codexmsgctl-swift doctor --probe-computer-use` passed with `Computer Use probe: SUCCESS Start Page`.
   - Current `swift run codexmsgctl-swift smoke computer-use` passed with real `list_apps` and `get_app_state` calls and marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_D076BC6E-2948-4C7B-94A3-E7AFFC703587`.
+  - Current smoke computer-use passed again with marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_C809B0CA-D913-4040-9B3A-5A5DB1CF9D2E`.
   - A later `doctor --probe-computer-use` run returned without hanging and failed visibly with exact blocker `BLOCKED Computer Use server error -10005: cgWindowNotFound`.
   - `swift run codexmsgctl-swift smoke chrome` invoked the Chrome skill path and returned the exact blocker `privileged native pipe bridge is not available; browser-client is not trusted` with marker `CODEXMSGCTL_SMOKE_CHROME_9E2AAA1F-51AE-44D3-9B60-6A63DBEED695`.
   - Current `swift run codexmsgctl-swift smoke chrome` still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_CHROME_BF716326-E9E4-40FF-A47A-173DB6A40F3A`.
+  - Current smoke chrome still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_CHROME_AFFEEED9-3DCA-469B-AC95-CF261D565C74`.
   - `swift run codexmsgctl-swift smoke browser` invoked the Browser skill path and returned the exact blocker `Browser is not available: iab` with marker `CODEXMSGCTL_SMOKE_BROWSER_9BC2108C-E062-4CA4-8F74-CD305E23A487`.
   - Current `swift run codexmsgctl-swift smoke browser` still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_BROWSER_8A9C61EA-F7B0-451F-8BC4-E261E15DAFAD`.
+  - Current smoke browser still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_BROWSER_F03F2AD3-962F-4A33-8C8E-09CCE3734F69`.
   - `codexmsgctl-swift smoke` now has standalone `chrome`, `browser`, and `computer-use` subcommands that print app-server pid, thread id, turn id, progress, final response, and blocker text.
 
 ## Required Green Gate Set
