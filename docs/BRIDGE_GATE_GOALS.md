@@ -94,7 +94,7 @@ Success means app-server `item/tool/requestUserInput` and `mcpServer/elicitation
   - Inbound reply routing goes to the callback instead of a new prompt.
   - Cancel and timeout answer the app-server request and clear state.
 - Architecture gate:
-  - The backend now has a JSON-RPC responder channel for app-server callbacks. The remaining proof is live installed-helper evidence from Apple Messages, including a real app-server-generated callback when one can be triggered reliably.
+  - The backend now has a JSON-RPC responder channel for app-server callbacks. The remaining proof is live installed-helper evidence from Apple Messages via `/codex smoke app-server-callback`.
 - Current status:
   - State saves now preserve non-terminal `pendingInteractiveCallback` records across stale helper/CLI saves while still allowing terminal callbacks to clear.
   - Inbound trusted non-command replies now route to pending callback state instead of starting a new prompt batch, recording response text/row/guid and sending a visible acknowledgement.
@@ -103,7 +103,8 @@ Success means app-server `item/tool/requestUserInput` and `mcpServer/elicitation
   - The default bridge backend now persists a pending callback, messages the user, waits for the routed answer, returns app-server-shaped callback results, and clears terminal callback state.
   - Deterministic coverage now runs a `BridgeService` end-to-end callback flow through the default backend responder seam: fake app-server asks for input, the bridge sends the Messages prompt, the next trusted reply is captured, the responder returns structured answers, the original turn sends its final answer, and pending/active state clears.
   - `/codex smoke callback` now creates a pending callback from Apple Messages and verifies that the next trusted non-command reply is captured by the callback route, reports the captured row/guid/text, clears pending state, and does not start a normal Codex job. Deterministic coverage exercises the two-message flow.
-  - Remaining gap: this still needs a live Messages smoke that proves a real app-server callback from the installed helper pauses, receives the next trusted reply, and completes the original Codex turn end to end.
+  - `/codex smoke app-server-callback` now starts a real app-server turn from Apple Messages with a prompt that must use app-server interactive user input before final answer. Deterministic coverage proves the command starts the default backend, sends the callback prompt, routes the trusted reply, and completes the original turn.
+  - Remaining gap: this still needs a trusted live run that proves the installed helper can trigger the real app-server callback, receive the next trusted reply, and complete the original Codex turn end to end.
 
 ## Goal 5: Runtime State And Process Supervision
 

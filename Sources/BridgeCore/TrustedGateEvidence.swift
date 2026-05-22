@@ -54,7 +54,8 @@ public let defaultTrustedGateCommands: [String] = [
     "/codex smoke browser",
     "/codex smoke computer-use",
     "/codex smoke automation",
-    "/codex smoke callback"
+    "/codex smoke callback",
+    "/codex smoke app-server-callback"
 ]
 
 public func trustedGateEvidence(

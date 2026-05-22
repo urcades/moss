@@ -74,9 +74,10 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
     - /codex smoke computer-use
     - /codex smoke automation
     - /codex smoke callback, then reply with any short text
+    - /codex smoke app-server-callback, then reply to the app-server prompt
 
     Open proof gaps:
-    - Real installed-helper app-server callback smoke from an actual app-server callback.
+    - Live trusted-chat evidence for `/codex smoke app-server-callback`.
     - Live generated-image/edit probe beyond synthetic BRIDGE_ATTACH smoke.
     - Full BridgeState actor/reducer migration beyond store-level write serialization.
     """

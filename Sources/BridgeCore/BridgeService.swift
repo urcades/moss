@@ -439,7 +439,7 @@ public final class BridgeService: @unchecked Sendable {
                 hasRecentOutboundImage: hasUsableRecentMedia(direction: "outbound", recipient: config.allowedSender, service: "iMessage")
             ))
         default:
-            return "Use /codex status, /codex open, /codex history, /codex automations, /codex gates, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
+            return "Use /codex status, /codex open, /codex history, /codex automations, /codex gates, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|app-server-callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
         }
     }
 
@@ -538,6 +538,15 @@ public final class BridgeService: @unchecked Sendable {
                 Error: \(error)
                 """
             }
+        case "app-server-callback":
+            do {
+                summary = try await startAppServerCallbackSmoke(marker: marker, message: message)
+            } catch {
+                summary = """
+                Smoke app-server-callback failed: \(marker)
+                Error: \(error)
+                """
+            }
         case "app-server":
             if state.activeJob != nil {
                 summary = "Smoke app-server skipped: a Codex job is already active. Send /codex status or /cancel first."
@@ -621,7 +630,7 @@ public final class BridgeService: @unchecked Sendable {
                 summary = await runBridgeAppServerSmoke(label: subcommand, marker: marker, request: request, config: smokeConfig)
             }
         default:
-            summary = "Use /codex smoke text, attachment, bridge-attach, automation, callback, app-server, inbound-image-check, outbound-image-check, chrome, browser, or computer-use."
+            summary = "Use /codex smoke text, attachment, bridge-attach, automation, callback, app-server-callback, app-server, inbound-image-check, outbound-image-check, chrome, browser, or computer-use."
         }
         _ = try await sink.sendReply(recipient: message.handleId, service: message.service, text: summary)
     }
@@ -655,6 +664,42 @@ public final class BridgeService: @unchecked Sendable {
         return """
         Smoke callback pending: \(marker)
         Reply here with any short text within 2 minutes. The next trusted non-command reply should complete this same pending callback instead of starting a new Codex job.
+        """
+    }
+
+    private func startAppServerCallbackSmoke(marker: String, message: MessageItem) async throws -> String {
+        if let callback = state.pendingInteractiveCallback, callback.status == "pending" {
+            return """
+            Smoke app-server-callback skipped: \(marker)
+            Pending callback: \(callback.callbackId)
+            Send a reply for the existing callback or /cancel first.
+            """
+        }
+        guard state.activeJob == nil else {
+            return "Smoke app-server-callback skipped: \(marker)\nA Codex job is already active. Send /codex status or /cancel first."
+        }
+        let startedAt = now()
+        let batch = PendingBatch(
+            handleId: message.handleId,
+            service: message.service,
+            startedAt: DateCodec.iso(startedAt),
+            deadlineAt: DateCodec.iso(startedAt),
+            items: [
+                MessageItem(
+                    rowId: message.rowId,
+                    guid: "\(message.guid)-app-server-callback-smoke",
+                    text: bridgeAppServerCallbackSmokePrompt(marker: marker),
+                    handleId: message.handleId,
+                    service: message.service,
+                    receivedAt: message.receivedAt,
+                    attachments: []
+                )
+            ]
+        )
+        try await startPromptBatch(batch)
+        return """
+        Smoke app-server-callback started: \(marker)
+        Wait for Codex to ask for input, then reply here with any short text. Success requires the original app-server turn to complete after that reply.
         """
     }
 
@@ -906,6 +951,7 @@ public final class BridgeService: @unchecked Sendable {
             /codex smoke bridge-attach - verify BRIDGE_ATTACH sends media before success text
             /codex smoke automation - create a paused marked automation and route
             /codex smoke callback - create a pending callback and verify the next reply is routed to it
+            /codex smoke app-server-callback - start a real app-server callback turn and reply to finish it
             /codex smoke app-server - verify a normal app-server turn returns a final marked reply
             /codex smoke inbound-image-check - verify the latest trusted inbound image reaches app-server
             /codex smoke outbound-image-check - send an image, then verify "that image" reaches app-server
@@ -1721,6 +1767,7 @@ private let supportedBridgeCodexSmokeSubcommands: Set<String> = [
     "bridge-attach",
     "automation",
     "callback",
+    "app-server-callback",
     "app-server",
     "inbound-image-check",
     "outbound-image-check",
@@ -1733,6 +1780,15 @@ private let bridgeSmokeCallbackMethod = "bridge/smoke/interactiveCallback"
 
 private func bridgeAppServerSmokePrompt(marker: String) -> String {
     "Reply only with \(marker) SUCCESS. Do not call tools, plugins, apps, browser, or Computer Use."
+}
+
+private func bridgeAppServerCallbackSmokePrompt(marker: String) -> String {
+    """
+    This is an Apple Messages bridge callback smoke test.
+    Before giving a final answer, call the app-server interactive user input/requestUserInput facility and ask the user to reply with any short text for marker \(marker).
+    After the user responds through that callback, reply only with \(marker) SUCCESS callback reply: <the user's reply>.
+    If you cannot call the interactive user input/requestUserInput facility, reply only with \(marker) BLOCKED <exact blocker text>.
+    """
 }
 
 public func bridgeCapabilitySmokePrompt(capability: String, marker: String) -> String {
