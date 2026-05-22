@@ -19,6 +19,7 @@ struct BridgeCoreFocusedTests {
         try testAutomationRequestsGetRoutingGuard()
         try testPromptBatchPreservesPluginIntentAndOrder()
         try await testRecentMissingAttachmentDefersCursorUntilFileExists()
+        try await testSQLiteMessageSourceAttachmentRowsAndClassification()
         try testPreviousImageReferenceAddsRecentImage()
         try await testMissingPreviousImageReferenceAsksForSource()
         try await testCodexSmokeAttachmentCommandSendsProbeAndSummary()
@@ -222,6 +223,56 @@ struct BridgeCoreFocusedTests {
         try expect(replies.contains { $0.text.contains("processed delayed attachment") }, "ready delayed attachment starts Codex")
         try expect(request?.attachments.first?.absolutePath == attachmentPath.path, "ready delayed attachment reaches Codex request")
         try expect(request?.attachments.first?.exists == true, "ready delayed attachment is refreshed as existing")
+    }
+
+    private static func testSQLiteMessageSourceAttachmentRowsAndClassification() async throws {
+        let paths = testPaths()
+        let db = try makeSmokeMessagesDb(paths: paths)
+        let home = paths.tmpDir.appendingPathComponent("home")
+        let pictures = home.appendingPathComponent("Pictures")
+        try FileManager.default.createDirectory(at: pictures, withIntermediateDirectories: true)
+        let image = pictures.appendingPathComponent("photo.png")
+        let pdf = paths.tmpDir.appendingPathComponent("paper.pdf")
+        let unsupported = paths.tmpDir.appendingPathComponent("archive.weird")
+        try Data("image".utf8).write(to: image)
+        try Data("%PDF".utf8).write(to: pdf)
+
+        try runSQLite(db, """
+        INSERT INTO handle (ROWID, id, service)
+        VALUES (1, '+15551234567', 'iMessage');
+        INSERT INTO message (ROWID, guid, text, is_from_me, date, service, handle_id)
+        VALUES (10, 'attachment-only', '', 0, 0, 'iMessage', 1);
+        INSERT INTO attachment (ROWID, transfer_name, filename, mime_type, uti, transfer_state)
+        VALUES (100, 'photo.png', '~/Pictures/photo.png', 'image/png', 'public.png', 5);
+        INSERT INTO message_attachment_join (message_id, attachment_id)
+        VALUES (10, 100);
+        INSERT INTO message (ROWID, guid, text, is_from_me, date, service, handle_id)
+        VALUES (11, 'multi-attachment', 'Here are files', 0, 0, 'iMessage', 1);
+        INSERT INTO attachment (ROWID, transfer_name, filename, mime_type, uti, transfer_state)
+        VALUES
+          (101, 'paper.pdf', \(sqliteStringLiteral(pdf.path)), 'application/pdf', 'com.adobe.pdf', 5),
+          (102, 'archive.weird', \(sqliteStringLiteral(unsupported.path)), 'application/octet-stream', 'public.data', 5);
+        INSERT INTO message_attachment_join (message_id, attachment_id)
+        VALUES (11, 101), (11, 102);
+        """)
+        let source = SQLiteMessageSource(
+            dbPath: db.path,
+            trustedSenders: ["+15551234567"],
+            homeDir: home.path
+        )
+
+        let latest = try await source.latestMatchingMessage()
+        let messages = try await source.fetchNewMessages(afterRowId: 0)
+
+        try expect(latest?.rowId == 11, "sqlite source latest attachment row")
+        try expect(messages.map(\.rowId) == [10, 11], "sqlite source returns attachment-only and multi-attachment rows")
+        try expect(messages[0].text.isEmpty, "sqlite source preserves attachment-only empty text")
+        try expect(messages[0].attachments.count == 1, "sqlite source returns attachment-only attachment")
+        try expect(messages[0].attachments[0].absolutePath == image.path, "sqlite source expands tilde attachment path")
+        try expect(messages[0].attachments[0].kind == "image", "sqlite source classifies image attachment")
+        try expect(messages[0].attachments[0].exists, "sqlite source records existing image attachment")
+        try expect(messages[1].attachments.map(\.kind) == ["pdf", "unsupported"], "sqlite source classifies pdf and unsupported attachments")
+        try expect(messages[1].attachments.map(\.exists) == [true, false], "sqlite source records attachment existence")
     }
 
     private static func testPreviousImageReferenceAddsRecentImage() throws {

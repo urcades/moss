@@ -33,6 +33,7 @@ Success means follow-up prompts like "modify that image" use a real previous cha
   - Recent inbound and outbound image refs persist in `BridgeState`.
   - A previous-image follow-up attaches the latest usable image for that chat.
   - A previous-image follow-up with no usable image asks for the source and does not start Codex.
+  - Messages DB ingress covers attachment-only rows, multiple attachments, `~/` path expansion, image/PDF/unsupported classification, and existence flags.
 - Live gates:
   - Send an inbound image, then ask for a marked modification; app-server receives a `localImage`.
   - Ask for a generated image and verify `BRIDGE_ATTACH` delivery evidence.

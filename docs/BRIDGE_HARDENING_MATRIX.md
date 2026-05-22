@@ -7,7 +7,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 | Surface | Failure class | Current hardening | Remaining gap |
 | --- | --- | --- | --- |
 | Messages ingress | Messages DB rows arrive before attachments are readable | Attachment metadata records `exists`; very recent rows with missing attachment files are deferred without advancing the cursor, then retried until files appear or the defer window expires | Add live evidence from a real delayed Messages attachment row if it recurs |
-| Messages ingress | Image/file classification drift | Focused tests cover prompt attachment preservation | Add SQLite fixture coverage for attachment-only, multiple attachments, PDFs, unsupported files, and `~/` paths |
+| Messages ingress | Image/file classification drift | Focused tests cover prompt attachment preservation plus SQLite fixtures for attachment-only rows, multiple attachments, PDFs, unsupported files, existence flags, and `~/` path expansion | Add live evidence if Messages introduces new attachment metadata shapes |
 | Codex app-server turns | Final answer never arrives | App-server tests reject non-final agent messages and surface no-final failures | Add live marked smoke test for a Messages-launched long turn |
 | Codex app-server callbacks | Tool/user-input callback silently returns empty or cancel | The default backend can persist a pending callback, send a Messages prompt, route the next trusted reply back to JSON-RPC, and clear terminal state | Add a live installed-helper callback smoke with a real app-server callback |
 | Capability delegation | User says "use Computer Use/Chrome/Browser" without `@` mention | Natural-language aliases now become structured plugin mentions; CLI and Messages smoke commands can launch marked Chrome, Browser, and Computer Use probes | Add trusted-chat live Messages runs for each blocker-or-success probe |
@@ -31,6 +31,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 - Last outbound send evidence: bridge state and `/status` expose the latest text/attachment attempt, DB row, delivery state, and retry eligibility.
 - Media continuity: previous-image follow-ups attach the latest usable chat image or ask for the source image instead of inventing a new one.
 - Delayed inbound attachments: recent missing attachment files defer cursor advancement and are retried; stale missing files do not wedge the bridge forever.
+- SQLite ingress fixtures: attachment-only rows, multi-attachment rows, image/PDF/unsupported classification, existence flags, and `~/` expansion are covered.
 - Automation scan budget: repeated automation forwarding can avoid rereading delivered historical rollout files.
 - Automation creation status: `/codex automations` can show in-flight creation state instead of only stale routes.
 - State recovery: corrupted state JSON is backed up and defaulted.
