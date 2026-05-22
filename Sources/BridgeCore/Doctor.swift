@@ -397,7 +397,11 @@ public func computerUseProbeDetailWithWindowDiagnostics(_ detail: String, window
     guard !trimmed.isEmpty else {
         return detail
     }
-    return "\(detail); Local accessibility windows: \(trimmed)"
+    var result = "\(detail); Local accessibility windows: \(trimmed)"
+    if localAccessibilityWindowCountsAreAllZero(trimmed) {
+        result += "; No visible accessibility windows were reported to System Events, so Computer Use may not have a capturable target window in the current GUI session."
+    }
+    return result
 }
 
 public func localAccessibilityWindowSummary(
@@ -410,6 +414,17 @@ public func localAccessibilityWindowSummary(
     set oldDelims to AppleScript's text item delimiters
     set AppleScript's text item delimiters to "; "
     tell application "System Events"
+      try
+        set end of outputItems to "AX=" & ((UI elements enabled) as text)
+      on error errMsg number errNo
+        set end of outputItems to "AX=error(" & (errNo as text) & ")"
+      end try
+      try
+        set frontProcess to first application process whose frontmost is true
+        set end of outputItems to "frontmost=" & (name of frontProcess as text)
+      on error errMsg number errNo
+        set end of outputItems to "frontmost=error(" & (errNo as text) & ")"
+      end try
       repeat with pname in {\(quotedNames)}
         try
           tell process (pname as text)
@@ -429,6 +444,17 @@ public func localAccessibilityWindowSummary(
     } catch {
         return "unavailable(\(error))"
     }
+}
+
+private func localAccessibilityWindowCountsAreAllZero(_ summary: String) -> Bool {
+    let counts = summary
+        .split(separator: ";")
+        .compactMap { component -> Int? in
+            let parts = component.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            guard parts.count == 2, let count = Int(parts[1]) else { return nil }
+            return count
+        }
+    return !counts.isEmpty && counts.allSatisfy { $0 == 0 }
 }
 
 private func asyncTimeout<T: Sendable>(nanoseconds: UInt64, operation: @escaping @Sendable () async -> T) async -> T? {

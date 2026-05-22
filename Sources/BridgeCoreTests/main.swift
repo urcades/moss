@@ -1362,10 +1362,11 @@ struct BridgeCoreFocusedTests {
 
         let blocked = computerUseProbeDetailWithWindowDiagnostics(
             "Computer Use server error -10005: cgWindowNotFound",
-            windowSummary: "Safari=0; Messages=0; Finder=0"
+            windowSummary: "AX=true; frontmost=Safari; Safari=0; Messages=0; Finder=0"
         )
         try expect(blocked.contains("Computer Use server error -10005: cgWindowNotFound"), "blocker text is preserved")
-        try expect(blocked.contains("Local accessibility windows: Safari=0; Messages=0; Finder=0"), "window preflight is appended")
+        try expect(blocked.contains("Local accessibility windows: AX=true; frontmost=Safari; Safari=0; Messages=0; Finder=0"), "window preflight is appended")
+        try expect(blocked.contains("No visible accessibility windows were reported"), "zero-window preflight is explained")
     }
 
     private static func testBridgeSmokePNGFixtureHasValidChunkCRCs() throws {
