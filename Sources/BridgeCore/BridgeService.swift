@@ -91,14 +91,16 @@ public final class BridgeService: @unchecked Sendable {
             if shouldDeferForMissingAttachments(message, now: now()) {
                 break
             }
-            state.lastProcessedGuid = message.guid
-            state.lastProcessedRowId = message.rowId
+            try mutateStateAndSave { state in
+                state.lastProcessedGuid = message.guid
+                state.lastProcessedRowId = message.rowId
+            }
             recordInboundMediaRefs(message)
             processIncoming(config: config, message: message)
         }
         try await syncPendingBatch(config: config)
         try await drainQueue()
-        try stores.state.save(state)
+        try saveStateSnapshot()
     }
 
     private func processIncoming(config: BridgeConfig, message: MessageItem) {
@@ -403,6 +405,25 @@ public final class BridgeService: @unchecked Sendable {
             : runLocalCommand(message.text)
         try await sendReplyRecording(makeReplySink(config), recipient: message.handleId, service: message.service, text: text)
         try stores.state.save(state)
+    }
+
+    private func saveStateSnapshot() throws {
+        try stores.state.save(stateBox.snapshot())
+    }
+
+    @discardableResult
+    private func mutateStateAndSave<T>(_ update: (inout BridgeState) throws -> T) throws -> T {
+        var result: Result<T, Error>?
+        let snapshot = stateBox.mutate { state -> BridgeState in
+            do {
+                result = .success(try update(&state))
+            } catch {
+                result = .failure(error)
+            }
+            return state
+        }
+        try stores.state.save(snapshot)
+        return try result!.get()
     }
 
     private func runCodexCommand(_ command: String, config: BridgeConfig) async throws -> String {
@@ -1361,43 +1382,46 @@ public final class BridgeService: @unchecked Sendable {
 
     private func recordOutboundSendStarted(kind: String, recipient: String, service: String, artifact: String?, body: String? = nil) -> String {
         let attemptId = UUID().uuidString
-        state.lastOutboundSend = OutboundSendRecord(
-            attemptId: attemptId,
-            kind: kind,
-            recipient: recipient,
-            service: service,
-            artifact: artifact,
-            body: body,
-            status: "queued",
-            startedAt: DateCodec.iso(now()),
-            retryable: false
-        )
-        try? stores.state.save(state)
+        try? mutateStateAndSave { state in
+            state.lastOutboundSend = OutboundSendRecord(
+                attemptId: attemptId,
+                kind: kind,
+                recipient: recipient,
+                service: service,
+                artifact: artifact,
+                body: body,
+                status: "queued",
+                startedAt: DateCodec.iso(now()),
+                retryable: false
+            )
+        }
         return attemptId
     }
 
     private func recordOutboundSendCompleted(attemptId: String, evidence: OutboundDeliveryEvidence) {
-        guard state.lastOutboundSend?.attemptId == attemptId else { return }
-        state.lastOutboundSend?.status = outboundSendCompletedStatus(evidence)
-        state.lastOutboundSend?.completedAt = DateCodec.iso(now())
-        state.lastOutboundSend?.retryable = false
-        state.lastOutboundSend?.evidence = evidence
-        state.lastOutboundSend?.error = nil
-        try? stores.state.save(state)
+        try? mutateStateAndSave { state in
+            guard state.lastOutboundSend?.attemptId == attemptId else { return }
+            state.lastOutboundSend?.status = outboundSendCompletedStatus(evidence)
+            state.lastOutboundSend?.completedAt = DateCodec.iso(now())
+            state.lastOutboundSend?.retryable = false
+            state.lastOutboundSend?.evidence = evidence
+            state.lastOutboundSend?.error = nil
+        }
     }
 
     private func recordOutboundSendFailed(attemptId: String, error: Error, retryable: Bool) {
-        guard state.lastOutboundSend?.attemptId == attemptId else { return }
-        state.lastOutboundSend?.status = "failed"
-        state.lastOutboundSend?.completedAt = DateCodec.iso(now())
-        state.lastOutboundSend?.retryable = retryable
-        if let failure = error as? OutboundDeliveryFailure {
-            state.lastOutboundSend?.evidence = failure.evidence
-            state.lastOutboundSend?.error = failure.description
-        } else {
-            state.lastOutboundSend?.error = String(describing: error)
+        try? mutateStateAndSave { state in
+            guard state.lastOutboundSend?.attemptId == attemptId else { return }
+            state.lastOutboundSend?.status = "failed"
+            state.lastOutboundSend?.completedAt = DateCodec.iso(now())
+            state.lastOutboundSend?.retryable = retryable
+            if let failure = error as? OutboundDeliveryFailure {
+                state.lastOutboundSend?.evidence = failure.evidence
+                state.lastOutboundSend?.error = failure.description
+            } else {
+                state.lastOutboundSend?.error = String(describing: error)
+            }
         }
-        try? stores.state.save(state)
     }
 
     private func outboundSendCompletedStatus(_ evidence: OutboundDeliveryEvidence) -> String {
@@ -1446,11 +1470,12 @@ public final class BridgeService: @unchecked Sendable {
     }
 
     private func appendRecentMediaRef(_ ref: RecentMediaRef) {
-        var refs = state.recentMediaRefs ?? []
-        refs.removeAll { $0.direction == ref.direction && $0.rowId == ref.rowId && $0.path == ref.path && $0.handleId == ref.handleId }
-        refs.append(ref)
-        state.recentMediaRefs = Array(refs.suffix(30))
-        try? stores.state.save(state)
+        try? mutateStateAndSave { state in
+            var refs = state.recentMediaRefs ?? []
+            refs.removeAll { $0.direction == ref.direction && $0.rowId == ref.rowId && $0.path == ref.path && $0.handleId == ref.handleId }
+            refs.append(ref)
+            state.recentMediaRefs = Array(refs.suffix(30))
+        }
     }
 
     private func shouldAskForMissingSourceImage(_ batch: PendingBatch) -> Bool {
@@ -1623,35 +1648,60 @@ public final class BridgeService: @unchecked Sendable {
         }
         guard cleared else { return }
         activeCodexTask = nil
-        try? stores.state.save(state)
+        try? saveStateSnapshot()
     }
 
     private func cancelActiveJob() -> String {
-        let callbackWasPending = state.pendingInteractiveCallback?.status == "pending"
-        if var callback = state.pendingInteractiveCallback, callback.status == "pending" {
-            callback.status = "canceled"
-            callback.failureText = "Canceled by /cancel from Messages."
-            state.pendingInteractiveCallback = callback
-            try? stores.state.save(state)
-        }
-        guard let job = state.activeJob else {
+        let transition = stateBox.mutate { state -> CancelTransition in
+            var snapshots: [BridgeState] = []
+            let callbackWasPending = state.pendingInteractiveCallback?.status == "pending"
+            if var callback = state.pendingInteractiveCallback, callback.status == "pending" {
+                callback.status = "canceled"
+                callback.failureText = "Canceled by /cancel from Messages."
+                state.pendingInteractiveCallback = callback
+                snapshots.append(state)
+            }
+            guard let job = state.activeJob else {
+                state.pendingInteractiveCallback = nil
+                snapshots.append(state)
+                return CancelTransition(
+                    message: callbackWasPending ? "Canceled the pending Codex prompt." : "No active job is running.",
+                    processPid: nil,
+                    cancelTask: false,
+                    snapshots: snapshots
+                )
+            }
+            state.activeJob?.status = "canceling"
+            if let pid = job.codexPid {
+                state.pendingInteractiveCallback = nil
+                snapshots.append(state)
+                return CancelTransition(
+                    message: callbackWasPending ? "Canceling the active Codex job and pending prompt." : "Canceling the active Codex job.",
+                    processPid: pid,
+                    cancelTask: true,
+                    snapshots: snapshots
+                )
+            }
+            state.activeJob = nil
             state.pendingInteractiveCallback = nil
-            try? stores.state.save(state)
-            return callbackWasPending ? "Canceled the pending Codex prompt." : "No active job is running."
+            snapshots.append(state)
+            return CancelTransition(
+                message: callbackWasPending ? "Canceled the active Codex job and pending prompt." : "Canceled the active Codex job.",
+                processPid: nil,
+                cancelTask: true,
+                snapshots: snapshots
+            )
         }
-        state.activeJob?.status = "canceling"
-        if let pid = job.codexPid {
+        if let pid = transition.processPid {
             _ = terminateProcessTree(rootPid: pid)
-            activeCodexTask?.cancel()
-            state.pendingInteractiveCallback = nil
-            try? stores.state.save(state)
-            return callbackWasPending ? "Canceling the active Codex job and pending prompt." : "Canceling the active Codex job."
         }
-        activeCodexTask?.cancel()
-        state.activeJob = nil
-        state.pendingInteractiveCallback = nil
-        try? stores.state.save(state)
-        return callbackWasPending ? "Canceled the active Codex job and pending prompt." : "Canceled the active Codex job."
+        if transition.cancelTask {
+            activeCodexTask?.cancel()
+        }
+        for snapshot in transition.snapshots {
+            try? stores.state.save(snapshot)
+        }
+        return transition.message
     }
 
     private func recoverActiveJobOnStartup() {
@@ -1787,6 +1837,13 @@ private enum Job {
     case localCommand(String, MessageItem)
     case interactiveCallbackReply(MessageItem)
     case promptBatch(PendingBatch)
+}
+
+private struct CancelTransition {
+    var message: String
+    var processPid: Int32?
+    var cancelTask: Bool
+    var snapshots: [BridgeState]
 }
 
 public func bridgeLocalCommandName(_ text: String) -> String? {
