@@ -3231,6 +3231,14 @@ struct BridgeCoreFocusedTests {
             hasPendingInteractiveCallback: false,
             hasRecentInboundImage: false,
             hasRecentOutboundImage: false,
+            activeBridgeSmokeAutomations: [
+                CodexAutomationFileSummary(
+                    id: "bridge-smoke-test-active",
+                    name: "Bridge Smoke Test Active",
+                    status: "ACTIVE",
+                    path: "/tmp/bridge-smoke-test-active/automation.toml"
+                )
+            ],
             liveSmokeResults: [
                 LiveSmokeResult(
                     name: "mcp-elicitation-callback",
@@ -3261,6 +3269,7 @@ struct BridgeCoreFocusedTests {
         try expect(text.contains("/codex smoke app-server-callback, then reply to the app-server prompt"), "gate checklist includes real app-server callback smoke")
         try expect(text.contains("/codex smoke mcp-elicitation-callback, then reply to the MCP elicitation prompt"), "gate checklist includes real MCP elicitation callback smoke")
         try expect(text.contains("Live smoke evidence: 1 result(s); latest: mcp-elicitation-callback blocked"), "gate checklist includes live smoke blocker evidence")
+        try expect(text.contains("Bridge smoke automations: warning: 1 active bridge smoke automation(s): bridge-smoke-test-active"), "gate checklist includes active smoke automation warning")
         try expect(text.contains("needs trusted inbound image first"), "gate checklist reports inbound image readiness")
         try expect(text.contains("will create a marked outbound image"), "gate checklist reports outbound image readiness")
     }
@@ -3273,6 +3282,14 @@ struct BridgeCoreFocusedTests {
             hasPendingInteractiveCallback: false,
             hasRecentInboundImage: true,
             hasRecentOutboundImage: true,
+            activeBridgeSmokeAutomations: [
+                CodexAutomationFileSummary(
+                    id: "bridge-smoke-test-active",
+                    name: "Bridge Smoke Test Active",
+                    status: "ACTIVE",
+                    path: "/tmp/bridge-smoke-test-active/automation.toml"
+                )
+            ],
             liveSmokeResults: [
                 LiveSmokeResult(
                     name: "computer-use",
@@ -3295,6 +3312,7 @@ struct BridgeCoreFocusedTests {
         try expect(report.text.contains("Strict gate check failed."), "strict gate report has failure header")
         try expect(report.text.contains("Trusted Messages gates: 1/2 observed; 1 missing inbound; next /codex status (missing-inbound)"), "strict gate report includes trusted gate summary")
         try expect(report.text.contains("Live smoke blockers: computer-use blocked MARKER"), "strict gate report includes live smoke blocker")
+        try expect(report.text.contains("Bridge smoke automations: warning: 1 active bridge smoke automation(s): bridge-smoke-test-active"), "strict gate report includes active smoke automation warning")
     }
 
     private static func testAutomationRequestCreatesCodexAutomationFromInterpretedSpec() async throws {

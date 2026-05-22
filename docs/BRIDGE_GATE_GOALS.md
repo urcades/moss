@@ -2,7 +2,7 @@
 
 This file is the working gate list for continuous bridge hardening. A gate is complete only when fake-runtime tests, live smoke evidence, status/doctor visibility, and installed-helper behavior agree.
 
-The continuous-goals contract for this workstream lives in `docs/BRIDGE_CONTINUOUS_GOALS.md`. Use `swift run codexmsgctl-swift gates` or `/codex gates` for the current non-destructive checklist of deterministic gates, live CLI smoke commands, trusted Messages commands, and latest live smoke blocker evidence. Use `swift run codexmsgctl-swift gates --strict` when a shell gate should fail until trusted Messages evidence and live smoke blockers are clear. Use `swift run codexmsgctl-swift trusted-gates` to inspect real trusted-chat inbound/outbound row evidence, and `swift run codexmsgctl-swift trusted-gates --runbook` or `/codex trusted-gates runbook` for the exact Apple Messages command sequence.
+The continuous-goals contract for this workstream lives in `docs/BRIDGE_CONTINUOUS_GOALS.md`. Use `swift run codexmsgctl-swift gates` or `/codex gates` for the current non-destructive checklist of deterministic gates, live CLI smoke commands, trusted Messages commands, active smoke automation warnings, and latest live smoke blocker evidence. Use `swift run codexmsgctl-swift gates --strict` when a shell gate should fail until trusted Messages evidence, active bridge smoke automations, and live smoke blockers are clear. Use `swift run codexmsgctl-swift trusted-gates` to inspect real trusted-chat inbound/outbound row evidence, and `swift run codexmsgctl-swift trusted-gates --runbook` or `/codex trusted-gates runbook` for the exact Apple Messages command sequence.
 
 ## Goal 1: Outbound Delivery Truth
 
@@ -100,6 +100,7 @@ Success means Messages-triggered automation creation is bridge-owned, synchronou
   - Latest automation smoke passed for `bridge-smoke-test-6865d9b0` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_5CB8E56E-8227-4914-943A-37876865D9B0`; route persisted to +1-520-609-9095 via iMessage.
   - Current inactive automation smoke passed for `bridge-smoke-test-ae750198` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_D6E56FDD-4717-4699-9518-142EAE750198`; the created `automation.toml` contains `status = "INACTIVE"`.
   - `codexmsgctl-swift status`, `doctor`, and `/codex automations` now report active `bridge-smoke-test*` automation files as informational warnings. On 2026-05-22 they surfaced six older active smoke artifacts while the current smoke-created automation stayed inactive.
+  - `codexmsgctl-swift gates`, `/codex gates`, and `codexmsgctl-swift gates --strict` now include active bridge smoke automation warnings, and strict gates remain red until those artifacts are cleared or made inactive.
   - `codexmsgctl-swift status` now reports automation creation status and the latest automation routes.
   - State saves now merge automation route/status fields so a helper tick with stale in-memory state cannot erase a newly persisted route.
   - Automation creation status, automation route persistence, backfilled automation routes, and automation delivery cursors now pass through serialized mutation helpers. A source-level architecture regression prevents those paths from reintroducing direct automation state assignment patterns inside `BridgeService`.

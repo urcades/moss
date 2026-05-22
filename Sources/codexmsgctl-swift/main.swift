@@ -155,6 +155,7 @@ struct CodexMsgCtlSwift {
                 hasPendingInteractiveCallback: state.pendingInteractiveCallback != nil,
                 hasRecentInboundImage: hasUsableRecentMedia(direction: "inbound", recipient: config.allowedSender, service: smokeOption("--service", in: rest) ?? "iMessage", state: state),
                 hasRecentOutboundImage: hasUsableRecentMedia(direction: "outbound", recipient: config.allowedSender, service: smokeOption("--service", in: rest) ?? "iMessage", state: state),
+                activeBridgeSmokeAutomations: activeBridgeSmokeAutomations(in: paths.codexAutomationsDir),
                 liveSmokeResults: state.liveSmokeResults ?? []
             )
             if rest.contains("--strict") {

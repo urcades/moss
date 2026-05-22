@@ -7,6 +7,7 @@ public struct BridgeGateChecklistContext: Equatable, Sendable {
     public var hasPendingInteractiveCallback: Bool
     public var hasRecentInboundImage: Bool
     public var hasRecentOutboundImage: Bool
+    public var activeBridgeSmokeAutomations: [CodexAutomationFileSummary]
     public var liveSmokeResults: [LiveSmokeResult]
 
     public init(
@@ -16,6 +17,7 @@ public struct BridgeGateChecklistContext: Equatable, Sendable {
         hasPendingInteractiveCallback: Bool,
         hasRecentInboundImage: Bool,
         hasRecentOutboundImage: Bool,
+        activeBridgeSmokeAutomations: [CodexAutomationFileSummary] = [],
         liveSmokeResults: [LiveSmokeResult] = []
     ) {
         self.allowedSender = allowedSender
@@ -24,6 +26,7 @@ public struct BridgeGateChecklistContext: Equatable, Sendable {
         self.hasPendingInteractiveCallback = hasPendingInteractiveCallback
         self.hasRecentInboundImage = hasRecentInboundImage
         self.hasRecentOutboundImage = hasRecentOutboundImage
+        self.activeBridgeSmokeAutomations = activeBridgeSmokeAutomations
         self.liveSmokeResults = liveSmokeResults
     }
 }
@@ -54,6 +57,7 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
     - Pending callback: \(callbackStatus)
     - Inbound-image smoke: \(inboundStatus)
     - Outbound-image smoke: \(outboundStatus)
+    - Bridge smoke automations: \(bridgeSmokeAutomationStatusText(context.activeBridgeSmokeAutomations))
     - Live smoke evidence: \(liveSmokeResultsStatusText(context.liveSmokeResults))
 
     Deterministic local gates:
@@ -128,6 +132,9 @@ public func bridgeGateStrictReport(context: BridgeGateChecklistContext, trustedG
     }
     if trustedOpen {
         failures.append("Trusted Messages gates: \(trustedSummary)")
+    }
+    if !context.activeBridgeSmokeAutomations.isEmpty {
+        failures.append("Bridge smoke automations: \(bridgeSmokeAutomationStatusText(context.activeBridgeSmokeAutomations))")
     }
     if !liveBlockers.isEmpty {
         let detail = liveBlockers.map { "\($0.name) \($0.status) \($0.marker)" }.joined(separator: "; ")
