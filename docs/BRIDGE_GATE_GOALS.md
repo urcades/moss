@@ -2,7 +2,7 @@
 
 This file is the working gate list for continuous bridge hardening. A gate is complete only when fake-runtime tests, live smoke evidence, status/doctor visibility, and installed-helper behavior agree.
 
-The continuous-goals contract for this workstream lives in `docs/BRIDGE_CONTINUOUS_GOALS.md`. Use `swift run codexmsgctl-swift gates` or `/codex gates` for the current non-destructive checklist of deterministic gates, live CLI smoke commands, and trusted Messages commands.
+The continuous-goals contract for this workstream lives in `docs/BRIDGE_CONTINUOUS_GOALS.md`. Use `swift run codexmsgctl-swift gates` or `/codex gates` for the current non-destructive checklist of deterministic gates, live CLI smoke commands, and trusted Messages commands. Use `swift run codexmsgctl-swift trusted-gates` to inspect real trusted-chat inbound/outbound row evidence.
 
 ## Goal 1: Outbound Delivery Truth
 
@@ -158,6 +158,7 @@ Success means the bridge continuously reports what Codex can really do from Mess
   - `codexmsgctl-swift smoke` now has standalone `chrome`, `browser`, and `computer-use` subcommands that print app-server pid, thread id, turn id, progress, final response, and blocker text.
   - Doctor's Computer Use probe now shares the same hardened marker prompt as `smoke computer-use`, so health checks and capability smoke no longer drift in behavior.
   - `codexmsgctl-swift status` and `/codex status` now use the capability cache first and bound live refresh attempts, so a stuck app-server capability refresh cannot hang status. Deterministic coverage verifies the best-effort status lookup returns an existing cache even when the Codex command is unavailable.
+  - `codexmsgctl-swift trusted-gates` now reports whether trusted Messages gate commands have real inbound rows and nearby outbound reply rows, including outbound `message.error` values.
   - Capability cache formatting now marks caches stale after 24h in status and doctor output, so version/tool drift is visible even when bounded refreshes are skipped.
   - Dynamic tool forwarding now has deterministic stalled-call coverage using a fake app-server connection that waits until the RPC deadline, then verifies the bridge sends an explicit failed tool result for the original dynamic call.
   - `codexmsgctl-swift smoke app-server` and `/codex smoke app-server` now run a no-tool marked app-server turn and require the final response to contain the marker plus `SUCCESS`.
@@ -175,6 +176,7 @@ Before this workstream is complete, the installed helper must satisfy:
 - `swift test`
 - `swift run codexmsgctl-swift doctor --probe-computer-use`
 - `swift run codexmsgctl-swift gates`
+- `swift run codexmsgctl-swift trusted-gates`
 - `swift run codexmsgctl-swift smoke text`
 - `swift run codexmsgctl-swift smoke attachment`
 - `swift run codexmsgctl-swift smoke app-server`

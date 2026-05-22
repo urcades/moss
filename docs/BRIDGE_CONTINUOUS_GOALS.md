@@ -19,8 +19,9 @@ Success: trusted-chat commands can prove `/codex status` and every `/codex smoke
 Evidence:
 - `/codex status` from the trusted chat agrees with `codexmsgctl-swift status`.
 - Trusted-chat `/codex smoke app-server`, `text`, `attachment`, `automation`, `callback`, `inbound-image-check`, `outbound-image-check`, `chrome`, `browser`, and `computer-use` have observed inbound rows and outgoing reply evidence.
+- `codexmsgctl-swift trusted-gates` reports each trusted command as `observed`, `missing-inbound`, `missing-outbound`, or `outbound-error-*` from Messages DB evidence.
 
-Current status: incomplete and partly externally gated, because true trusted inbound rows must come from Apple Messages rather than this process sending `is_from_me=1` rows.
+Current status: in progress and partly externally gated, because true trusted inbound rows must come from Apple Messages rather than this process sending `is_from_me=1` rows. `codexmsgctl-swift trusted-gates` now observes real inbound/outbound row evidence without sending messages.
 
 ## Goal C: Real Callback Parity
 

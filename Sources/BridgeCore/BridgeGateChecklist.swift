@@ -47,6 +47,7 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
     - swift run BridgeCoreSelfTest
     - swift test
     - swift run codexmsgctl-swift doctor --probe-computer-use
+    - swift run codexmsgctl-swift trusted-gates
 
     Live CLI gates:
     - swift run codexmsgctl-swift smoke text\(liveSuffix)

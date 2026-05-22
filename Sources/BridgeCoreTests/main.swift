@@ -45,6 +45,7 @@ struct BridgeCoreFocusedTests {
         try await testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb()
         try await testOutboundSmokeAttachmentEvidenceFindsMarkerInTransferName()
         try await testOutboundSmokeAttachmentEvidenceFallsBackToLatestAttachment()
+        try await testTrustedGateEvidenceFindsInboundCommandAndOutboundReply()
         try await testClipboardAttachmentSendRetriesWhenNoDbRowAppears()
         try await testAttachmentSendWaitsForDelayedMessagesDbRow()
         try await testSmsAttachmentSendUsesSmsServiceAndReportsFailedRow()
@@ -1190,6 +1191,43 @@ struct BridgeCoreFocusedTests {
         try expect(evidence?.detail == "matched latest outbound attachment after baseline", "smoke attachment fallback detail")
     }
 
+    private static func testTrustedGateEvidenceFindsInboundCommandAndOutboundReply() async throws {
+        let paths = testPaths()
+        let db = try makeSmokeMessagesDb(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.messagesDbPath = db.path
+        config.allowedSender = "+1-520-609-9095"
+        try runSQLite(db, """
+        INSERT INTO handle (ROWID, id, service)
+        VALUES (1, '+1 (520) 609-9095', 'iMessage');
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (70, 'inbound-status', '/codex status', 0, 0, 0, 1000000000, 'iMessage', 1);
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (71, 'outbound-status', 'Codex bridge status: ready', 1, 0, 0, 1000000001, 'iMessage', NULL);
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (72, 'inbound-smoke', '/codex smoke chrome', 0, 0, 0, 1000000002, 'iMessage', 1);
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (73, 'outbound-smoke', 'Smoke chrome failed: exact blocker', 1, 25, 0, 1000000003, 'iMessage', NULL);
+        """)
+
+        let evidence = try await trustedGateEvidence(
+            config: config,
+            recipient: "+1-520-609-9095",
+            service: "iMessage",
+            commands: ["/codex status", "/codex smoke chrome", "/codex smoke attachment"]
+        )
+
+        try expect(evidence.map(\.command) == ["/codex status", "/codex smoke chrome", "/codex smoke attachment"], "trusted gate evidence preserves command order")
+        try expect(evidence[0].status == "observed", "trusted gate evidence observes status command")
+        try expect(evidence[0].inboundRowId == 70, "trusted gate evidence records inbound row")
+        try expect(evidence[0].outboundRowId == 71, "trusted gate evidence records outbound row")
+        try expect(evidence[1].status == "outbound-error-25", "trusted gate evidence surfaces outbound error")
+        try expect(evidence[2].status == "missing-inbound", "trusted gate evidence marks missing command")
+        let formatted = formatTrustedGateEvidence(evidence)
+        try expect(formatted.contains("/codex smoke chrome: outbound-error-25"), "trusted gate formatter includes failed command")
+        try expect(formatted.contains("reply \"Smoke chrome failed: exact blocker\""), "trusted gate formatter includes reply snippet")
+    }
+
     private static func testClipboardAttachmentSendRetriesWhenNoDbRowAppears() async throws {
         let paths = testPaths()
         let db = try makeSmokeMessagesDb(paths: paths)
@@ -2280,6 +2318,7 @@ struct BridgeCoreFocusedTests {
         ))
         try expect(text.contains("swift run BridgeCoreTests"), "gate checklist includes focused tests")
         try expect(text.contains("swift run codexmsgctl-swift doctor --probe-computer-use"), "gate checklist includes doctor probe")
+        try expect(text.contains("swift run codexmsgctl-swift trusted-gates"), "gate checklist includes trusted gate observer")
         try expect(text.contains("swift run codexmsgctl-swift smoke outbound-image-check --recipient +1 --service iMessage"), "gate checklist includes outbound image smoke")
         try expect(text.contains("/codex smoke callback, then reply with any short text"), "gate checklist includes two-step trusted callback smoke")
         try expect(text.contains("needs trusted inbound image first"), "gate checklist reports inbound image readiness")

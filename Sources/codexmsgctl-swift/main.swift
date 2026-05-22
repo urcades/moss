@@ -23,6 +23,7 @@ struct CodexMsgCtlSwift {
           codexmsgctl-swift configure --preserve-safety
           codexmsgctl-swift doctor [--probe-computer-use]
           codexmsgctl-swift gates
+          codexmsgctl-swift trusted-gates [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift smoke text|attachment|automation|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift broker start|stop|status|doctor|events|dry-run-scan
           codexmsgctl-swift reset
@@ -148,6 +149,12 @@ struct CodexMsgCtlSwift {
                 hasRecentOutboundImage: hasUsableRecentMedia(direction: "outbound", recipient: config.allowedSender, service: smokeOption("--service", in: rest) ?? "iMessage", state: state)
             )
             print(bridgeGateChecklistText(context: context))
+        case "trusted-gates":
+            let config = try stores.config.load()
+            let recipient = smokeOption("--recipient", in: rest) ?? config.allowedSender
+            let service = smokeOption("--service", in: rest) ?? "iMessage"
+            let evidence = try await trustedGateEvidence(config: config, recipient: recipient, service: service)
+            print(formatTrustedGateEvidence(evidence))
         case "smoke":
             try await runSmokeCommand(rest, paths: paths, stores: stores)
         case "reset":
