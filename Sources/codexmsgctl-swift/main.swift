@@ -103,6 +103,7 @@ struct CodexMsgCtlSwift {
             print("Active job Codex thread id: \(state.activeJob?.codexSessionId ?? "none")")
             print("Active job Codex turn id: \(state.activeJob?.codexTurnId ?? "none")")
             print("Last outbound send: \(outboundSendStatusText(state.lastOutboundSend))")
+            print("Recent media refs: \(recentMediaRefsStatusText(state.recentMediaRefs ?? []))")
             print("Automation creation status: \(automationCreationStatusText(state.automationCreationStatus))")
             print("Automation routes: \(automationRoutesStatusText(state.automationRoutes ?? []))")
             do {

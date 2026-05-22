@@ -298,7 +298,8 @@ public final class BridgeService: @unchecked Sendable {
             "Active job turn: \(state.activeJob?.codexTurnId ?? "none")",
             "Active approval: \(activeApprovalStatusText())",
             "Pending interactive callback: \(pendingInteractiveCallbackStatusText())",
-            "Last outbound send: \(lastOutboundSendStatusText())"
+            "Last outbound send: \(lastOutboundSendStatusText())",
+            "Recent media refs: \(recentMediaRefsStatusText(state.recentMediaRefs ?? []))"
         ]
         if let capabilitySnapshot {
             lines.append(formatCodexCapabilityCacheLine(capabilitySnapshot))

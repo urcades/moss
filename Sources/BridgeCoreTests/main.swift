@@ -288,6 +288,19 @@ struct BridgeCoreFocusedTests {
             confirmationSendStatus: "verified",
             updatedAt: "2026-05-22T07:00:00.000Z"
         )
+        existing.recentMediaRefs = [
+            RecentMediaRef(
+                direction: "inbound",
+                rowId: 43,
+                handleId: "+1",
+                service: "iMessage",
+                path: "/tmp/source.png",
+                transferName: "source.png",
+                kind: "image",
+                createdAt: "2026-05-22T07:01:00.000Z",
+                exists: true
+            )
+        ]
         try stores.state.save(existing)
 
         var staleTickState = defaultBridgeState()
@@ -299,6 +312,8 @@ struct BridgeCoreFocusedTests {
         try expect(reloaded.lastProcessedRowId == 99, "state save keeps incoming cursor fields")
         try expect(reloaded.automationRoutes?.contains(where: { $0.automationId == "bridge-smoke-test" && $0.createdFromRowId == 42 }) == true, "state save preserves concurrent automation route")
         try expect(reloaded.automationCreationStatus?.automationId == "bridge-smoke-test", "state save preserves concurrent automation creation status")
+        try expect(reloaded.recentMediaRefs?.contains(where: { $0.rowId == 43 && $0.path == "/tmp/source.png" }) == true, "state save preserves concurrent recent media refs")
+        try expect(recentMediaRefsStatusText(reloaded.recentMediaRefs ?? []).contains("source.png"), "recent media status exposes latest image ref")
     }
 
     private static func testCapabilityFormattingAndCacheSnapshot() throws {

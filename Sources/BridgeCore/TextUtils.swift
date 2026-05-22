@@ -110,3 +110,22 @@ public func outboundSendStatusText(_ send: OutboundSendRecord?) -> String {
     }
     return parts.joined(separator: "; ")
 }
+
+public func recentMediaRefsStatusText(_ refs: [RecentMediaRef]) -> String {
+    guard !refs.isEmpty else { return "none" }
+    let latest = refs.sorted { lhs, rhs in
+        if lhs.createdAt == rhs.createdAt { return lhs.path < rhs.path }
+        return lhs.createdAt < rhs.createdAt
+    }.suffix(3)
+    let details = latest.map { ref in
+        var parts = [
+            "\(ref.direction) \(ref.kind)",
+            "row \(ref.rowId.map(String.init) ?? "none")",
+            ref.transferName ?? URL(fileURLWithPath: ref.path).lastPathComponent,
+            ref.exists && FileManager.default.fileExists(atPath: ref.path) ? "exists" : "missing"
+        ]
+        parts.append(ref.path)
+        return parts.joined(separator: " ")
+    }.joined(separator: " | ")
+    return "\(refs.count) ref(s); latest: \(details)"
+}

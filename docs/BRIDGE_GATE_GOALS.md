@@ -29,6 +29,9 @@ Success means follow-up prompts like "modify that image" use a real previous cha
 - Live gates:
   - Send an inbound image, then ask for a marked modification; app-server receives a `localImage`.
   - Ask for a generated image and verify `BRIDGE_ATTACH` delivery evidence.
+- Current status:
+  - `codexmsgctl-swift status` and `/codex status` now expose the recent media registry.
+  - State saves now merge `recentMediaRefs` so unrelated helper/CLI saves cannot erase the image registry used by "that image" follow-ups.
 
 ## Goal 3: Automation Truth
 
@@ -68,7 +71,7 @@ Success means bridge state writes cannot clobber each other and cancellation lea
   - Cancel kills the known process tree.
   - Simultaneous tick/callback/cancel/send-record updates preserve unrelated fields.
 - Current status:
-  - Deterministic coverage now verifies stale state saves preserve concurrently added automation route/status fields while still accepting incoming cursor updates.
+  - Deterministic coverage now verifies stale state saves preserve concurrently added automation route/status fields and recent media refs while still accepting incoming cursor updates.
 - Live gates:
   - Doctor reports app-server process snapshots without hanging.
   - Cancel/timeout leaves no bridge-owned orphan `codex app-server` or Computer Use child process.

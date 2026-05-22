@@ -248,6 +248,8 @@ private func mergeBridgeStateForConcurrentSave(incoming: BridgeState, existing: 
     var merged = incoming
     let routes = mergeAutomationRoutes(incoming: incoming.automationRoutes ?? [], existing: existing.automationRoutes ?? [])
     merged.automationRoutes = routes.isEmpty ? nil : routes
+    let mediaRefs = mergeRecentMediaRefs(incoming: incoming.recentMediaRefs ?? [], existing: existing.recentMediaRefs ?? [])
+    merged.recentMediaRefs = mediaRefs.isEmpty ? nil : mediaRefs
     merged.automationCreationStatus = latestAutomationCreationStatus(
         incoming: incoming.automationCreationStatus,
         existing: existing.automationCreationStatus
@@ -268,6 +270,22 @@ private func mergeAutomationRoutes(incoming: [CodexAutomationRoute], existing: [
         if lhs.createdAt == rhs.createdAt { return lhs.automationId < rhs.automationId }
         return lhs.createdAt < rhs.createdAt
     }
+}
+
+private func mergeRecentMediaRefs(incoming: [RecentMediaRef], existing: [RecentMediaRef]) -> [RecentMediaRef] {
+    var byKey = Dictionary(uniqueKeysWithValues: existing.map { (recentMediaRefKey($0), $0) })
+    for ref in incoming {
+        byKey[recentMediaRefKey(ref)] = ref
+    }
+    let merged = byKey.values.sorted { lhs, rhs in
+        if lhs.createdAt == rhs.createdAt { return lhs.path < rhs.path }
+        return lhs.createdAt < rhs.createdAt
+    }
+    return Array(merged.suffix(30))
+}
+
+private func recentMediaRefKey(_ ref: RecentMediaRef) -> String {
+    "\(ref.direction)|\(ref.rowId.map(String.init) ?? "-")|\(ref.handleId)|\(ref.service)|\(ref.path)"
 }
 
 private func mergeAutomationRoute(incoming: CodexAutomationRoute, existing: CodexAutomationRoute) -> CodexAutomationRoute {
