@@ -11,6 +11,7 @@ Evidence:
 - Gate docs record the latest live evidence.
 
 Current status: in progress. Individual commands exist, `codexmsgctl-swift gates` prints the complete deterministic, live CLI, and trusted Messages gate checklist with current readiness hints, `/codex gates` exposes the same checklist from Apple Messages, and `/codex trusted-gates` exposes trusted inbound/outbound row evidence from Apple Messages.
+`gates --strict` now treats Browser, Chrome, and Computer Use probe blockers as acceptable only when the latest live smoke has a marker and exact blocker detail, while callback/app-server blockers remain hard failures.
 
 ## Goal B: Trusted Messages Gate Harness
 

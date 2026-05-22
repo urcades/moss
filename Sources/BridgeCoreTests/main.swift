@@ -119,6 +119,7 @@ struct BridgeCoreFocusedTests {
         try testRuntimeExecutableIdentityDiagnostics()
         try testBridgeGateChecklistEnumeratesLocalAndTrustedGates()
         try testBridgeGateStrictReportFailsOnTrustedAndLiveBlockers()
+        try testBridgeGateStrictReportAcceptsCapabilityBlockersWithEvidence()
         try await testAutomationRequestCreatesCodexAutomationFromInterpretedSpec()
         try await testCodexAutomationsReportsCreationInProgress()
         try await testCompletedAutomationSessionIsForwardedOnce()
@@ -3306,11 +3307,18 @@ struct BridgeCoreFocusedTests {
             ],
             liveSmokeResults: [
                 LiveSmokeResult(
-                    name: "computer-use",
+                    name: "mcp-elicitation-callback",
                     marker: "MARKER",
                     status: "blocked",
-                    detail: "cgWindowNotFound",
+                    detail: "request_user_input is unavailable in Default mode",
                     updatedAt: "2026-05-22T13:00:00.000Z"
+                ),
+                LiveSmokeResult(
+                    name: "chrome",
+                    marker: "CHROME_MARKER",
+                    status: "blocked",
+                    detail: "privileged native pipe bridge is not available; browser-client is not trusted",
+                    updatedAt: "2026-05-22T13:01:00.000Z"
                 )
             ]
         )
@@ -3325,9 +3333,48 @@ struct BridgeCoreFocusedTests {
         try expect(!report.ok, "strict gate report fails while trusted gates or live smokes are open")
         try expect(report.text.contains("Strict gate check failed."), "strict gate report has failure header")
         try expect(report.text.contains("Trusted Messages gates: 1/2 observed; 1 missing inbound; next /codex status (missing-inbound)"), "strict gate report includes trusted gate summary")
-        try expect(report.text.contains("Live smoke blockers: computer-use blocked MARKER"), "strict gate report includes live smoke blocker")
+        try expect(report.text.contains("Live smoke blockers: mcp-elicitation-callback blocked MARKER request_user_input is unavailable in Default mode"), "strict gate report includes hard live smoke blocker with detail")
+        try expect(report.text.contains("Accepted live capability blockers: chrome blocked CHROME_MARKER privileged native pipe bridge is not available"), "strict gate report keeps accepted capability blocker visible")
         try expect(report.text.contains("Bridge smoke automations: warning: 1 active bridge smoke automation(s): bridge-smoke-test-active"), "strict gate report includes active smoke automation warning")
         try expect(report.text.contains("Bridge smoke automation cleanup: swift run codexmsgctl-swift smoke automation --deactivate-active --dry-run"), "strict gate report includes smoke automation cleanup command")
+    }
+
+    private static func testBridgeGateStrictReportAcceptsCapabilityBlockersWithEvidence() throws {
+        let context = BridgeGateChecklistContext(
+            allowedSender: "+1",
+            service: "iMessage",
+            hasActiveJob: false,
+            hasPendingInteractiveCallback: false,
+            hasRecentInboundImage: true,
+            hasRecentOutboundImage: true,
+            liveSmokeResults: [
+                LiveSmokeResult(
+                    name: "messages-browser",
+                    marker: "BROWSER_MARKER",
+                    status: "blocked",
+                    detail: "Browser is not available: iab",
+                    updatedAt: "2026-05-22T13:00:00.000Z"
+                ),
+                LiveSmokeResult(
+                    name: "computer-use-doctor",
+                    marker: "CU_MARKER",
+                    status: "blocked",
+                    detail: "Computer Use server error -10005: cgWindowNotFound",
+                    updatedAt: "2026-05-22T13:01:00.000Z"
+                )
+            ]
+        )
+        let report = bridgeGateStrictReport(
+            context: context,
+            trustedGateEvidence: [
+                TrustedGateEvidence(command: "/codex status", inboundRowId: 1, outboundRowId: 2, outboundError: 0),
+                TrustedGateEvidence(command: "/codex gates", inboundRowId: 3, outboundRowId: 4, outboundError: 0)
+            ]
+        )
+
+        try expect(report.ok, "strict gate accepts capability blockers when exact blocker evidence is present")
+        try expect(report.text.contains("Strict gate check passed."), "strict report passes when only exact capability blockers remain")
+        try expect(report.text.contains("Accepted live capability blockers: computer-use-doctor blocked CU_MARKER Computer Use server error -10005: cgWindowNotFound; messages-browser blocked BROWSER_MARKER Browser is not available: iab"), "strict report lists accepted capability blockers")
     }
 
     private static func testAutomationRequestCreatesCodexAutomationFromInterpretedSpec() async throws {

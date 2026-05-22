@@ -121,8 +121,14 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
 public func bridgeGateStrictReport(context: BridgeGateChecklistContext, trustedGateEvidence: [TrustedGateEvidence]) -> BridgeGateStrictReport {
     let trustedSummary = trustedGateSummaryText(trustedGateEvidence)
     let trustedOpen = trustedGateEvidence.contains { $0.status != "observed" }
-    let liveBlockers = context.liveSmokeResults
-        .filter { $0.status.lowercased() != "passed" }
+    let liveFailures = context.liveSmokeResults
+        .filter { strictLiveSmokeFailure($0) != nil }
+        .sorted { lhs, rhs in
+            if lhs.name == rhs.name { return lhs.marker < rhs.marker }
+            return lhs.name < rhs.name
+        }
+    let acceptedCapabilityBlockers = context.liveSmokeResults
+        .filter(isAcceptedCapabilityBlocker)
         .sorted { lhs, rhs in
             if lhs.name == rhs.name { return lhs.marker < rhs.marker }
             return lhs.name < rhs.name
@@ -141,12 +147,65 @@ public func bridgeGateStrictReport(context: BridgeGateChecklistContext, trustedG
         failures.append("Bridge smoke automations: \(bridgeSmokeAutomationStatusText(context.activeBridgeSmokeAutomations))")
         failures.append("Bridge smoke automation cleanup: swift run codexmsgctl-swift smoke automation --deactivate-active --dry-run")
     }
-    if !liveBlockers.isEmpty {
-        let detail = liveBlockers.map { "\($0.name) \($0.status) \($0.marker)" }.joined(separator: "; ")
+    if !liveFailures.isEmpty {
+        let detail = liveFailures.map(strictLiveSmokeSummary).joined(separator: "; ")
         failures.append("Live smoke blockers: \(detail)")
     }
     guard failures.isEmpty else {
+        if !acceptedCapabilityBlockers.isEmpty {
+            let accepted = acceptedCapabilityBlockers.map(strictLiveSmokeSummary).joined(separator: "; ")
+            failures.append("Accepted live capability blockers: \(accepted)")
+        }
         return BridgeGateStrictReport(ok: false, text: (["Strict gate check failed."] + failures).joined(separator: "\n"))
     }
-    return BridgeGateStrictReport(ok: true, text: "Strict gate check passed.\nTrusted Messages gates: \(trustedSummary)")
+    var lines = [
+        "Strict gate check passed.",
+        "Trusted Messages gates: \(trustedSummary)"
+    ]
+    if !acceptedCapabilityBlockers.isEmpty {
+        let accepted = acceptedCapabilityBlockers.map(strictLiveSmokeSummary).joined(separator: "; ")
+        lines.append("Accepted live capability blockers: \(accepted)")
+    }
+    return BridgeGateStrictReport(ok: true, text: lines.joined(separator: "\n"))
+}
+
+private func strictLiveSmokeFailure(_ result: LiveSmokeResult) -> LiveSmokeResult? {
+    if result.status.lowercased() == "passed" {
+        return nil
+    }
+    if isAcceptedCapabilityBlocker(result) {
+        return nil
+    }
+    return result
+}
+
+private func isAcceptedCapabilityBlocker(_ result: LiveSmokeResult) -> Bool {
+    guard result.status.lowercased() == "blocked",
+          !result.marker.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          !result.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        return false
+    }
+    let name = result.name.hasPrefix("messages-") ? String(result.name.dropFirst("messages-".count)) : result.name
+    return [
+        "browser",
+        "chrome",
+        "computer-use",
+        "computer-use-doctor"
+    ].contains(name)
+}
+
+private func strictLiveSmokeSummary(_ result: LiveSmokeResult) -> String {
+    var parts = [
+        result.name,
+        result.status,
+        result.marker
+    ]
+    let normalizedDetail = result.detail.hasPrefix(result.marker)
+        ? result.detail.dropFirst(result.marker.count).trimmingCharacters(in: .whitespacesAndNewlines)
+        : result.detail
+    if !normalizedDetail.isEmpty {
+        let detail = normalizedDetail.count > 160 ? String(normalizedDetail.prefix(160)) : normalizedDetail
+        parts.append(detail)
+    }
+    return parts.joined(separator: " ")
 }
