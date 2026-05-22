@@ -195,13 +195,15 @@ public func normalizedTrustedSenderList(_ senders: [String]) -> [String] {
     return results
 }
 
-public final class JSONFileStore<Value: Codable> {
+public final class JSONFileStore<Value: Codable>: @unchecked Sendable {
     private let url: URL
     private let defaultValue: () -> Value
+    private let writeLock: NSRecursiveLock
 
     public init(url: URL, defaultValue: @escaping () -> Value) {
         self.url = url
         self.defaultValue = defaultValue
+        self.writeLock = JSONFileWriteLocks.lock(for: url)
     }
 
     public func load() throws -> Value {
@@ -219,6 +221,8 @@ public final class JSONFileStore<Value: Codable> {
     }
 
     public func save(_ value: Value) throws {
+        writeLock.lock()
+        defer { writeLock.unlock() }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let valueToWrite: Value
         if let incoming = value as? BridgeState,
@@ -237,10 +241,43 @@ public final class JSONFileStore<Value: Codable> {
         }
     }
 
+    @discardableResult
+    public func update(_ transform: (inout Value) throws -> Void) throws -> Value {
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        var value = try load()
+        try transform(&value)
+        try save(value)
+        return try load()
+    }
+
     public func ensureExists() throws -> Value {
         let value = try load()
         try save(value)
         return value
+    }
+}
+
+private final class JSONFileWriteLocks: @unchecked Sendable {
+    private static let shared = JSONFileWriteLocks()
+    private let registryLock = NSLock()
+    private var locks: [String: NSRecursiveLock] = [:]
+
+    static func lock(for url: URL) -> NSRecursiveLock {
+        shared.lockForURL(url)
+    }
+
+    private func lockForURL(_ url: URL) -> NSRecursiveLock {
+        let key = url.standardizedFileURL.path
+        registryLock.lock()
+        defer { registryLock.unlock() }
+        if let existing = locks[key] {
+            return existing
+        }
+        let lock = NSRecursiveLock()
+        lock.name = "JSONFileStore:\(key)"
+        locks[key] = lock
+        return lock
     }
 }
 

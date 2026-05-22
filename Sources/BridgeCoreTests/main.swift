@@ -36,6 +36,7 @@ struct BridgeCoreFocusedTests {
         try testCodexAutomationSmokeCreatesRouteAndStatus()
         try testBridgeStateSavePreservesConcurrentAutomationFields()
         try testBridgeStateSaveMergesSameActiveJobDetails()
+        try testBridgeStateUpdateSerializesSeparateStoreInstances()
         try testCapabilityFormattingAndCacheSnapshot()
         try await testCapabilityBestEffortPrefersCache()
         try await testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb()
@@ -874,6 +875,76 @@ struct BridgeCoreFocusedTests {
         try stores.state.save(clear)
         let cleared = try stores.state.load()
         try expect(cleared.activeJob == nil, "active job merge still allows terminal clear")
+    }
+
+    private static func testBridgeStateUpdateSerializesSeparateStoreInstances() throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let routeStore = RuntimeStores(paths: paths).state
+        let mediaStore = RuntimeStores(paths: paths).state
+        try routeStore.save(defaultBridgeState())
+
+        let start = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        let errors = ConcurrentErrorRecorder()
+
+        group.enter()
+        DispatchQueue.global().async {
+            start.wait()
+            do {
+                try routeStore.update { state in
+                    state.automationRoutes = [
+                        CodexAutomationRoute(
+                            automationId: "serialized-route",
+                            name: "Serialized Route",
+                            recipient: "+1",
+                            service: "iMessage",
+                            createdFromGuid: "route-guid",
+                            createdFromRowId: 100,
+                            createdAt: "2026-05-22T09:00:00.000Z"
+                        )
+                    ]
+                    Thread.sleep(forTimeInterval: 0.05)
+                }
+            } catch {
+                errors.record(error)
+            }
+            group.leave()
+        }
+
+        group.enter()
+        DispatchQueue.global().async {
+            start.wait()
+            do {
+                try mediaStore.update { state in
+                    state.recentMediaRefs = [
+                        RecentMediaRef(
+                            direction: "inbound",
+                            rowId: 101,
+                            handleId: "+1",
+                            service: "iMessage",
+                            path: "/tmp/serialized-source.png",
+                            transferName: "serialized-source.png",
+                            kind: "image",
+                            createdAt: "2026-05-22T09:00:01.000Z",
+                            exists: true
+                        )
+                    ]
+                }
+            } catch {
+                errors.record(error)
+            }
+            group.leave()
+        }
+
+        start.signal()
+        start.signal()
+        try expect(group.wait(timeout: .now() + 5) == .success, "concurrent state updates complete")
+        try expect(errors.isEmpty, "concurrent state updates do not throw")
+
+        let reloaded = try routeStore.load()
+        try expect(reloaded.automationRoutes?.contains(where: { $0.automationId == "serialized-route" }) == true, "serialized update keeps automation route")
+        try expect(reloaded.recentMediaRefs?.contains(where: { $0.path == "/tmp/serialized-source.png" }) == true, "serialized update keeps media ref")
     }
 
     private static func testCapabilityFormattingAndCacheSnapshot() throws {
@@ -2779,6 +2850,23 @@ private func waitForState(_ stores: RuntimeStores, timeout: TimeInterval = 5, co
 
 private func message(rowId: Int64, text: String) -> MessageItem {
     MessageItem(rowId: rowId, guid: "guid-\(rowId)", text: text, handleId: "+1", service: "iMessage", receivedAt: "2026-05-09T00:00:00.000Z", attachments: [])
+}
+
+private final class ConcurrentErrorRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var descriptions: [String] = []
+
+    var isEmpty: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return descriptions.isEmpty
+    }
+
+    func record(_ error: Error) {
+        lock.lock()
+        descriptions.append(String(describing: error))
+        lock.unlock()
+    }
 }
 
 private func writeCapabilityCache(paths: RuntimePaths) throws {
