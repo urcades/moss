@@ -72,7 +72,8 @@ Success means app-server `item/tool/requestUserInput` and `mcpServer/elicitation
   - `/cancel` and callback expiration now clear pending callback state and send visible Messages feedback.
   - `CodexAppServerBackend` now accepts an interactive callback responder and can return real JSON-RPC results for `item/tool/requestUserInput` and `mcpServer/elicitation/request` instead of always emitting the unsupported error.
   - The default bridge backend now persists a pending callback, messages the user, waits for the routed answer, returns app-server-shaped callback results, and clears terminal callback state.
-  - Remaining gap: this still needs a live Messages smoke that proves a real app-server callback pauses, receives the next trusted reply, and completes the original Codex turn end to end.
+  - Deterministic coverage now runs a `BridgeService` end-to-end callback flow through the default backend responder seam: fake app-server asks for input, the bridge sends the Messages prompt, the next trusted reply is captured, the responder returns structured answers, the original turn sends its final answer, and pending/active state clears.
+  - Remaining gap: this still needs a live Messages smoke that proves a real app-server callback from the installed helper pauses, receives the next trusted reply, and completes the original Codex turn end to end.
 
 ## Goal 5: Runtime State And Process Supervision
 

@@ -1,11 +1,14 @@
 import Foundation
 
+public typealias BridgeDefaultCodexFactory = (_ config: BridgeConfig, _ interactiveCallbackResponder: CodexInteractiveCallbackResponder?) -> any CodexBackend
+
 public final class BridgeService: @unchecked Sendable {
     private let paths: RuntimePaths
     private let stores: RuntimeStores
     private let makeSource: (BridgeConfig) -> MessageSource
     private let makeReplySink: (BridgeConfig) -> ReplySink
     private let makeCodex: (BridgeConfig) -> any CodexBackend
+    private let makeDefaultCodex: BridgeDefaultCodexFactory
     private let useDefaultCodexBackend: Bool
     private let now: () -> Date
     private var state: BridgeState
@@ -20,6 +23,7 @@ public final class BridgeService: @unchecked Sendable {
         makeSource: @escaping (BridgeConfig) -> MessageSource,
         makeReplySink: @escaping (BridgeConfig) -> ReplySink,
         makeCodex: @escaping (BridgeConfig) -> any CodexBackend,
+        makeDefaultCodex: BridgeDefaultCodexFactory? = nil,
         useDefaultCodexBackend: Bool = false,
         now: @escaping () -> Date = Date.init
     ) {
@@ -28,6 +32,9 @@ public final class BridgeService: @unchecked Sendable {
         self.makeSource = makeSource
         self.makeReplySink = makeReplySink
         self.makeCodex = makeCodex
+        self.makeDefaultCodex = makeDefaultCodex ?? { config, responder in
+            CodexAppServerBackend(config: config, paths: paths, interactiveCallbackResponder: responder)
+        }
         self.useDefaultCodexBackend = useDefaultCodexBackend
         self.now = now
         self.state = defaultBridgeState()
@@ -918,11 +925,7 @@ public final class BridgeService: @unchecked Sendable {
 
     private func invokeCodex(config: BridgeConfig, request: PromptRequest, sessionId: String?, jobId: String, replySink: ReplySink, recipient: String, service: String) async throws -> String {
         let backend: any CodexBackend = useDefaultCodexBackend
-            ? CodexAppServerBackend(
-                config: config,
-                paths: paths,
-                interactiveCallbackResponder: interactiveCallbackResponder(jobId: jobId, replySink: replySink, recipient: recipient, service: service, config: config)
-            )
+            ? makeDefaultCodex(config, interactiveCallbackResponder(jobId: jobId, replySink: replySink, recipient: recipient, service: service, config: config))
             : makeCodex(config)
         let result = try await backend.invoke(request, sessionId: sessionId) { [weak self] event in
             guard let self else { return }

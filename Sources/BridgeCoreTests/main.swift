@@ -52,6 +52,7 @@ struct BridgeCoreFocusedTests {
         try await testAppServerBackendForwardsDynamicToolRequests()
         try await testAppServerBackendResolvesInteractiveCallbacksWithResponder()
         try await testAppServerBackendBlocksUserInputAndElicitationRequests()
+        try await testBridgeDefaultBackendInteractiveCallbackEndToEnd()
         try await testAppServerBackendNamesNewThreadFromPrompt()
         try await testAppServerBackendResumesThreadAndIgnoresMalformedNotifications()
         try await testAppServerBackendErrorNotificationThrowsBridgeFailure()
@@ -974,6 +975,46 @@ struct BridgeCoreFocusedTests {
         try expect(blockers.count == 1, "requestUserInput emits a visible blocker event")
     }
 
+    private static func testBridgeDefaultBackendInteractiveCallbackEndToEnd() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        config.timeoutMs = 5_000
+        try stores.config.save(config)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 1, guid: "guid-start-callback", text: "Trigger the callback test.", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in FakeProgressCodexBackend(events: [], response: "should not run") },
+            makeDefaultCodex: { _, responder in ResponderCodexBackend(responder: responder) },
+            useDefaultCodexBackend: true,
+            now: Date.init
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        let callbackPromptReplies = try await waitForReplies(sink, count: 1)
+        try expect(callbackPromptReplies.first?.text.contains("Codex needs your input to continue:") == true, "default backend sends callback prompt")
+        try expect(callbackPromptReplies.first?.text.contains("Choose a test answer") == true, "callback prompt includes app-server question")
+
+        source.append(MessageItem(rowId: 2, guid: "guid-answer-callback", text: "blue", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:01.000Z", attachments: []))
+        try await service.tick()
+        let replies = try await waitForReplies(sink, count: 3)
+        try expect(replies.contains { $0.text == "Got it. I captured that reply for the pending Codex prompt." }, "callback answer is acknowledged")
+        try expect(replies.contains { $0.text == "Callback completed with blue." }, "original Codex turn resumes and sends final answer")
+        let state = try stores.state.load()
+        try expect(state.pendingInteractiveCallback == nil, "completed callback clears pending callback state")
+        try expect(state.activeJob == nil, "completed callback turn clears active job")
+        try expect(state.codexSession.sessionId == "thread-callback", "callback turn preserves Codex thread id")
+    }
+
     private static func testAppServerBackendNamesNewThreadFromPrompt() async throws {
         let fake = FakeCodexAppServerConnection(lines: [
             #"{"id":1,"result":{"ok":true}}"#,
@@ -1741,11 +1782,57 @@ private final class FakeProgressCodexBackend: CodexBackend {
     }
 }
 
+private final class ResponderCodexBackend: CodexBackend, @unchecked Sendable {
+    private let responder: CodexInteractiveCallbackResponder?
+
+    init(responder: CodexInteractiveCallbackResponder?) {
+        self.responder = responder
+    }
+
+    func invoke(_ request: PromptRequest, sessionId: String?, onEvent: (@Sendable (CodexStreamEvent) -> Void)?) async throws -> CodexResponse {
+        guard let responder else {
+            throw TestFailure(description: "Expected interactive callback responder")
+        }
+        onEvent?(.sessionStarted("thread-callback"))
+        onEvent?(.turnStarted("turn-callback"))
+        let reply = try responder(
+            "item/tool/requestUserInput",
+            80,
+            [
+                "questions": [
+                    [
+                        "id": "choice",
+                        "header": "Test",
+                        "question": "Choose a test answer"
+                    ]
+                ]
+            ]
+        )
+        let result = reply["result"] as? [String: Any]
+        let answers = result?["answers"] as? [String: Any]
+        let choice = answers?["choice"] as? [String: Any]
+        let values = choice?["answers"] as? [String]
+        let answer = values?.first ?? ""
+        return CodexResponse(
+            text: "Callback completed with \(answer).",
+            sessionId: "thread-callback",
+            stdout: "",
+            stderr: "",
+            args: [],
+            outputPath: "/tmp/callback-output.txt"
+        )
+    }
+}
+
 private final class QueueMessageSource: MessageSource {
     private var messages: [MessageItem]
 
     init(messages: [MessageItem]) {
         self.messages = messages
+    }
+
+    func append(_ message: MessageItem) {
+        messages.append(message)
     }
 
     func initializeCursor(state: inout BridgeState) async throws {}
@@ -1865,6 +1952,19 @@ private func runSQLite(_ db: URL, _ sql: String) throws {
 
 private func shellQuoted(_ value: String) -> String {
     "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+}
+
+private func waitForReplies(_ sink: CapturingReplySink, count: Int, timeout: TimeInterval = 5) async throws -> [CapturingReplySink.Reply] {
+    let deadline = Date().addingTimeInterval(timeout)
+    var replies = await sink.repliesSnapshot()
+    while replies.count < count, Date() < deadline {
+        try await Task.sleep(nanoseconds: 50_000_000)
+        replies = await sink.repliesSnapshot()
+    }
+    guard replies.count >= count else {
+        throw TestFailure(description: "Timed out waiting for \(count) replies; saw \(replies.count)")
+    }
+    return replies
 }
 
 private func message(rowId: Int64, text: String) -> MessageItem {
