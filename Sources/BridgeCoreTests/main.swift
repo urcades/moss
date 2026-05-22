@@ -33,6 +33,7 @@ struct BridgeCoreFocusedTests {
         try await testOutboundSmokeAttachmentEvidenceFallsBackToLatestAttachment()
         try await testClipboardAttachmentSendRetriesWhenNoDbRowAppears()
         try await testRecentFailedOutboundEvidenceFindsFailedTextAndAttachmentRows()
+        try testCodexAppServerProcessSnapshotParsesTransportsAndOrphans()
         try testCodexMentionExtraction()
         try testNaturalLanguageCodexMentionExtraction()
         try await testAppServerClientCapabilityInventory()
@@ -488,6 +489,20 @@ struct BridgeCoreFocusedTests {
         try expect(failures.first?.transferState == 6, "failed attachment transfer state")
         try expect(failures.last?.dbError == 42, "failed text error")
         try expect(formatRecentFailedOutboundEvidence(failures).contains("row 21"), "recent failure formatter includes row")
+    }
+
+    private static func testCodexAppServerProcessSnapshotParsesTransportsAndOrphans() throws {
+        let snapshots = codexAppServerProcessSnapshots(from: """
+          111     1   111 01-00:00:00 /opt/homebrew/bin/codex app-server --listen unix://
+          222   200   200    00:01:00 /Applications/Codex.app/Contents/Resources/codex app-server --listen stdio://
+          333     1   300    00:02:00 /Applications/Codex.app/Contents/Resources/codex app-server --listen stdio://
+          444   400   400    00:00:10 /usr/bin/rg codex.*app-server
+          555   500   500    00:00:03 /Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled
+        """)
+
+        try expect(snapshots.map(\.pid) == [111, 222, 333, 555], "app-server snapshot ignores non-codex helper commands")
+        try expect(snapshots.map(\.transport) == ["unix", "stdio", "stdio", "desktop"], "app-server snapshot classifies transports")
+        try expect(snapshots.filter(\.isOrphanedStdioTransport).map(\.pid) == [333], "app-server snapshot identifies orphaned stdio transport")
     }
 
     private static func testOutboundSmokeAttachmentEvidenceFindsMarkerInTransferName() async throws {

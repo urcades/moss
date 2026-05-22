@@ -42,6 +42,18 @@ public struct OutboundSmokeEvidence: Codable, Equatable, Sendable {
     }
 }
 
+public struct CodexAppServerProcessSnapshot: Equatable, Sendable {
+    public var pid: Int32
+    public var parentPid: Int32
+    public var processGroupId: Int32
+    public var elapsed: String
+    public var transport: String
+    public var command: String
+
+    public var isStdioTransport: Bool { transport == "stdio" }
+    public var isOrphanedStdioTransport: Bool { isStdioTransport && parentPid == 1 }
+}
+
 public final class Doctor: @unchecked Sendable {
     private let paths: RuntimePaths
     private let runner: ProcessRunner
@@ -91,7 +103,17 @@ public final class Doctor: @unchecked Sendable {
     }
 
     private func checkCodexCapabilities(_ config: BridgeConfig) async -> [DoctorCheck] {
-        let snapshot = await cachedCodexCapabilities(command: config.codex.command, runner: runner, paths: paths)
+        guard let snapshot = await asyncTimeout(nanoseconds: 15_000_000_000, operation: { [runner, paths] in
+            await cachedCodexCapabilities(command: config.codex.command, runner: runner, paths: paths, ttlMs: Int.max)
+        }) else {
+            return [
+                DoctorCheck(
+                    name: "Codex capability cache",
+                    ok: false,
+                    detail: "Timed out after 15s while reading Codex app-server capabilities; use status cache or rerun later."
+                )
+            ]
+        }
         let capabilities = snapshot.capabilities
         var checks = [
             DoctorCheck(name: "Codex capability cache", ok: true, detail: snapshot.refreshed ? "refreshed at \(snapshot.cachedAt)" : "cached at \(snapshot.cachedAt), age \(snapshot.cacheAgeSeconds ?? 0)s"),
@@ -162,12 +184,26 @@ public final class Doctor: @unchecked Sendable {
     }
 
     private func checkCodexAppServerProcessSnapshot() -> DoctorCheck {
-        let output = (try? runner.runSync("/usr/bin/pgrep", ["-f", "codex.*app-server"])) ?? ""
-        let lines = output.split(whereSeparator: \.isNewline).map(String.init)
-        guard !lines.isEmpty else {
+        let output = (try? runner.runSync("/bin/ps", ["-axo", "pid=,ppid=,pgid=,etime=,command="])) ?? ""
+        let snapshots = codexAppServerProcessSnapshots(from: output)
+        guard !snapshots.isEmpty else {
             return DoctorCheck(name: "Codex app-server processes", ok: true, detail: "none")
         }
-        return DoctorCheck(name: "Codex app-server processes", ok: true, detail: "\(lines.count) running pid(s): \(lines.prefix(8).joined(separator: ", "))")
+        let orphanedStdio = snapshots.filter(\.isOrphanedStdioTransport)
+        let transportCounts = Dictionary(grouping: snapshots, by: \.transport)
+            .map { "\($0.key) \($0.value.count)" }
+            .sorted()
+            .joined(separator: ", ")
+        let sample = snapshots.prefix(6).map { snapshot in
+            "\(snapshot.pid)(ppid \(snapshot.parentPid), \(snapshot.transport), \(snapshot.elapsed))"
+        }.joined(separator: ", ")
+        let detail = [
+            "\(snapshots.count) running",
+            transportCounts,
+            "orphaned stdio \(orphanedStdio.count)",
+            "sample \(sample)"
+        ].joined(separator: "; ")
+        return DoctorCheck(name: "Codex app-server processes", ok: orphanedStdio.isEmpty, detail: detail)
     }
 
     private func checkMessagesAutomation(_ config: BridgeConfig) async -> DoctorCheck {
@@ -289,6 +325,25 @@ public final class Doctor: @unchecked Sendable {
     }
 }
 
+private func asyncTimeout<T: Sendable>(nanoseconds: UInt64, operation: @escaping @Sendable () async -> T) async -> T? {
+    await withCheckedContinuation { continuation in
+        let resumeOnce = ResumeOnce()
+        let task = Task {
+            let value = await operation()
+            resumeOnce.run {
+                continuation.resume(returning: value)
+            }
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            resumeOnce.run {
+                task.cancel()
+                continuation.resume(returning: nil)
+            }
+        }
+    }
+}
+
 private final class LockedPid: @unchecked Sendable {
     private let lock = NSLock()
     private var value: Int32?
@@ -387,16 +442,45 @@ public func codeSigningSummary(at url: URL) -> String {
 }
 
 public extension ProcessRunner {
-    func runSync(_ executable: String, _ arguments: [String]) throws -> String {
+    func runSync(_ executable: String, _ arguments: [String], timeoutMs: Int? = 10_000) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = Pipe()
+        let timedOut = LockedBool()
         try process.run()
+        if let timeoutMs, timeoutMs > 0 {
+            DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(timeoutMs)) {
+                if process.isRunning {
+                    timedOut.set(true)
+                    process.terminate()
+                }
+            }
+        }
         process.waitUntilExit()
+        if timedOut.get() {
+            throw ProcessRunnerError.timedOut("\(executable) timed out after \(timeoutMs ?? 0)ms")
+        }
         return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+}
+
+private final class LockedBool: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    func set(_ newValue: Bool) {
+        lock.lock()
+        value = newValue
+        lock.unlock()
+    }
+
+    func get() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
     }
 }
 
@@ -431,6 +515,42 @@ public func outboundSmokeTextEvidence(marker: String, afterRowId: Int64, config:
         dateDelivered: Int64(fields[3]) ?? 0,
         detail: "matched outbound marker"
     )
+}
+
+public func codexAppServerProcessSnapshots(from psOutput: String) -> [CodexAppServerProcessSnapshot] {
+    psOutput
+        .split(whereSeparator: \.isNewline)
+        .compactMap { line -> CodexAppServerProcessSnapshot? in
+            let parts = line.split(maxSplits: 4, whereSeparator: \.isWhitespace).map(String.init)
+            guard parts.count == 5,
+                  let pid = Int32(parts[0]),
+                  let parentPid = Int32(parts[1]),
+                  let processGroupId = Int32(parts[2]) else {
+                return nil
+            }
+            let command = parts[4]
+            let executable = command.split(maxSplits: 1, whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+            guard (executable == "codex" || executable.hasSuffix("/codex")),
+                  command.contains("app-server") else { return nil }
+            let transport: String
+            if command.contains("--listen stdio://") {
+                transport = "stdio"
+            } else if command.contains("--listen unix://") {
+                transport = "unix"
+            } else if command.contains("--analytics-default-enabled") {
+                transport = "desktop"
+            } else {
+                transport = "unknown"
+            }
+            return CodexAppServerProcessSnapshot(
+                pid: pid,
+                parentPid: parentPid,
+                processGroupId: processGroupId,
+                elapsed: parts[3],
+                transport: transport,
+                command: command
+            )
+        }
 }
 
 public func outboundSmokeAttachmentEvidence(marker: String, afterRowId: Int64, config: BridgeConfig, runner: ProcessRunner = ProcessRunner()) async throws -> OutboundSmokeEvidence? {
