@@ -18,11 +18,13 @@ Success means outbound text and media can never look successful when Messages re
   - Text smoke passed on row 731.
   - Current text smoke passed on row 745 with marker `CODEXMSGCTL_SMOKE_TEXT_4900E017-5AB5-482C-A02E-47099DB5664A`.
   - Post-restart text smoke passed on row 747 with marker `CODEXMSGCTL_SMOKE_TEXT_6FCFBD88-EDB4-479C-B949-B9B1B12ACAA0`.
+  - Post-classifier/media-restart text smoke passed on row 749 with marker `CODEXMSGCTL_SMOKE_TEXT_3F39B797-5016-4F66-9F57-03DDAD7E2F1A`; `message.error=0`, `date_delivered=0`, and the DB row was observed.
   - Old file-attachment smoke exposed row 732 with `error=25`, `transfer_state=6`; this was useful evidence but not the final image-media gate.
   - Image attachment smoke passed on row 737 after normalizing the configured phone handle before opening the `sms:` URL; Messages renamed the pasted image to `IMG_5972.jpeg`, so verification uses the DB baseline row instead of requiring the marker in `transfer_name`.
   - A later image attachment smoke hit a no-row AppleScript/clipboard failure after baseline row 743. Attachment verification now polls longer and retries once only when no Messages DB row appears; the hardened smoke then passed on row 744 with `transfer_state=5`.
   - Current attachment smoke passed on row 746 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_B28DE88E-10AF-44FA-8043-A8FE4EAE37AE` after clipboard retry 2; Messages renamed the image to `IMG_1669.jpeg`.
   - Post-restart attachment smoke passed on row 748 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_0B03A564-0DDA-4429-93DC-97C65995A72E`; Messages renamed the image to `IMG_3577.jpeg`, `message.error=0`, `transfer_state=5`.
+  - Post-classifier/media-restart attachment smoke passed on row 750 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_F8524182-A855-4B0C-854B-E1B061FF1E2B`; Messages renamed the image to `IMG_2008.jpeg`, `message.error=0`, `transfer_state=5`, after clipboard retry 2.
   - `/codex smoke attachment` now sends a marked image probe from the Messages command surface and keeps the probe as `lastOutboundSend` while sending an unrecorded summary reply.
 
 ## Goal 2: Media Continuity
