@@ -46,6 +46,7 @@ struct BridgeCoreFocusedTests {
         try testBridgeStateBoxSerializesConcurrentMutations()
         try testBridgeServiceSessionAndJobStartMutationsUseStateOwner()
         try testBridgeServiceAutomationMutationsUseStateOwner()
+        try testBridgeServiceBatchAndCallbackMutationsUseStateOwner()
         try testCapabilityFormattingAndCacheSnapshot()
         try await testCapabilityBestEffortPrefersCache()
         try await testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb()
@@ -1238,6 +1239,24 @@ struct BridgeCoreFocusedTests {
         ]
         for pattern in forbidden {
             try expect(!source.contains(pattern), "BridgeService automation mutation should use state owner instead of direct pattern \(pattern)")
+        }
+    }
+
+    private static func testBridgeServiceBatchAndCallbackMutationsUseStateOwner() throws {
+        let sourcePath = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("BridgeCore/BridgeService.swift")
+        let source = try String(contentsOf: sourcePath, encoding: .utf8)
+        let forbidden = [
+            "state.pendingBatch =",
+            "state.pendingBatch?.items.append",
+            "state.pendingBatch?.deadlineAt =",
+            "state.pendingInteractiveCallback = callback",
+            "state.pendingInteractiveCallback = nil"
+        ]
+        for pattern in forbidden {
+            try expect(!source.contains(pattern), "BridgeService batch/callback mutation should use state owner instead of direct pattern \(pattern)")
         }
     }
 
