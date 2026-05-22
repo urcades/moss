@@ -136,6 +136,7 @@ struct BridgeCoreFocusedTests {
         try expect(bridgeLocalCommandName("/codex history") == "/codex", "exact codex history command")
         try expect(bridgeLocalCommandName("/codex automations") == "/codex", "exact codex automations command")
         try expect(bridgeLocalCommandName("/codex gates") == "/codex", "exact codex gates command")
+        try expect(bridgeLocalCommandName("/codex gates verbose") == "/codex", "exact codex verbose gates command")
         try expect(bridgeLocalCommandName("/codex trusted-gates") == "/codex", "exact codex trusted-gates command")
         try expect(bridgeLocalCommandName("/codex trusted-gates runbook") == "/codex", "exact codex trusted-gates runbook command")
         try expect(bridgeLocalCommandName("/codex retry-last-send") == "/codex", "exact codex retry command")
@@ -788,11 +789,10 @@ struct BridgeCoreFocusedTests {
         let replies = await sink.repliesSnapshot()
 
         try expect(replies.count == 1, "codex gates sends one checklist reply")
-        try expect(replies.first?.text.contains("Apple Messages Bridge gate checklist") == true, "codex gates reply has checklist header")
-        try expect(replies.first?.text.contains("/codex smoke callback, then reply with any short text") == true, "codex gates reply includes trusted callback instructions")
-        try expect(replies.first?.text.contains("swift run codexmsgctl-swift smoke outbound-image-check --recipient +1 --service iMessage") == true, "codex gates reply includes CLI outbound image command")
-        try expect(replies.first?.text.contains("swift run codexmsgctl-swift smoke edit-image-check --recipient +1 --service iMessage") == true, "codex gates reply includes CLI edit image command")
-        try expect(replies.first?.text.contains("/codex trusted-gates") == true, "codex gates reply includes trusted evidence command")
+        try expect(replies.first?.text.contains("Apple Messages Bridge gates:") == true, "codex gates reply has concise checklist header")
+        try expect(replies.first?.text.contains("\n\nTrusted Messages gates:") == true, "codex gates reply separates paragraphs")
+        try expect(replies.first?.text.contains("Live smoke blockers:") == true, "codex gates reply summarizes live blockers")
+        try expect(replies.first?.text.contains("Use /codex gates verbose for the full local/CLI gate checklist.") == true, "codex gates reply points to verbose checklist")
     }
 
     private static func testCodexTrustedGatesCommandRepliesWithEvidence() async throws {

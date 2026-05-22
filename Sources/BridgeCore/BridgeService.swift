@@ -428,6 +428,24 @@ public final class BridgeService: @unchecked Sendable {
         case "/codex automations":
             return codexAutomationRoutesText()
         case "/codex gates":
+            let trustedGateSummary: String
+            do {
+                let evidence = try await trustedGateEvidence(config: config, recipient: recipient, service: service)
+                trustedGateSummary = trustedGateSummaryText(evidence)
+            } catch {
+                trustedGateSummary = "unavailable: \(error)"
+            }
+            return bridgeGateMessagesChecklistText(context: BridgeGateChecklistContext(
+                allowedSender: config.allowedSender,
+                service: service,
+                hasActiveJob: state.activeJob != nil,
+                hasPendingInteractiveCallback: state.pendingInteractiveCallback != nil,
+                hasRecentInboundImage: hasUsableRecentMedia(direction: "inbound", recipient: recipient, service: service),
+                hasRecentOutboundImage: hasUsableRecentMedia(direction: "outbound", recipient: recipient, service: service),
+                activeBridgeSmokeAutomations: activeBridgeSmokeAutomations(in: paths.codexAutomationsDir),
+                liveSmokeResults: state.liveSmokeResults ?? []
+            ), trustedGateSummary: trustedGateSummary)
+        case "/codex gates verbose":
             return bridgeGateChecklistText(context: BridgeGateChecklistContext(
                 allowedSender: config.allowedSender,
                 service: service,
@@ -444,7 +462,7 @@ public final class BridgeService: @unchecked Sendable {
         case "/codex trusted-gates runbook":
             return trustedGateRunbookText()
         default:
-            return "Use /codex status, /codex status verbose, /codex open, /codex history, /codex automations, /codex gates, /codex trusted-gates, /codex trusted-gates runbook, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|bridge-attach|generated-image|edit-image-check|app-server-callback|mcp-elicitation-callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
+            return "Use /codex status, /codex status verbose, /codex open, /codex history, /codex automations, /codex gates, /codex gates verbose, /codex trusted-gates, /codex trusted-gates runbook, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|bridge-attach|generated-image|edit-image-check|app-server-callback|mcp-elicitation-callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
         }
     }
 
@@ -1011,26 +1029,34 @@ public final class BridgeService: @unchecked Sendable {
     }
 
     private func codexStatusSummaryText(capabilitySnapshot: CodexCapabilitySnapshot? = nil, trustedGateSummary: String? = nil) -> String {
-        var lines = [
+        var sections = [
             "Codex bridge status:",
-            "Active job: \(state.activeJob?.status ?? "none")",
-            "Pending callback: \(pendingInteractiveCallbackStatusText())",
-            "Thread: \(state.codexSession.sessionId ?? "none")",
-            "Last outbound send: \(lastOutboundSendStatusText())",
-            "Recent media: \(state.recentMediaRefs?.count ?? 0) ref(s)",
-            "Live smoke: \(liveSmokeResultsStatusText(state.liveSmokeResults ?? []))",
-            "Trusted Messages gates: \(trustedGateSummary ?? "unavailable")",
-            "Bridge smoke automations: \(bridgeSmokeAutomationStatusText(activeBridgeSmokeAutomations(in: paths.codexAutomationsDir)))"
+            """
+            Active job: \(state.activeJob?.status ?? "none")
+            Pending callback: \(pendingInteractiveCallbackStatusText())
+            Thread: \(state.codexSession.sessionId ?? "none")
+            """,
+            """
+            Last outbound send: \(lastOutboundSendStatusText())
+            Recent media: \(state.recentMediaRefs?.count ?? 0) ref(s)
+            """,
+            """
+            Live smoke: \(liveSmokeResultsStatusText(state.liveSmokeResults ?? []))
+            Trusted Messages gates: \(trustedGateSummary ?? "unavailable")
+            Bridge smoke automations: \(bridgeSmokeAutomationStatusText(activeBridgeSmokeAutomations(in: paths.codexAutomationsDir)))
+            """
         ]
         if let capabilitySnapshot {
             let capabilities = capabilitySnapshot.capabilities
-            lines.append("Codex: \(capabilities.version ?? "unknown"); app-server \(capabilities.appServerAvailable ? "yes" : "no"); remote-control \(capabilities.remoteControlAvailable ? "yes" : "no"); thread/read \(capabilities.threadReadAvailable ? "yes" : "no")")
-            lines.append(formatCodexCapabilityCacheLine(capabilitySnapshot))
+            sections.append("""
+            Codex: \(capabilities.version ?? "unknown"); app-server \(capabilities.appServerAvailable ? "yes" : "no"); remote-control \(capabilities.remoteControlAvailable ? "yes" : "no"); thread/read \(capabilities.threadReadAvailable ? "yes" : "no")
+            \(formatCodexCapabilityCacheLine(capabilitySnapshot))
+            """)
         } else {
-            lines.append("Codex capability cache: unavailable or timed out")
+            sections.append("Codex capability cache: unavailable or timed out")
         }
-        lines.append("Use /codex status verbose for full diagnostics.")
-        return lines.joined(separator: "\n")
+        sections.append("Use /codex status verbose for full diagnostics.")
+        return sections.joined(separator: "\n\n")
     }
 
     private func activeApprovalStatusText() -> String {
@@ -2022,7 +2048,7 @@ private struct CancelTransition {
 
 public func bridgeLocalCommandName(_ text: String) -> String? {
     let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    if ["/codex status", "/codex status verbose", "/codex open", "/codex history", "/codex automations", "/codex gates", "/codex trusted-gates", "/codex trusted-gates runbook", "/codex retry-last-send"].contains(normalized) || isCodexSmokeCommand(normalized) {
+    if ["/codex status", "/codex status verbose", "/codex open", "/codex history", "/codex automations", "/codex gates", "/codex gates verbose", "/codex trusted-gates", "/codex trusted-gates runbook", "/codex retry-last-send"].contains(normalized) || isCodexSmokeCommand(normalized) {
         return "/codex"
     }
     let command = normalized.split(separator: " ").first.map(String.init)

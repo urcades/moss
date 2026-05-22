@@ -118,6 +118,57 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
     """
 }
 
+public func bridgeGateMessagesChecklistText(context: BridgeGateChecklistContext, trustedGateSummary: String) -> String {
+    let activeStatus = context.hasActiveJob ? "blocked until active job clears or /cancel runs" : "ready"
+    let callbackStatus = context.hasPendingInteractiveCallback ? "blocked until pending callback completes, expires, or /cancel runs" : "ready"
+    let inboundStatus = context.hasRecentInboundImage ? "ready" : "needs trusted inbound image first"
+    let outboundStatus = context.hasRecentOutboundImage ? "ready" : "will create a marked outbound image"
+    let liveFailures = context.liveSmokeResults
+        .filter { strictLiveSmokeFailure($0) != nil }
+        .sorted { lhs, rhs in
+            if lhs.name == rhs.name { return lhs.marker < rhs.marker }
+            return lhs.name < rhs.name
+        }
+    let acceptedCapabilityBlockers = context.liveSmokeResults
+        .filter(isAcceptedCapabilityBlocker)
+        .sorted { lhs, rhs in
+            if lhs.name == rhs.name { return lhs.marker < rhs.marker }
+            return lhs.name < rhs.name
+        }
+
+    var sections = [
+        "Apple Messages Bridge gates:",
+        """
+        Trusted Messages gates: \(trustedGateSummary)
+        Active job: \(activeStatus)
+        Pending callback: \(callbackStatus)
+        """,
+        """
+        Inbound-image smoke: \(inboundStatus)
+        Outbound-image smoke: \(outboundStatus)
+        Bridge smoke automations: \(bridgeSmokeAutomationStatusText(context.activeBridgeSmokeAutomations))
+        """
+    ]
+
+    if !liveFailures.isEmpty {
+        sections.append("Live smoke blockers:\n" + liveFailures.map { "- \(strictLiveSmokeSummary($0))" }.joined(separator: "\n"))
+    } else {
+        sections.append("Live smoke blockers: none")
+    }
+
+    if !acceptedCapabilityBlockers.isEmpty {
+        sections.append("Accepted capability blockers:\n" + acceptedCapabilityBlockers.map { "- \(strictLiveSmokeSummary($0))" }.joined(separator: "\n"))
+    }
+
+    sections.append("""
+    Next:
+    - Send the next trusted command shown by /codex trusted-gates.
+    - Use /codex gates verbose for the full local/CLI gate checklist.
+    """)
+
+    return sections.joined(separator: "\n\n")
+}
+
 public func bridgeGateStrictReport(context: BridgeGateChecklistContext, trustedGateEvidence: [TrustedGateEvidence]) -> BridgeGateStrictReport {
     let trustedSummary = trustedGateSummaryText(trustedGateEvidence)
     let trustedOpen = trustedGateEvidence.contains { $0.status != "observed" }
