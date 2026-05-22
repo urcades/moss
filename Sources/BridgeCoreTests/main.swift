@@ -90,6 +90,8 @@ struct BridgeCoreFocusedTests {
         try await testAppServerBackendNormalizesOddDynamicToolResponses()
         try await testAppServerBackendResolvesInteractiveCallbacksWithResponder()
         try await testAppServerBackendBlocksUserInputAndElicitationRequests()
+        try await testAppServerBackendDeniesApprovalRequestsWithoutHanging()
+        try await testAppServerBackendFailsUnsupportedServerRequestsVisibly()
         try await testBridgeDefaultBackendInteractiveCallbackEndToEnd()
         try await testAppServerBackendNamesNewThreadFromPrompt()
         try await testAppServerBackendResumesThreadAndIgnoresMalformedNotifications()
@@ -2406,6 +2408,63 @@ struct BridgeCoreFocusedTests {
             return false
         }
         try expect(blockers.count == 1, "requestUserInput emits a visible blocker event")
+    }
+
+    private static func testAppServerBackendDeniesApprovalRequestsWithoutHanging() async throws {
+        let fake = FakeCodexAppServerConnection(lines: [
+            #"{"id":1,"result":{"ok":true}}"#,
+            #"{"id":2,"result":{"thread":{"id":"thread-approval","path":"/tmp/thread.jsonl"}}}"#,
+            #"{"id":3,"result":{"turn":{"id":"turn-approval"}}}"#,
+            #"{"id":80,"method":"item/commandExecution/requestApproval","params":{"threadId":"thread-approval","turnId":"turn-approval","command":"curl example.com"}}"#,
+            #"{"id":81,"method":"execCommandApproval","params":{"command":["curl","example.com"]}}"#,
+            #"{"method":"item/completed","params":{"threadId":"thread-approval","turnId":"turn-approval","item":{"type":"agentMessage","id":"item-1","phase":"final_answer","text":"approval requests handled"}}}"#,
+            #"{"method":"turn/completed","params":{"threadId":"thread-approval","turn":{"id":"turn-approval","status":"completed","error":null}}}"#
+        ])
+        var config = defaultBridgeConfig(paths: testPaths(), codexCommand: "/bin/echo")
+        config.timeoutMs = 1_000
+        let backend = CodexAppServerBackend(config: config, paths: testPaths()) { fake }
+
+        let response = try await backend.invoke(PromptRequest(promptText: "Exercise approval requests.", attachments: []), sessionId: nil, onEvent: nil)
+
+        try expect(response.text == "approval requests handled", "approval requests do not hang the app-server turn")
+        let commandReply = fake.sentMessages.first { ($0["id"] as? Int) == 80 }
+        let commandResult = commandReply?["result"] as? [String: Any]
+        try expect(commandResult?["decision"] as? String == "decline", "new command approval requests are declined explicitly")
+        let legacyReply = fake.sentMessages.first { ($0["id"] as? Int) == 81 }
+        let legacyResult = legacyReply?["result"] as? [String: Any]
+        try expect(legacyResult?["decision"] as? String == "denied", "legacy command approval requests are denied explicitly")
+    }
+
+    private static func testAppServerBackendFailsUnsupportedServerRequestsVisibly() async throws {
+        let fake = FakeCodexAppServerConnection(lines: [
+            #"{"id":1,"result":{"ok":true}}"#,
+            #"{"id":2,"result":{"thread":{"id":"thread-unsupported","path":"/tmp/thread.jsonl"}}}"#,
+            #"{"id":3,"result":{"turn":{"id":"turn-unsupported"}}}"#,
+            #"{"id":82,"method":"attestation/generate","params":{"threadId":"thread-unsupported","turnId":"turn-unsupported"}}"#,
+            #"{"method":"item/completed","params":{"threadId":"thread-unsupported","turnId":"turn-unsupported","item":{"type":"agentMessage","id":"item-1","phase":"final_answer","text":"should not be accepted silently"}}}"#,
+            #"{"method":"turn/completed","params":{"threadId":"thread-unsupported","turn":{"id":"turn-unsupported","status":"completed","error":null}}}"#
+        ])
+        var config = defaultBridgeConfig(paths: testPaths(), codexCommand: "/bin/echo")
+        config.timeoutMs = 1_000
+        let backend = CodexAppServerBackend(config: config, paths: testPaths()) { fake }
+        let eventCollector = CodexEventCollector()
+
+        do {
+            _ = try await backend.invoke(PromptRequest(promptText: "Exercise unsupported server request.", attachments: []), sessionId: nil) { event in
+                eventCollector.append(event)
+            }
+            throw TestFailure(description: "Expected unsupported server request to fail visibly")
+        } catch let error as CodexBackendFailure {
+            try expect(error.message.contains("client attestation"), "unsupported server request explains the missing client capability")
+        }
+        let unsupportedReply = fake.sentMessages.first { ($0["id"] as? Int) == 82 }
+        let unsupportedError = unsupportedReply?["error"] as? [String: Any]
+        try expect((unsupportedError?["message"] as? String)?.contains("client attestation") == true, "unsupported server request receives JSON-RPC error")
+        let blockers = eventCollector.snapshot().filter { event in
+            if case .blocker = event { return true }
+            return false
+        }
+        try expect(blockers.count == 1, "unsupported server request emits a visible blocker")
     }
 
     private static func testBridgeDefaultBackendInteractiveCallbackEndToEnd() async throws {

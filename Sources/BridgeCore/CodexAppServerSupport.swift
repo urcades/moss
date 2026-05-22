@@ -534,11 +534,6 @@ private final class CodexAppServerRPC {
               let method = message["method"] as? String else {
             return false
         }
-        guard method == "item/tool/call" ||
-            method == "item/tool/requestUserInput" ||
-            method == "mcpServer/elicitation/request" else {
-            return false
-        }
         let response = try serverRequestResponse(method: method, requestId: requestId, params: message["params"] as? [String: Any])
         onNotification?(serverRequestNotification(method: method, response: response))
         var reply = response
@@ -549,6 +544,10 @@ private final class CodexAppServerRPC {
 
     private func serverRequestResponse(method: String, requestId: Any, params: [String: Any]?) throws -> [String: Any] {
         switch method {
+        case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
+            return ["result": ["decision": "decline"]]
+        case "execCommandApproval", "applyPatchApproval":
+            return ["result": ["decision": "denied"]]
         case "item/tool/call":
             return try dynamicToolCallResponse(params: params)
         case "item/tool/requestUserInput":
@@ -564,6 +563,18 @@ private final class CodexAppServerRPC {
             }
             return unsupportedInteractiveCallbackResponse(
                 "Codex app-server requires MCP elicitation that the Messages bridge cannot answer. Ask the user to continue in Codex Desktop or send a new Messages reply with the requested confirmation."
+            )
+        case "item/permissions/requestApproval":
+            return unsupportedInteractiveCallbackResponse(
+                "Codex app-server requested a permission profile change that the Messages bridge cannot safely grant. Ask the user to continue in Codex Desktop or send a new Messages reply with a narrower request."
+            )
+        case "account/chatgptAuthTokens/refresh":
+            return unsupportedInteractiveCallbackResponse(
+                "Codex app-server requested ChatGPT auth token refresh through a client API that the Messages bridge cannot provide."
+            )
+        case "attestation/generate":
+            return unsupportedInteractiveCallbackResponse(
+                "Codex app-server requested client attestation that the Messages bridge cannot provide."
             )
         default:
             return [

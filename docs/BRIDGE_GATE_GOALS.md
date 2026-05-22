@@ -122,6 +122,7 @@ Success means app-server `item/tool/requestUserInput` and `mcpServer/elicitation
   - `/codex smoke app-server-callback` now starts a real app-server turn from Apple Messages with a prompt that must use app-server interactive user input before final answer. Deterministic coverage proves the command starts the default backend, sends the callback prompt, routes the trusted reply, and completes the original turn.
   - `codexmsgctl-swift smoke app-server-callback` now runs the same real app-server prompt with an automatic JSON-RPC callback responder and fails distinctly when no callback request is emitted.
   - Live CLI proof on 2026-05-22 reached app-server thread `019e4fb9-e17e-7132-9261-6e5605ab6e21` / turn `019e4fb9-e36e-7a82-bc58-fa965ab16a35`, but Codex completed with `BLOCKED request_user_input is unavailable in Default mode` and emitted no `item/tool/requestUserInput` request.
+  - The app-server request loop now recognizes the full current server-request method set from the generated protocol schema. Command/file approval requests are safely declined, and unsupported client-only requests such as attestation or auth-token refresh return visible JSON-RPC errors instead of being ignored.
   - Remaining gap: identify whether app-server can start Messages-launched turns in a callback-capable mode or route a real MCP elicitation from a connector/plugin; then rerun both CLI and trusted `/codex smoke app-server-callback`.
 
 ## Goal 5: Runtime State And Process Supervision
