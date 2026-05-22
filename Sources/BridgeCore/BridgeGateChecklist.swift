@@ -64,7 +64,6 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
     Trusted Messages gates:
     - /codex status
     - /codex gates
-    - /codex trusted-gates
     - /codex smoke text
     - /codex smoke attachment
     - /codex smoke bridge-attach
@@ -78,6 +77,9 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
     - /codex smoke automation
     - /codex smoke callback, then reply with any short text
     - /codex smoke app-server-callback, then reply to the app-server prompt
+
+    Trusted evidence observer:
+    - /codex trusted-gates
 
     Open proof gaps:
     - Live trusted-chat evidence for `/codex smoke app-server-callback`.

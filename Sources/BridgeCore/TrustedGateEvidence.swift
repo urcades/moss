@@ -44,7 +44,6 @@ public struct TrustedGateEvidence: Codable, Equatable, Sendable {
 public let defaultTrustedGateCommands: [String] = [
     "/codex status",
     "/codex gates",
-    "/codex trusted-gates",
     "/codex smoke text",
     "/codex smoke attachment",
     "/codex smoke bridge-attach",

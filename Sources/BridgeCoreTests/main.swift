@@ -623,7 +623,7 @@ struct BridgeCoreFocusedTests {
 
         try expect(replies.count == 1, "codex trusted-gates sends one evidence reply")
         try expect(replies.first?.text.contains("Trusted Messages gate evidence:") == true, "codex trusted-gates reply has evidence header")
-        try expect(replies.first?.text.contains("/codex trusted-gates: missing-outbound; inbound row 1") == true, "codex trusted-gates reports its inbound row")
+        try expect(replies.first?.text.contains("/codex trusted-gates:") == false, "codex trusted-gates is an observer, not a required gate")
         try expect(replies.first?.text.contains("Next trusted command to send from Apple Messages: /codex status") == true, "codex trusted-gates names next missing command")
     }
 
@@ -2745,6 +2745,7 @@ struct BridgeCoreFocusedTests {
         try expect(text.contains("swift run codexmsgctl-swift smoke outbound-image-check --recipient +1 --service iMessage"), "gate checklist includes outbound image smoke")
         try expect(text.contains("swift run codexmsgctl-swift smoke bridge-attach --recipient +1 --service iMessage"), "gate checklist includes bridge attach smoke")
         try expect(text.contains("/codex smoke generated-image"), "gate checklist includes generated image smoke")
+        try expect(text.contains("Trusted evidence observer:"), "gate checklist separates trusted evidence observer")
         try expect(text.contains("/codex smoke callback, then reply with any short text"), "gate checklist includes two-step trusted callback smoke")
         try expect(text.contains("/codex smoke app-server-callback, then reply to the app-server prompt"), "gate checklist includes real app-server callback smoke")
         try expect(text.contains("needs trusted inbound image first"), "gate checklist reports inbound image readiness")
