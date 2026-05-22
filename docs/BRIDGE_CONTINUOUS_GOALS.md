@@ -54,7 +54,7 @@ Evidence:
 - Doctor reports app-server process groups and orphan checks.
 - Timeout/cancel tests verify process-tree cleanup.
 
-Current status: field merge and path-scoped state write locking exist; the full actor/reducer migration is still open.
+Current status: field merge and path-scoped state write locking exist, and `BridgeService` now stores its in-memory state behind a serialized `BridgeStateBox` with deterministic concurrent-mutation coverage. The full actor/reducer migration is still open because several service methods still perform multi-step read/modify/save flows outside a single reducer action.
 
 ## Goal F: Capability Drift And Changelog Adoption
 

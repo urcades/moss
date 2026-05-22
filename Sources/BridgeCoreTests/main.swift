@@ -43,6 +43,7 @@ struct BridgeCoreFocusedTests {
         try testBridgeStateSavePreservesConcurrentAutomationFields()
         try testBridgeStateSaveMergesSameActiveJobDetails()
         try testBridgeStateUpdateSerializesSeparateStoreInstances()
+        try testBridgeStateBoxSerializesConcurrentMutations()
         try testCapabilityFormattingAndCacheSnapshot()
         try await testCapabilityBestEffortPrefersCache()
         try await testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb()
@@ -1166,6 +1167,38 @@ struct BridgeCoreFocusedTests {
         let reloaded = try routeStore.load()
         try expect(reloaded.automationRoutes?.contains(where: { $0.automationId == "serialized-route" }) == true, "serialized update keeps automation route")
         try expect(reloaded.recentMediaRefs?.contains(where: { $0.path == "/tmp/serialized-source.png" }) == true, "serialized update keeps media ref")
+    }
+
+    private static func testBridgeStateBoxSerializesConcurrentMutations() throws {
+        let box = BridgeStateBox(defaultBridgeState())
+        let queue = DispatchQueue(label: "BridgeStateBoxTests", attributes: .concurrent)
+        let group = DispatchGroup()
+        for index in 0..<50 {
+            group.enter()
+            queue.async {
+                box.mutate { state in
+                    state.lastProcessedRowId = max(state.lastProcessedRowId, Int64(index))
+                    var refs = state.recentMediaRefs ?? []
+                    refs.append(RecentMediaRef(
+                        direction: "inbound",
+                        rowId: Int64(index),
+                        handleId: "+1",
+                        service: "iMessage",
+                        path: "/tmp/box-\(index).png",
+                        transferName: "box-\(index).png",
+                        kind: "image",
+                        createdAt: "2026-05-22T00:00:\(String(format: "%02d", index % 60)).000Z",
+                        exists: true
+                    ))
+                    state.recentMediaRefs = refs
+                }
+                group.leave()
+            }
+        }
+        group.wait()
+        let snapshot = box.snapshot()
+        try expect(snapshot.lastProcessedRowId == 49, "state box preserves max row id across concurrent mutations")
+        try expect(snapshot.recentMediaRefs?.count == 50, "state box preserves every concurrent media ref mutation")
     }
 
     private static func testCapabilityFormattingAndCacheSnapshot() throws {

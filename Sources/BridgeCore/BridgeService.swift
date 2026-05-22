@@ -11,11 +11,14 @@ public final class BridgeService: @unchecked Sendable {
     private let makeDefaultCodex: BridgeDefaultCodexFactory
     private let useDefaultCodexBackend: Bool
     private let now: () -> Date
-    private var state: BridgeState
+    private let stateBox: BridgeStateBox
     private var stopped = false
     private var queue: [Job] = []
     private var activeCodexTask: Task<Void, Never>?
-    private let stateLock = NSLock()
+    private var state: BridgeState {
+        get { stateBox.snapshot() }
+        set { stateBox.replace(newValue) }
+    }
 
     public init(
         paths: RuntimePaths = .current(),
@@ -37,7 +40,7 @@ public final class BridgeService: @unchecked Sendable {
         }
         self.useDefaultCodexBackend = useDefaultCodexBackend
         self.now = now
-        self.state = defaultBridgeState()
+        self.stateBox = BridgeStateBox(defaultBridgeState())
     }
 
     public convenience init(paths: RuntimePaths = .current()) {
@@ -314,16 +317,16 @@ public final class BridgeService: @unchecked Sendable {
             expiresAt: DateCodec.iso(deadline),
             status: "pending"
         )
-        stateLock.lock()
-        state.pendingInteractiveCallback = callback
-        if var job = state.activeJob, job.jobId == jobId {
-            job.status = "waitingForUser"
-            job.lastObservedSummary = "Codex is waiting for a Messages reply to continue."
-            job.lastEventAt = DateCodec.iso(startedAt)
-            state.activeJob = job
+        let stateToSave = stateBox.mutate { state in
+            state.pendingInteractiveCallback = callback
+            if var job = state.activeJob, job.jobId == jobId {
+                job.status = "waitingForUser"
+                job.lastObservedSummary = "Codex is waiting for a Messages reply to continue."
+                job.lastEventAt = DateCodec.iso(startedAt)
+                state.activeJob = job
+            }
+            return state
         }
-        let stateToSave = state
-        stateLock.unlock()
         try stores.state.save(stateToSave)
         try runAsyncBlocking {
             try await self.sendReplyRecording(
@@ -368,16 +371,18 @@ public final class BridgeService: @unchecked Sendable {
     }
 
     private func markInteractiveCallbackFinished(callbackId: String, status: String, failureText: String?) {
-        stateLock.lock()
-        if var callback = state.pendingInteractiveCallback, callback.callbackId == callbackId {
+        let snapshots = stateBox.mutate { state -> [BridgeState] in
+            guard var callback = state.pendingInteractiveCallback, callback.callbackId == callbackId else { return [] }
             callback.status = status
             callback.failureText = failureText
             state.pendingInteractiveCallback = callback
-            try? stores.state.save(state)
+            let terminalState = state
             state.pendingInteractiveCallback = nil
-            try? stores.state.save(state)
+            return [terminalState, state]
         }
-        stateLock.unlock()
+        for snapshot in snapshots {
+            try? stores.state.save(snapshot)
+        }
     }
 
     private func handleLocalCommand(_ command: String, message: MessageItem) async throws {
@@ -1593,26 +1598,30 @@ public final class BridgeService: @unchecked Sendable {
     }
 
     private func updateActiveJob(jobId: String, _ update: (inout ActiveJob) -> Void) {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        guard var job = state.activeJob, job.jobId == jobId else { return }
-        update(&job)
-        state.activeJob = job
-        try? stores.state.save(state)
+        let stateToSave = stateBox.mutate { state -> BridgeState? in
+            guard var job = state.activeJob, job.jobId == jobId else { return nil }
+            update(&job)
+            state.activeJob = job
+            return state
+        }
+        if let stateToSave {
+            try? stores.state.save(stateToSave)
+        }
     }
 
     private func activeJobStatus(jobId: String) -> String? {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        guard state.activeJob?.jobId == jobId else { return nil }
-        return state.activeJob?.status
+        let snapshot = stateBox.snapshot()
+        guard snapshot.activeJob?.jobId == jobId else { return nil }
+        return snapshot.activeJob?.status
     }
 
     private func clearActiveJob(jobId: String) {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        guard state.activeJob?.jobId == jobId else { return }
-        state.activeJob = nil
+        let cleared = stateBox.mutate { state -> Bool in
+            guard state.activeJob?.jobId == jobId else { return false }
+            state.activeJob = nil
+            return true
+        }
+        guard cleared else { return }
         activeCodexTask = nil
         try? stores.state.save(state)
     }
