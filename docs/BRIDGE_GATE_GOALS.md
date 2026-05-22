@@ -83,6 +83,11 @@ Success means the bridge continuously reports what Codex can really do from Mess
 - Live gates:
   - `doctor --probe-computer-use` returns within its timeout and prints exact blocker text.
   - `/codex status` agrees with `codexmsgctl-swift status` about callable tools.
+- Current status:
+  - `swift run codexmsgctl-swift smoke computer-use` passed with real `list_apps` and `get_app_state` calls and marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_2AFB06AB-BA16-4C44-B947-5543EEBB8654`.
+  - `swift run codexmsgctl-swift smoke chrome` invoked the Chrome skill path and returned the exact blocker `privileged native pipe bridge is not available; browser-client is not trusted` with marker `CODEXMSGCTL_SMOKE_CHROME_9E2AAA1F-51AE-44D3-9B60-6A63DBEED695`.
+  - `swift run codexmsgctl-swift smoke browser` invoked the Browser skill path and returned the exact blocker `Browser is not available: iab` with marker `CODEXMSGCTL_SMOKE_BROWSER_9BC2108C-E062-4CA4-8F74-CD305E23A487`.
+  - `codexmsgctl-swift smoke` now has standalone `chrome`, `browser`, and `computer-use` subcommands that print app-server pid, thread id, turn id, progress, final response, and blocker text.
 
 ## Required Green Gate Set
 

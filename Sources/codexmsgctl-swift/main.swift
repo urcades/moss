@@ -22,7 +22,7 @@ struct CodexMsgCtlSwift {
           codexmsgctl-swift configure --safety standard|permissive|preserve
           codexmsgctl-swift configure --preserve-safety
           codexmsgctl-swift doctor [--probe-computer-use]
-          codexmsgctl-swift smoke text|attachment|automation [--recipient HANDLE] [--service iMessage|SMS]
+          codexmsgctl-swift smoke text|attachment|automation|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift broker start|stop|status|doctor|events|dry-run-scan
           codexmsgctl-swift reset
         """)
@@ -151,7 +151,7 @@ struct CodexMsgCtlSwift {
     private static func runSmokeCommand(_ args: [String], paths: RuntimePaths, stores: RuntimeStores) async throws {
         let subcommand = args.first ?? "help"
         if subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
-            print("Usage: codexmsgctl-swift smoke text|attachment|automation [--recipient HANDLE] [--service iMessage|SMS]")
+            print("Usage: codexmsgctl-swift smoke text|attachment|automation|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]")
             return
         }
         let config = try stores.config.load()
@@ -167,6 +167,8 @@ struct CodexMsgCtlSwift {
             try await runAttachmentSmoke(recipient: recipient, service: service, config: config, paths: paths)
         case "automation":
             try runAutomationSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
+        case "chrome", "browser", "computer-use":
+            try await runCapabilitySmoke(subcommand, config: config, paths: paths)
         default:
             throw StoreError.validation("Unknown smoke command: \(subcommand)")
         }
@@ -252,6 +254,72 @@ struct CodexMsgCtlSwift {
         print("Schedule: \(result.automation.rrule)")
         print("Route: \(result.route.recipient) via \(result.route.service)")
         print("Smoke automation passed.")
+    }
+
+    private static func runCapabilitySmoke(_ capability: String, config: BridgeConfig, paths: RuntimePaths) async throws {
+        let marker = "CODEXMSGCTL_SMOKE_\(capability.replacingOccurrences(of: "-", with: "_").uppercased())_\(UUID().uuidString)"
+        var smokeConfig = config
+        smokeConfig.timeoutMs = min(config.timeoutMs, 60_000)
+        let request = PromptRequest(promptText: capabilitySmokePrompt(capability: capability, marker: marker), attachments: [])
+        let events = CapabilitySmokeEvents()
+        print("Smoke \(capability) marker: \(marker)")
+        do {
+            let response = try await CodexAppServerBackend(config: smokeConfig, paths: paths).invoke(request, sessionId: nil) { event in
+                switch event {
+                case .processStarted(let pid):
+                    events.setProcessPid(pid)
+                    print("App-server pid: \(pid)")
+                case .sessionStarted(let id):
+                    events.setThreadId(id)
+                    print("Thread id: \(id)")
+                case .turnStarted(let id):
+                    events.setTurnId(id)
+                    print("Turn id: \(id)")
+                case .progress(let text), .milestone(let text):
+                    print("Progress: \(text)")
+                case .blocker(let text):
+                    print("Blocker: \(text)")
+                case .question(let text):
+                    print("Question: \(text)")
+                }
+            }
+            if let processPid = events.processPid() {
+                _ = terminateProcessTree(rootPid: processPid)
+            }
+            print("Response: \(response.text)")
+            print("Thread id: \(response.sessionId ?? events.threadId() ?? "none")")
+            print("Turn id: \(events.turnId() ?? "none")")
+            guard response.text.contains(marker) else {
+                throw StoreError.validation("Smoke \(capability) failed: response did not contain marker \(marker).")
+            }
+            print("Smoke \(capability) passed.")
+        } catch let error as CodexBackendFailure {
+            if let processPid = events.processPid() {
+                _ = terminateProcessTree(rootPid: processPid)
+            }
+            let detail = error.blockedText ?? error.message
+            print("Smoke \(capability) blocker/failure: \(detail)")
+            throw StoreError.validation("Smoke \(capability) failed: \(detail)")
+        } catch {
+            if let processPid = events.processPid() {
+                _ = terminateProcessTree(rootPid: processPid)
+            }
+            throw error
+        }
+    }
+
+    private static func capabilitySmokePrompt(capability: String, marker: String) -> String {
+        switch capability {
+        case "computer-use":
+            return "Use Computer Use to inspect Safari. First call list_apps, then get_app_state for Safari. Do not navigate, click, type, or change any app state. Reply only with \(marker) SUCCESS and the Safari window title, or \(marker) BLOCKED and the exact blocker text."
+        case "chrome":
+            return "Use @Chrome to inspect the current Chrome tabs or current Chrome page without navigating, clicking, typing, or changing browser state. Reply only with \(marker) SUCCESS and a short observed title or URL, or \(marker) BLOCKED and the exact blocker text."
+        case "browser":
+            let encodedMarker = marker.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? marker
+            return "Use @Browser to open this local data URL and read the page text: data:text/html,<title>\(encodedMarker)</title><main>\(encodedMarker)</main>. Reply only with \(marker) SUCCESS if the browser page contained the marker, or \(marker) BLOCKED and the exact blocker text."
+        default:
+            return "Use \(capability) and reply only with \(marker) SUCCESS, or \(marker) BLOCKED and the exact blocker text."
+        }
     }
 
     private static func smokePNGData() throws -> Data {
@@ -432,5 +500,48 @@ struct CodexMsgCtlSwift {
         default:
             throw StoreError.validation("Unknown broker command: \(subcommand)")
         }
+    }
+}
+
+private final class CapabilitySmokeEvents: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pid: Int32?
+    private var thread: String?
+    private var turn: String?
+
+    func setProcessPid(_ value: Int32) {
+        lock.lock()
+        pid = value
+        lock.unlock()
+    }
+
+    func processPid() -> Int32? {
+        lock.lock()
+        defer { lock.unlock() }
+        return pid
+    }
+
+    func setThreadId(_ value: String) {
+        lock.lock()
+        thread = value
+        lock.unlock()
+    }
+
+    func threadId() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return thread
+    }
+
+    func setTurnId(_ value: String) {
+        lock.lock()
+        turn = value
+        lock.unlock()
+    }
+
+    func turnId() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return turn
     }
 }
