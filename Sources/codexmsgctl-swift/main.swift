@@ -260,8 +260,16 @@ struct CodexMsgCtlSwift {
     }
 
     private static func runInboundImageCheckSmoke(recipient: String, service: String, config: BridgeConfig, paths: RuntimePaths, stores: RuntimeStores) async throws {
-        let state = try stores.state.load()
-        let smoke = try buildInboundImageSmokeRequest(recipient: recipient, service: service, recentMediaRefs: state.recentMediaRefs ?? [])
+        var state = try stores.state.load()
+        var refs = state.recentMediaRefs ?? []
+        if (try? buildInboundImageSmokeRequest(recipient: recipient, service: service, recentMediaRefs: refs)) == nil,
+           let recovered = try await latestTrustedInboundImageMediaRef(config: config, recipient: recipient, service: service) {
+            refs.append(recovered)
+            state.recentMediaRefs = Array(refs.suffix(30))
+            try stores.state.save(state)
+            print("Recovered inbound image from Messages DB row: \(recovered.rowId.map(String.init) ?? "none")")
+        }
+        let smoke = try buildInboundImageSmokeRequest(recipient: recipient, service: service, recentMediaRefs: refs)
         print("Smoke inbound-image-check marker: \(smoke.marker)")
         print("Inbound image row: \(smoke.mediaRef.rowId.map(String.init) ?? "none")")
         print("Inbound image path: \(smoke.mediaRef.path)")
@@ -271,7 +279,8 @@ struct CodexMsgCtlSwift {
             marker: smoke.marker,
             request: smoke.request,
             config: config,
-            paths: paths
+            paths: paths,
+            requireSuccessToken: true
         )
     }
 
@@ -284,7 +293,7 @@ struct CodexMsgCtlSwift {
         try await runAppServerMarkerSmoke(label: capability, marker: marker, request: request, config: smokeConfig, paths: paths)
     }
 
-    private static func runAppServerMarkerSmoke(label: String, marker: String, request: PromptRequest, config: BridgeConfig, paths: RuntimePaths) async throws {
+    private static func runAppServerMarkerSmoke(label: String, marker: String, request: PromptRequest, config: BridgeConfig, paths: RuntimePaths, requireSuccessToken: Bool = false) async throws {
         let events = CapabilitySmokeEvents()
         do {
             let response = try await CodexAppServerBackend(config: config, paths: paths).invoke(request, sessionId: nil) { event in
@@ -314,6 +323,9 @@ struct CodexMsgCtlSwift {
             print("Turn id: \(events.turnId() ?? "none")")
             guard response.text.contains(marker) else {
                 throw StoreError.validation("Smoke \(label) failed: response did not contain marker \(marker).")
+            }
+            if requireSuccessToken, !response.text.localizedCaseInsensitiveContains("SUCCESS") {
+                throw StoreError.validation("Smoke \(label) failed: response contained marker but did not report SUCCESS. Response: \(response.text)")
             }
             print("Smoke \(label) passed.")
         } catch let error as CodexBackendFailure {

@@ -23,6 +23,7 @@ struct BridgeCoreFocusedTests {
         try await testCodexSmokeAttachmentCommandSendsProbeAndSummary()
         try testInboundImageSmokeBuildsLocalImageRequest()
         try testInboundImageSmokeRequiresTrustedInboundImage()
+        try await testInboundImageSmokeRecoversLatestTrustedImageFromMessagesDb()
         try testDiagnosticMentionOfDailyBriefingDoesNotCreateAutomation()
         try testCodexAutomationCreationWritesAppAutomationToml()
         try testCodexAutomationSmokeCreatesRouteAndStatus()
@@ -250,19 +251,49 @@ struct BridgeCoreFocusedTests {
     }
 
     private static func testInboundImageSmokeRequiresTrustedInboundImage() throws {
+        let unsupportedPath = NSTemporaryDirectory() + "/bridge-inbound-smoke-source.heic"
+        FileManager.default.createFile(atPath: unsupportedPath, contents: Data("image".utf8), attributes: nil)
         do {
             _ = try buildInboundImageSmokeRequest(
                 recipient: "+1",
                 service: "iMessage",
                 recentMediaRefs: [
-                    RecentMediaRef(direction: "outbound", rowId: 20, handleId: "+1", service: "iMessage", path: "/tmp/missing.png", transferName: "missing.png", kind: "image", createdAt: "2026-05-20T09:00:00.000Z", exists: true)
+                    RecentMediaRef(direction: "outbound", rowId: 20, handleId: "+1", service: "iMessage", path: "/tmp/missing.png", transferName: "missing.png", kind: "image", createdAt: "2026-05-20T09:00:00.000Z", exists: true),
+                    RecentMediaRef(direction: "inbound", rowId: 21, handleId: "+1", service: "iMessage", path: unsupportedPath, transferName: "source.heic", kind: "image", createdAt: "2026-05-20T09:01:00.000Z", exists: true)
                 ],
                 marker: "CODEXMSGCTL_SMOKE_INBOUND_IMAGE_TEST"
             )
             throw TestFailure(description: "Expected inbound image smoke precondition failure")
         } catch StoreError.validation(let message) {
-            try expect(message.contains("no usable recent inbound image"), "inbound image smoke explains missing inbound image")
+            try expect(message.contains("no usable app-server-compatible recent inbound image"), "inbound image smoke explains missing compatible inbound image")
         }
+    }
+
+    private static func testInboundImageSmokeRecoversLatestTrustedImageFromMessagesDb() async throws {
+        let paths = testPaths()
+        let db = try makeSmokeMessagesDb(paths: paths)
+        let imagePath = paths.tmpDir.appendingPathComponent("inbound-db-image.png")
+        try Data("image".utf8).write(to: imagePath)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.messagesDbPath = db.path
+        try runSQLite(db, """
+        INSERT INTO handle (ROWID, id, service)
+        VALUES (1, '+15206099095', 'iMessage');
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, service, handle_id)
+        VALUES (60, 'inbound-image-guid', '', 0, 0, 0, 'iMessage', 1);
+        INSERT INTO attachment (ROWID, transfer_name, filename, mime_type, uti, transfer_state)
+        VALUES (15, 'inbound-db-image.png', '\(imagePath.path.replacingOccurrences(of: "'", with: "''"))', 'image/png', 'public.png', 5);
+        INSERT INTO message_attachment_join (message_id, attachment_id)
+        VALUES (60, 15);
+        """)
+
+        let ref = try await latestTrustedInboundImageMediaRef(config: config, recipient: "+1-520-609-9095", service: "iMessage")
+
+        try expect(ref?.rowId == 60, "inbound image DB recovery finds latest trusted image row")
+        try expect(ref?.handleId == "+1-520-609-9095", "inbound image DB recovery stores requested recipient identity")
+        try expect(ref?.path == imagePath.path, "inbound image DB recovery expands local path")
+        let smoke = try buildInboundImageSmokeRequest(recipient: "+1-520-609-9095", service: "iMessage", recentMediaRefs: [ref!])
+        try expect(smoke.request.attachments.first?.absolutePath == imagePath.path, "recovered inbound image feeds smoke request")
     }
 
     private static func testDiagnosticMentionOfDailyBriefingDoesNotCreateAutomation() throws {
@@ -1939,11 +1970,22 @@ private func makeSmokeMessagesDb(paths: RuntimePaths) throws -> URL {
       attributedBody BLOB,
       is_from_me INTEGER,
       error INTEGER,
-      date_delivered INTEGER
+      date_delivered INTEGER,
+      date INTEGER,
+      service TEXT,
+      handle_id INTEGER
+    );
+    CREATE TABLE handle (
+      ROWID INTEGER PRIMARY KEY,
+      id TEXT,
+      service TEXT
     );
     CREATE TABLE attachment (
       ROWID INTEGER PRIMARY KEY,
       transfer_name TEXT,
+      filename TEXT,
+      mime_type TEXT,
+      uti TEXT,
       transfer_state INTEGER
     );
     CREATE TABLE message_attachment_join (

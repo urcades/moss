@@ -36,7 +36,10 @@ Success means follow-up prompts like "modify that image" use a real previous cha
   - `codexmsgctl-swift status` and `/codex status` now expose the recent media registry.
   - State saves now merge `recentMediaRefs` so unrelated helper/CLI saves cannot erase the image registry used by "that image" follow-ups.
   - `swift run codexmsgctl-swift smoke inbound-image-check` now validates the current recent inbound image registry, builds a "that image" follow-up, verifies the local image is attached to the app-server request, and then runs a marked app-server probe.
-  - Current live precondition result: no usable recent inbound image is registered yet for the trusted chat, so the smoke fails visibly and tells the operator to send a trusted image first.
+  - If the registry is empty or contains only app-server-incompatible images, inbound-image smoke can recover the latest trusted inbound image from Messages DB and persist it back into `state.json`.
+  - HEIC/HEIF/TIFF/WebP/BMP inbound images recovered from Messages DB are converted to JPEG before app-server invocation, so the smoke verifies an attachable local image rather than accepting an unsupported-image blocker.
+  - Live `swift run codexmsgctl-swift smoke inbound-image-check` passed with marker `CODEXMSGCTL_SMOKE_INBOUND_IMAGE_3A6D9799-EE48-453C-8220-AA8C2F255A3B`: it recovered trusted inbound row 721 (`IMG_5685.HEIC`), converted it to a temp JPEG, and app-server replied `SUCCESS`.
+  - A second live inbound-image smoke passed from the persisted converted media ref with marker `CODEXMSGCTL_SMOKE_INBOUND_IMAGE_5BF48A3C-C0CA-4A82-BAC3-52019F6E86F6`, proving the registry path works after recovery.
 
 ## Goal 3: Automation Truth
 
