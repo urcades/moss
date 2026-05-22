@@ -69,6 +69,7 @@ struct BridgeCoreFocusedTests {
         try await testPendingInteractiveCallbackCapturesNextReply()
         try await testPendingInteractiveCallbackCancelAndTimeout()
         try testCorruptedStateJsonBacksUpAndDefaults()
+        try testStateRecoveryBackupDiagnosticsReportBackupPath()
         try await testAutomationRequestCreatesCodexAutomationFromInterpretedSpec()
         try await testCodexAutomationsReportsCreationInProgress()
         try await testCompletedAutomationSessionIsForwardedOnce()
@@ -1151,7 +1152,9 @@ struct BridgeCoreFocusedTests {
         let replies = try await waitForReplies(sink, count: 3)
         try expect(replies.contains { $0.text == "Got it. I captured that reply for the pending Codex prompt." }, "callback answer is acknowledged")
         try expect(replies.contains { $0.text == "Callback completed with blue." }, "original Codex turn resumes and sends final answer")
-        let state = try stores.state.load()
+        let state = try await waitForState(stores, timeout: 3) { state in
+            state.pendingInteractiveCallback == nil && state.activeJob == nil
+        }
         try expect(state.pendingInteractiveCallback == nil, "completed callback clears pending callback state")
         try expect(state.activeJob == nil, "completed callback turn clears active job")
         try expect(state.codexSession.sessionId == "thread-callback", "callback turn preserves Codex thread id")
@@ -1507,6 +1510,20 @@ struct BridgeCoreFocusedTests {
         let backups = try FileManager.default.contentsOfDirectory(atPath: paths.stateDir.path)
             .filter { $0.hasPrefix("state.json.corrupt-") }
         try expect(!backups.isEmpty, "corrupted state is backed up for diagnosis")
+    }
+
+    private static func testStateRecoveryBackupDiagnosticsReportBackupPath() throws {
+        let paths = testPaths()
+        try FileManager.default.createDirectory(at: paths.stateDir, withIntermediateDirectories: true)
+        let older = paths.stateDir.appendingPathComponent("state.json.corrupt-1000")
+        let newer = paths.stateDir.appendingPathComponent("state.json.corrupt-2000")
+        try Data("older".utf8).write(to: older)
+        try Data("newer".utf8).write(to: newer)
+
+        let backups = recentStateRecoveryBackups(paths: paths, limit: 1)
+
+        try expect(stateRecoveryBackupCount(paths: paths) == 2, "state recovery backup count")
+        try expect(backups.map(\.path) == [newer.path], "state recovery diagnostics report latest backup path")
     }
 
     private static func testAutomationRequestCreatesCodexAutomationFromInterpretedSpec() async throws {
@@ -2144,6 +2161,19 @@ private func waitForReplies(_ sink: CapturingReplySink, count: Int, timeout: Tim
         throw TestFailure(description: "Timed out waiting for \(count) replies; saw \(replies.count)")
     }
     return replies
+}
+
+private func waitForState(_ stores: RuntimeStores, timeout: TimeInterval = 5, condition: (BridgeState) -> Bool) async throws -> BridgeState {
+    let deadline = Date().addingTimeInterval(timeout)
+    var latest = try stores.state.load()
+    while !condition(latest), Date() < deadline {
+        try await Task.sleep(nanoseconds: 50_000_000)
+        latest = try stores.state.load()
+    }
+    guard condition(latest) else {
+        throw TestFailure(description: "Timed out waiting for bridge state condition")
+    }
+    return latest
 }
 
 private func message(rowId: Int64, text: String) -> MessageItem {

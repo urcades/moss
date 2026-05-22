@@ -69,6 +69,7 @@ public final class Doctor: @unchecked Sendable {
         let state = try? stores.state.load()
         var checks: [DoctorCheck] = []
         checks.append(contentsOf: runtimeDiagnosticChecks(paths: paths))
+        checks.append(checkStateRecoveryBackups())
         checks.append(checkCodex(config))
         checks.append(contentsOf: await checkCodexCapabilities(config))
         checks.append(checkTrustedSenders(config))
@@ -100,6 +101,16 @@ public final class Doctor: @unchecked Sendable {
         FileManager.default.isExecutableFile(atPath: config.codex.command)
             ? DoctorCheck(name: "Codex CLI available", ok: true, detail: config.codex.command)
             : DoctorCheck(name: "Codex CLI available", ok: false, detail: "Unable to execute \(config.codex.command). Install Codex.app or update config.json to the bundled Codex CLI path.")
+    }
+
+    private func checkStateRecoveryBackups() -> DoctorCheck {
+        let backups = recentStateRecoveryBackups(paths: paths, limit: 3)
+        guard !backups.isEmpty else {
+            return DoctorCheck(name: "State recovery backups", ok: true, detail: "none")
+        }
+        let allBackupCount = stateRecoveryBackupCount(paths: paths)
+        let shown = backups.map(\.path).joined(separator: "; ")
+        return DoctorCheck(name: "State recovery backups", ok: true, detail: "\(allBackupCount) corrupt state backup(s); latest \(shown)")
     }
 
     private func checkCodexCapabilities(_ config: BridgeConfig) async -> [DoctorCheck] {
@@ -375,6 +386,32 @@ private final class ResumeOnce: @unchecked Sendable {
         lock.unlock()
         body()
     }
+}
+
+public func stateRecoveryBackupCount(paths: RuntimePaths = .current()) -> Int {
+    let prefix = "\(paths.statePath.lastPathComponent).corrupt-"
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: paths.stateDir.path)) ?? []
+    return names.filter { $0.hasPrefix(prefix) }.count
+}
+
+public func recentStateRecoveryBackups(paths: RuntimePaths = .current(), limit: Int = 3) -> [URL] {
+    let prefix = "\(paths.statePath.lastPathComponent).corrupt-"
+    guard let names = try? FileManager.default.contentsOfDirectory(atPath: paths.stateDir.path) else {
+        return []
+    }
+    return names
+        .filter { $0.hasPrefix(prefix) }
+        .map { paths.stateDir.appendingPathComponent($0) }
+        .sorted { lhs, rhs in
+            let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            if lhsDate == rhsDate {
+                return lhs.lastPathComponent > rhs.lastPathComponent
+            }
+            return lhsDate > rhsDate
+        }
+        .prefix(limit)
+        .map { $0 }
 }
 
 public func runtimeDiagnosticChecks(paths: RuntimePaths = .current()) -> [DoctorCheck] {
