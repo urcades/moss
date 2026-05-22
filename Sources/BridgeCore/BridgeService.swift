@@ -1002,7 +1002,10 @@ public final class BridgeService: @unchecked Sendable {
             if state.activeJob != nil {
                 return "A job is currently running. Send /cancel first if you want to stop it and start fresh."
             }
-            state.codexSession = CodexSessionState()
+            let freshSession = CodexSessionState()
+            try? mutateStateAndSave { state in
+                state.codexSession = freshSession
+            }
             return "Started a fresh Codex session for the next message."
         }
         if verb == "/help" {
@@ -1078,20 +1081,18 @@ public final class BridgeService: @unchecked Sendable {
             try await createAutomationFromMessagesBatch(batch, config: config, replySink: replySink)
             return
         }
-        state.codexSession.lastPromptAt = DateCodec.iso(now())
-        let request = buildPromptRequest(from: batch, recentMediaRefs: state.recentMediaRefs ?? [])
-        let longTask = usesLongTaskTimeout(request.promptText)
+        let jobStartedAt = now()
         let jobId = UUID().uuidString
-        state.activeJob = ActiveJob(
+        let activeJob = ActiveJob(
             jobId: jobId,
             guid: batch.items.last?.guid,
             rowId: batch.items.last?.rowId,
             type: "promptBatch",
-            receivedAt: DateCodec.iso(now()),
+            receivedAt: DateCodec.iso(jobStartedAt),
             promptPreview: buildBatchPreview(batch),
             recipient: batch.handleId,
             service: batch.service,
-            startedAt: DateCodec.iso(now()),
+            startedAt: DateCodec.iso(jobStartedAt),
             lastProgressAt: nil,
             lastUserUpdateAt: nil,
             lastEventAt: nil,
@@ -1106,7 +1107,15 @@ public final class BridgeService: @unchecked Sendable {
             waitingForPermissionSince: nil,
             lastPermissionEventId: nil
         )
-        try stores.state.save(state)
+        let request = try mutateStateAndSave { state -> PromptRequest in
+            var session = state.codexSession
+            session.lastPromptAt = DateCodec.iso(jobStartedAt)
+            state.codexSession = session
+            let request = buildPromptRequest(from: batch, recentMediaRefs: state.recentMediaRefs ?? [])
+            state.activeJob = activeJob
+            return request
+        }
+        let longTask = usesLongTaskTimeout(request.promptText)
 
         let effectiveConfig = configForPrompt(config, request: request)
 
@@ -1268,14 +1277,18 @@ public final class BridgeService: @unchecked Sendable {
                 job.status = "completed"
                 job.lastObservedSummary = "Completed."
             }
-            state.codexSession.lastCompletedAt = DateCodec.iso(now())
-            state.codexSession.lastErrorAt = nil
+            updateCodexSession { session in
+                session.lastCompletedAt = DateCodec.iso(now())
+                session.lastErrorAt = nil
+            }
         } catch let error as CodexBackendFailure {
             if activeJobStatus(jobId: jobId) == "canceling" {
                 clearActiveJob(jobId: jobId)
                 return
             }
-            state.codexSession.lastErrorAt = DateCodec.iso(now())
+            updateCodexSession { session in
+                session.lastErrorAt = DateCodec.iso(now())
+            }
             updateActiveJob(jobId: jobId) { job in
                 job.status = "failed"
                 job.lastObservedSummary = error.blockedText ?? error.message
@@ -1287,7 +1300,9 @@ public final class BridgeService: @unchecked Sendable {
                 return
             }
             let detail = String(describing: error)
-            state.codexSession.lastErrorAt = DateCodec.iso(now())
+            updateCodexSession { session in
+                session.lastErrorAt = DateCodec.iso(now())
+            }
             updateActiveJob(jobId: jobId) { job in
                 job.status = "failed"
                 job.lastObservedSummary = detail
@@ -1300,7 +1315,7 @@ public final class BridgeService: @unchecked Sendable {
     private func invokeCodexWithRecovery(config: BridgeConfig, request: PromptRequest, jobId: String, replySink: ReplySink, recipient: String, service: String) async throws -> String {
         let expired = sessionIsExpired(config: config)
         if expired {
-            state.codexSession = CodexSessionState(startedAt: DateCodec.iso(now()), expiresAt: DateCodec.iso(now().addingTimeInterval(Double(config.sessionTtlMs) / 1000)))
+            resetCodexSession(config: config)
         }
         do {
             return try await invokeCodex(config: config, request: request, sessionId: expired ? nil : state.codexSession.sessionId, jobId: jobId, replySink: replySink, recipient: recipient, service: service)
@@ -1308,7 +1323,7 @@ public final class BridgeService: @unchecked Sendable {
             if error.blockedText != nil || expired || state.codexSession.sessionId == nil {
                 throw error
             }
-            state.codexSession = CodexSessionState(startedAt: DateCodec.iso(now()), expiresAt: DateCodec.iso(now().addingTimeInterval(Double(config.sessionTtlMs) / 1000)))
+            resetCodexSession(config: config)
             return try await invokeCodex(config: config, request: request, sessionId: nil, jobId: jobId, replySink: replySink, recipient: recipient, service: service)
         }
     }
@@ -1321,15 +1336,16 @@ public final class BridgeService: @unchecked Sendable {
             guard let self else { return }
             self.handleCodexStreamEvent(event, jobId: jobId, config: config, replySink: replySink, recipient: recipient, service: service)
         }
-        state.codexSession.sessionId = result.sessionId ?? state.codexSession.sessionId
-        if state.codexSession.startedAt == nil { state.codexSession.startedAt = DateCodec.iso(now()) }
-        state.codexSession.expiresAt = DateCodec.iso(now().addingTimeInterval(Double(config.sessionTtlMs) / 1000))
+        updateCodexSession { session in
+            session.sessionId = result.sessionId ?? session.sessionId
+            if session.startedAt == nil { session.startedAt = DateCodec.iso(now()) }
+            session.expiresAt = DateCodec.iso(now().addingTimeInterval(Double(config.sessionTtlMs) / 1000))
+        }
         updateActiveJob(jobId: jobId) { job in
             job.codexSessionId = result.sessionId ?? job.codexSessionId
             job.outputPath = result.outputPath
             job.status = "running"
         }
-        try stores.state.save(state)
         return result.text
     }
 
@@ -1569,8 +1585,9 @@ public final class BridgeService: @unchecked Sendable {
                 job.codexSessionId = sessionId
                 job.lastEventAt = DateCodec.iso(now())
             }
-            state.codexSession.sessionId = sessionId
-            try? stores.state.save(state)
+            updateCodexSession { session in
+                session.sessionId = sessionId
+            }
             return
         case .turnStarted(let turnId):
             updateActiveJob(jobId: jobId) { job in
@@ -1631,6 +1648,24 @@ public final class BridgeService: @unchecked Sendable {
         }
         if let stateToSave {
             try? stores.state.save(stateToSave)
+        }
+    }
+
+    private func updateCodexSession(_ update: (inout CodexSessionState) -> Void) {
+        try? mutateStateAndSave { state in
+            var session = state.codexSession
+            update(&session)
+            state.codexSession = session
+        }
+    }
+
+    private func resetCodexSession(config: BridgeConfig) {
+        let fresh = CodexSessionState(
+            startedAt: DateCodec.iso(now()),
+            expiresAt: DateCodec.iso(now().addingTimeInterval(Double(config.sessionTtlMs) / 1000))
+        )
+        try? mutateStateAndSave { state in
+            state.codexSession = fresh
         }
     }
 

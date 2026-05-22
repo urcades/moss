@@ -44,6 +44,7 @@ struct BridgeCoreFocusedTests {
         try testBridgeStateSaveMergesSameActiveJobDetails()
         try testBridgeStateUpdateSerializesSeparateStoreInstances()
         try testBridgeStateBoxSerializesConcurrentMutations()
+        try testBridgeServiceSessionAndJobStartMutationsUseStateOwner()
         try testCapabilityFormattingAndCacheSnapshot()
         try await testCapabilityBestEffortPrefersCache()
         try await testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb()
@@ -1199,6 +1200,26 @@ struct BridgeCoreFocusedTests {
         let snapshot = box.snapshot()
         try expect(snapshot.lastProcessedRowId == 49, "state box preserves max row id across concurrent mutations")
         try expect(snapshot.recentMediaRefs?.count == 50, "state box preserves every concurrent media ref mutation")
+    }
+
+    private static func testBridgeServiceSessionAndJobStartMutationsUseStateOwner() throws {
+        let sourcePath = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("BridgeCore/BridgeService.swift")
+        let source = try String(contentsOf: sourcePath, encoding: .utf8)
+        let forbidden = [
+            "state.codexSession.lastPromptAt =",
+            "state.activeJob = ActiveJob(",
+            "state.codexSession.lastCompletedAt =",
+            "state.codexSession.lastErrorAt =",
+            "state.codexSession = CodexSessionState(",
+            "state.codexSession.sessionId = result.sessionId",
+            "state.codexSession.expiresAt ="
+        ]
+        for pattern in forbidden {
+            try expect(!source.contains(pattern), "BridgeService session/job-start mutation should use state owner instead of direct pattern \(pattern)")
+        }
     }
 
     private static func testCapabilityFormattingAndCacheSnapshot() throws {
