@@ -945,6 +945,10 @@ public final class BridgeService: @unchecked Sendable {
                 lines.append("Failure: \(failure)")
             }
         }
+        let activeSmokeAutomations = activeBridgeSmokeAutomations(in: paths.codexAutomationsDir)
+        if !activeSmokeAutomations.isEmpty {
+            lines.append("Bridge smoke automations: \(bridgeSmokeAutomationStatusText(activeSmokeAutomations))")
+        }
         guard !routes.isEmpty else {
             if !lines.isEmpty { return lines.joined(separator: "\n") }
             return "No Codex automation routes are being bridged to Messages yet."

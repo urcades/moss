@@ -3357,6 +3357,12 @@ struct BridgeCoreFocusedTests {
                 createdAt: "2026-05-22T00:00:00.000Z"
             )
         ]
+        try writeAutomationToml(
+            id: "bridge-smoke-test",
+            name: "Bridge Smoke Test",
+            status: "ACTIVE",
+            paths: paths
+        )
         try stores.state.save(state)
         let service = BridgeService(
             paths: paths,
@@ -3372,6 +3378,7 @@ struct BridgeCoreFocusedTests {
         try expect(text.contains("Automation creation confirmed: Bridge Smoke Test"), "/codex automations reports confirmed creation")
         try expect(text.contains("Created file: /Users/moss/.codex/automations/bridge-smoke-test/automation.toml"), "/codex automations includes confirmed file")
         try expect(text.contains("Confirmation send: text dbObserved; db row 999"), "/codex automations includes confirmation send evidence")
+        try expect(text.contains("Bridge smoke automations: warning: 1 active bridge smoke automation(s): bridge-smoke-test"), "/codex automations includes active smoke automation warning")
         try expect(text.contains("Codex automation routes:"), "/codex automations still lists routes")
     }
 
