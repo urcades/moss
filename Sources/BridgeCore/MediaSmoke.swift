@@ -24,6 +24,20 @@ public struct OutboundImageSmokeRequest: Equatable, Sendable {
     }
 }
 
+public struct ImageEditSmokeRequest: Equatable, Sendable {
+    public var marker: String
+    public var mediaRef: RecentMediaRef
+    public var artifactPath: String
+    public var request: PromptRequest
+
+    public init(marker: String, mediaRef: RecentMediaRef, artifactPath: String, request: PromptRequest) {
+        self.marker = marker
+        self.mediaRef = mediaRef
+        self.artifactPath = artifactPath
+        self.request = request
+    }
+}
+
 public func buildInboundImageSmokeRequest(
     recipient: String,
     service: String,
@@ -108,6 +122,52 @@ public func buildOutboundImageSmokeRequest(
         throw StoreError.validation("Smoke outbound-image-check failed: prompt builder did not attach recent outbound image \(ref.path).")
     }
     return OutboundImageSmokeRequest(marker: marker, mediaRef: ref, request: request)
+}
+
+public func buildImageEditSmokeRequest(
+    recipient: String,
+    service: String,
+    recentMediaRefs: [RecentMediaRef],
+    artifactPath: String,
+    now: Date = Date(),
+    marker: String = "CODEXMSGCTL_SMOKE_EDIT_IMAGE_\(UUID().uuidString)"
+) throws -> ImageEditSmokeRequest {
+    guard let ref = latestUsableImageRef(for: recipient, service: service, recentMediaRefs: recentMediaRefs) else {
+        throw StoreError.validation("Smoke edit-image-check failed: no usable app-server-compatible recent image for \(recipient) via \(service). Send or generate an image through the bridge first, then rerun this smoke.")
+    }
+    let nowText = DateCodec.iso(now)
+    let batch = PendingBatch(
+        handleId: recipient,
+        service: service,
+        startedAt: nowText,
+        deadlineAt: nowText,
+        items: [
+            MessageItem(
+                rowId: 0,
+                guid: "codexmsgctl-smoke-\(marker)",
+                text: """
+                Modify that image by adding a visible label containing \(marker). Save the edited result as a valid PNG at this exact path:
+                \(artifactPath)
+
+                Reply only with:
+                \(marker) SUCCESS edited image ready.
+                BRIDGE_ATTACH: \(artifactPath)
+
+                If no source image is attached, reply only with \(marker) BLOCKED no source image attached.
+                If you cannot create the file, reply only with \(marker) BLOCKED <exact blocker text>.
+                """,
+                handleId: recipient,
+                service: service,
+                receivedAt: nowText,
+                attachments: []
+            )
+        ]
+    )
+    let request = buildPromptRequest(from: batch, recentMediaRefs: recentMediaRefs)
+    guard request.attachments.contains(where: { $0.kind == "image" && $0.absolutePath == ref.path && $0.exists }) else {
+        throw StoreError.validation("Smoke edit-image-check failed: prompt builder did not attach recent image \(ref.path).")
+    }
+    return ImageEditSmokeRequest(marker: marker, mediaRef: ref, artifactPath: artifactPath, request: request)
 }
 
 public func latestTrustedInboundImageMediaRef(

@@ -26,6 +26,7 @@ struct BridgeCoreFocusedTests {
         try await testCodexSmokeAttachmentCommandSendsProbeAndSummary()
         try await testCodexSmokeBridgeAttachCommandUsesDirectiveHandoff()
         try await testCodexSmokeGeneratedImageStartsAppServerAndAttachesResult()
+        try await testCodexSmokeEditImageCheckUsesPreviousImageAndAttachesResult()
         try await testCodexSmokeAppServerCommandRunsFinalAnswerProbe()
         try await testCodexSmokeCapabilityCommandRunsAppServerProbe()
         try await testCodexGatesCommandRepliesWithChecklist()
@@ -34,6 +35,7 @@ struct BridgeCoreFocusedTests {
         try await testCodexSmokeAppServerCallbackStartsDefaultBackendTurn()
         try testInboundImageSmokeBuildsLocalImageRequest()
         try testOutboundImageSmokeBuildsLocalImageRequest()
+        try testImageEditSmokeBuildsPreviousImageRequest()
         try testInboundImageSmokeRequiresTrustedInboundImage()
         try await testInboundImageSmokeRecoversLatestTrustedImageFromMessagesDb()
         try await testCodexSmokeOutboundImageCheckSendsProbeAndBuildsFollowUp()
@@ -125,6 +127,7 @@ struct BridgeCoreFocusedTests {
         try expect(bridgeLocalCommandName("/codex smoke attachment") == "/codex", "codex attachment smoke command")
         try expect(bridgeLocalCommandName("/codex smoke bridge-attach") == "/codex", "codex bridge-attach smoke command")
         try expect(bridgeLocalCommandName("/codex smoke generated-image") == "/codex", "codex generated-image smoke command")
+        try expect(bridgeLocalCommandName("/codex smoke edit-image-check") == "/codex", "codex edit image smoke command")
         try expect(bridgeLocalCommandName("/codex smoke browser") == "/codex", "codex browser smoke command")
         try expect(bridgeLocalCommandName("/codex smoke chrome") == "/codex", "codex chrome smoke command")
         try expect(bridgeLocalCommandName("/codex smoke computer-use") == "/codex", "codex computer-use smoke command")
@@ -493,6 +496,58 @@ struct BridgeCoreFocusedTests {
         try expect(attachmentIndex < finalTextIndex, "generated-image smoke sends attachment before success text")
     }
 
+    private static func testCodexSmokeEditImageCheckUsesPreviousImageAndAttachesResult() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        let sourceImage = paths.tmpDir.appendingPathComponent("previous-source.png")
+        try Data("source image".utf8).write(to: sourceImage)
+        var state = defaultBridgeState()
+        state.recentMediaRefs = [
+            RecentMediaRef(direction: "outbound", rowId: 10, handleId: "+1", service: "iMessage", path: sourceImage.path, transferName: "previous-source.png", kind: "image", createdAt: "2026-01-01T00:00:00.000Z", exists: true)
+        ]
+        try stores.state.save(state)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        try stores.config.save(config)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 1, guid: "guid-smoke-edit-image", text: "/codex smoke edit-image-check", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let backend = GeneratedImageSmokeCodexBackend()
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in backend },
+            now: { Date(timeIntervalSince1970: 1_777_777_777) }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        _ = try await waitForState(stores, timeout: 3) { $0.activeJob == nil }
+        let attachments = await sink.attachmentsSnapshot()
+        let replies = try await waitForReplies(sink, count: 1)
+        let events = await sink.eventsSnapshot()
+        let request = await backend.requestSnapshot()
+        let reloaded = try stores.state.load()
+
+        try expect(request?.attachments.map(\.absolutePath) == [sourceImage.path], "edit-image smoke passes previous source image to app-server")
+        try expect(request?.promptText.contains("Modify that image") == true, "edit-image smoke uses previous-image prompt")
+        try expect(attachments.count == 1, "edit-image smoke sends edited image attachment")
+        try expect(attachments.first?.filePath.hasSuffix(".png") == true, "edit-image smoke attaches png artifact")
+        try expect(replies.count == 1, "edit-image smoke sends one summary reply")
+        try expect(replies.first?.text.contains("Smoke edit-image-check passed: CODEX_BRIDGE_SMOKE_EDIT-IMAGE-CHECK_") == true, "edit-image smoke reports pass marker")
+        try expect(replies.first?.text.contains("BRIDGE_ATTACH:") == false, "edit-image smoke strips attachment directive from summary")
+        guard let attachmentIndex = events.firstIndex(where: { $0.hasPrefix("attachment:") }),
+              let textIndex = events.firstIndex(where: { $0.contains("Smoke edit-image-check passed:") }) else {
+            throw TestFailure(description: "Expected edit image attachment and summary events")
+        }
+        try expect(attachmentIndex < textIndex, "edit-image smoke sends attachment before summary text")
+        try expect(reloaded.recentMediaRefs?.contains(where: { $0.direction == "outbound" && $0.path == attachments.first?.filePath }) == true, "edit-image smoke records edited outbound media ref")
+    }
+
     private static func testCodexSmokeCapabilityCommandRunsAppServerProbe() async throws {
         let paths = testPaths()
         try ensureRuntimeDirectories(paths)
@@ -586,6 +641,7 @@ struct BridgeCoreFocusedTests {
         try expect(replies.first?.text.contains("Apple Messages Bridge gate checklist") == true, "codex gates reply has checklist header")
         try expect(replies.first?.text.contains("/codex smoke callback, then reply with any short text") == true, "codex gates reply includes trusted callback instructions")
         try expect(replies.first?.text.contains("swift run codexmsgctl-swift smoke outbound-image-check --recipient +1 --service iMessage") == true, "codex gates reply includes CLI outbound image command")
+        try expect(replies.first?.text.contains("swift run codexmsgctl-swift smoke edit-image-check --recipient +1 --service iMessage") == true, "codex gates reply includes CLI edit image command")
         try expect(replies.first?.text.contains("/codex trusted-gates") == true, "codex gates reply includes trusted evidence command")
     }
 
@@ -787,6 +843,29 @@ struct BridgeCoreFocusedTests {
         try expect(smoke.request.attachments.count == 1, "outbound image smoke attaches exactly one image")
         try expect(smoke.request.attachments.first?.absolutePath == imagePath, "outbound image smoke passes local image path")
         try expect(smoke.request.promptText.contains("Bridge media context:"), "outbound image smoke uses previous-image bridge context")
+    }
+
+    private static func testImageEditSmokeBuildsPreviousImageRequest() throws {
+        let imagePath = NSTemporaryDirectory() + "/bridge-edit-smoke-source.png"
+        let artifactPath = NSTemporaryDirectory() + "/bridge-edit-smoke-output.png"
+        FileManager.default.createFile(atPath: imagePath, contents: Data("image".utf8), attributes: nil)
+        let olderInbound = RecentMediaRef(direction: "inbound", rowId: 20, handleId: "+1", service: "iMessage", path: imagePath, transferName: "source.png", kind: "image", createdAt: "2026-05-20T09:00:00.000Z", exists: true)
+        let newerOutbound = RecentMediaRef(direction: "outbound", rowId: 21, handleId: "+1", service: "iMessage", path: imagePath, transferName: "generated.png", kind: "image", createdAt: "2026-05-20T10:00:00.000Z", exists: true)
+
+        let smoke = try buildImageEditSmokeRequest(
+            recipient: "+1",
+            service: "iMessage",
+            recentMediaRefs: [olderInbound, newerOutbound],
+            artifactPath: artifactPath,
+            marker: "EDIT_MARKER"
+        )
+
+        try expect(smoke.marker == "EDIT_MARKER", "image edit smoke keeps marker")
+        try expect(smoke.mediaRef == newerOutbound, "image edit smoke chooses latest usable chat image")
+        try expect(smoke.artifactPath == artifactPath, "image edit smoke records output artifact")
+        try expect(smoke.request.attachments.map(\.absolutePath) == [imagePath], "image edit smoke attaches source image")
+        try expect(smoke.request.promptText.contains("Modify that image"), "image edit smoke uses previous-image language")
+        try expect(smoke.request.promptText.contains("BRIDGE_ATTACH: \(artifactPath)"), "image edit smoke asks app-server for attachment directive")
     }
 
     private static func testInboundImageSmokeRequiresTrustedInboundImage() throws {
@@ -2808,7 +2887,9 @@ struct BridgeCoreFocusedTests {
         try expect(text.contains("swift run codexmsgctl-swift smoke outbound-image-check --recipient +1 --service iMessage"), "gate checklist includes outbound image smoke")
         try expect(text.contains("swift run codexmsgctl-swift smoke bridge-attach --recipient +1 --service iMessage"), "gate checklist includes bridge attach smoke")
         try expect(text.contains("swift run codexmsgctl-swift smoke generated-image --recipient +1 --service iMessage"), "gate checklist includes CLI generated image smoke")
+        try expect(text.contains("swift run codexmsgctl-swift smoke edit-image-check --recipient +1 --service iMessage"), "gate checklist includes CLI edit image smoke")
         try expect(text.contains("/codex smoke generated-image"), "gate checklist includes generated image smoke")
+        try expect(text.contains("/codex smoke edit-image-check"), "gate checklist includes trusted edit image smoke")
         try expect(text.contains("Trusted evidence observer:"), "gate checklist separates trusted evidence observer")
         try expect(text.contains("/codex smoke callback, then reply with any short text"), "gate checklist includes two-step trusted callback smoke")
         try expect(text.contains("/codex smoke app-server-callback, then reply to the app-server prompt"), "gate checklist includes real app-server callback smoke")
@@ -3274,6 +3355,10 @@ private actor GeneratedImageSmokeCodexBackend: CodexBackend {
         request?.promptText
     }
 
+    func requestSnapshot() -> PromptRequest? {
+        request
+    }
+
     func invoke(_ request: PromptRequest, sessionId: String?, onEvent: (@Sendable (CodexStreamEvent) -> Void)?) async throws -> CodexResponse {
         self.request = request
         onEvent?(.sessionStarted("thread-generated-image"))
@@ -3283,9 +3368,18 @@ private actor GeneratedImageSmokeCodexBackend: CodexBackend {
             .trimmingCharacters(in: CharacterSet(charactersIn: ".,:;"))
             ?? "CODEX_BRIDGE_SMOKE_UNKNOWN"
         guard let artifactPath = request.promptText.components(separatedBy: .newlines).compactMap({ line -> String? in
-            let prefix = "Create a small valid PNG image file at this exact path: "
-            guard line.hasPrefix(prefix) else { return nil }
-            return String(line.dropFirst(prefix.count))
+            let generatedPrefix = "Create a small valid PNG image file at this exact path: "
+            let editPrefix = "Save the edited result as a valid PNG at this exact path:"
+            if line.hasPrefix(generatedPrefix) {
+                return String(line.dropFirst(generatedPrefix.count))
+            }
+            if line == editPrefix {
+                return nil
+            }
+            if line.hasPrefix("/") && line.hasSuffix(".png") {
+                return line
+            }
+            return nil
         }).first else {
             throw TestFailure(description: "Generated image smoke prompt did not include artifact path")
         }

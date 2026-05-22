@@ -48,6 +48,7 @@ Success means follow-up prompts like "modify that image" use a real previous cha
   - `/codex smoke bridge-attach` and `codexmsgctl-swift smoke bridge-attach` exercise a final-reply-style `BRIDGE_ATTACH:` directive rather than direct attachment sending.
   - `/codex smoke generated-image` asks a real app-server turn to create a marked PNG at a bridge temp path and reply with `BRIDGE_ATTACH:`; deterministic coverage verifies the generated artifact is attached before success text.
   - `codexmsgctl-swift smoke generated-image` runs the same generated-media path from the CLI, requires the expected `BRIDGE_ATTACH:` directive, validates attachment delivery before success text, and records the generated outbound image for follow-up media smokes.
+  - `/codex smoke edit-image-check` and `codexmsgctl-swift smoke edit-image-check` attach the latest usable chat image, ask app-server to edit it into a new PNG, require the expected `BRIDGE_ATTACH:` directive, validate attachment delivery before success text, and record the edited image for further follow-ups.
   - Messages DB ingress covers attachment-only rows, multiple attachments, `~/` path expansion, image/PDF/unsupported classification, and existence flags.
 - Live gates:
   - Send an inbound image, then ask for a marked modification; app-server receives a `localImage`.
@@ -74,7 +75,8 @@ Success means follow-up prompts like "modify that image" use a real previous cha
   - Live `swift run codexmsgctl-swift smoke bridge-attach` passed with marker `CODEXMSGCTL_SMOKE_BRIDGE_ATTACH_136C4E7D-091D-4DA8-8AD3-03877F392FF2`: Messages DB attachment row 756 (`message.error=0`, `transfer_state=5`, renamed to `IMG_8173.jpeg`) was observed before success text row 757 (`message.error=0`).
   - Latest `swift run codexmsgctl-swift smoke bridge-attach` passed with marker `CODEXMSGCTL_SMOKE_BRIDGE_ATTACH_4CDCE433-7B36-473B-9A4A-2CC71B0144A9`: Messages DB attachment row 765 (`message.error=0`, `transfer_state=5`, renamed to `IMG_8619.jpeg`) was observed before success text row 766 (`message.error=0`).
   - Live `swift run codexmsgctl-swift smoke generated-image` passed with marker `CODEXMSGCTL_SMOKE_GENERATED_IMAGE_6F182844-F31F-41DD-B61D-B9A81CC62485`: app-server thread `019e4fa1-fcf4-7a62-b956-fcb6025fde0a`, turn `019e4fa1-fe66-77e3-9e2d-06739d7db671`, generated PNG `/Users/moss/Library/Application Support/MessagesLLMBridge/tmp/codexmsgctl-generated-image-CODEXMSGCTL_SMOKE_GENERATED_IMAGE_6F182844-F31F-41DD-B61D-B9A81CC62485.png`, attachment row 773 (`message.error=0`, `transfer_state=5`, renamed to `IMG_5080.jpeg`) before success text row 774 (`message.error=0`).
-  - `/codex smoke generated-image` is now available as a trusted-chat live gate for app-server-produced media; live trusted-chat evidence is still pending.
+  - Live `swift run codexmsgctl-swift smoke edit-image-check` passed with marker `CODEXMSGCTL_SMOKE_EDIT_IMAGE_8D4BE177-56AF-4E17-9785-77208FF40E37`: it reused generated source image row 773, app-server thread `019e4fac-5119-7ad2-93f0-847e337d5a31`, turn `019e4fac-52cd-7833-8c20-2de8d8fe8415`, edited PNG `/Users/moss/Library/Application Support/MessagesLLMBridge/tmp/codexmsgctl-edited-image-CODEXMSGCTL_SMOKE_EDIT_IMAGE_8D4BE177-56AF-4E17-9785-77208FF40E37.png`, attachment row 775 (`message.error=0`, `transfer_state=5`, renamed to `IMG_6432.jpeg`) before success text row 776 (`message.error=0`).
+  - `/codex smoke generated-image` and `/codex smoke edit-image-check` are now available as trusted-chat live gates for app-server-produced media; live trusted-chat evidence is still pending.
 
 ## Goal 3: Automation Truth
 
@@ -188,7 +190,7 @@ Success means the bridge continuously reports what Codex can really do from Mess
   - Doctor's Computer Use probe now shares the same hardened marker prompt as `smoke computer-use`, so health checks and capability smoke no longer drift in behavior.
   - `codexmsgctl-swift status` and `/codex status` now use the capability cache first and bound live refresh attempts, so a stuck app-server capability refresh cannot hang status. Deterministic coverage verifies the best-effort status lookup returns an existing cache even when the Codex command is unavailable.
   - `codexmsgctl-swift trusted-gates` now reports whether trusted Messages gate commands have real inbound rows and nearby outbound reply rows, including outbound `message.error` values.
-  - Trusted-gate evidence now constrains outbound replies to the same trusted chat when Messages exposes an outgoing handle, reads attributed-body snippets when `message.text` is empty, and prints the next missing trusted command to send from Apple Messages. `/codex trusted-gates` exposes the same evidence from Apple Messages as an observer command, not as a required gate. Two-step callback gates now distinguish the initial prompt from the trusted follow-up reply and completion reply, reporting `awaiting-followup` or `awaiting-completion` instead of prematurely reporting `observed`. Latest live CLI output still shows 15 missing inbound gate commands, with `/codex status` as the next command.
+  - Trusted-gate evidence now constrains outbound replies to the same trusted chat when Messages exposes an outgoing handle, reads attributed-body snippets when `message.text` is empty, and prints the next missing trusted command to send from Apple Messages. `/codex trusted-gates` exposes the same evidence from Apple Messages as an observer command, not as a required gate. Two-step callback gates now distinguish the initial prompt from the trusted follow-up reply and completion reply, reporting `awaiting-followup` or `awaiting-completion` instead of prematurely reporting `observed`. Latest live CLI output still shows missing trusted inbound gate commands, with `/codex status` as the next command.
   - Capability cache formatting now marks caches stale after 24h in status and doctor output, so version/tool drift is visible even when bounded refreshes are skipped.
   - Dynamic tool forwarding now has deterministic stalled-call coverage using a fake app-server connection that waits until the RPC deadline, then verifies the bridge sends an explicit failed tool result for the original dynamic call.
   - `codexmsgctl-swift smoke app-server` and `/codex smoke app-server` now run a no-tool marked app-server turn and require the final response to contain the marker plus `SUCCESS`.
@@ -212,6 +214,8 @@ Before this workstream is complete, the installed helper must satisfy:
 - `swift run codexmsgctl-swift smoke text`
 - `swift run codexmsgctl-swift smoke attachment`
 - `swift run codexmsgctl-swift smoke bridge-attach`
+- `swift run codexmsgctl-swift smoke generated-image`
+- `swift run codexmsgctl-swift smoke edit-image-check`
 - `swift run codexmsgctl-swift smoke app-server`
 - `swift run codexmsgctl-swift smoke inbound-image-check`
 - `swift run codexmsgctl-swift smoke outbound-image-check`

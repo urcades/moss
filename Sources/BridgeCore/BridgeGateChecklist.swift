@@ -54,6 +54,7 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
     - swift run codexmsgctl-swift smoke attachment\(liveSuffix)
     - swift run codexmsgctl-swift smoke bridge-attach\(liveSuffix)
     - swift run codexmsgctl-swift smoke generated-image\(liveSuffix)
+    - swift run codexmsgctl-swift smoke edit-image-check\(liveSuffix)
     - swift run codexmsgctl-swift smoke app-server
     - swift run codexmsgctl-swift smoke inbound-image-check\(liveSuffix)
     - swift run codexmsgctl-swift smoke outbound-image-check\(liveSuffix)
@@ -69,6 +70,7 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
     - /codex smoke attachment
     - /codex smoke bridge-attach
     - /codex smoke generated-image
+    - /codex smoke edit-image-check
     - /codex smoke app-server
     - /codex smoke inbound-image-check
     - /codex smoke outbound-image-check
@@ -84,6 +86,6 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
 
     Open proof gaps:
     - Live trusted-chat evidence for `/codex smoke app-server-callback`.
-    - Live trusted-chat evidence for `/codex smoke generated-image` and a follow-up edit probe.
+    - Live trusted-chat evidence for `/codex smoke generated-image` and `/codex smoke edit-image-check`.
     """
 }

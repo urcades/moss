@@ -24,7 +24,7 @@ struct CodexMsgCtlSwift {
           codexmsgctl-swift doctor [--probe-computer-use]
           codexmsgctl-swift gates
           codexmsgctl-swift trusted-gates [--recipient HANDLE] [--service iMessage|SMS]
-          codexmsgctl-swift smoke text|attachment|bridge-attach|generated-image|automation|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
+          codexmsgctl-swift smoke text|attachment|bridge-attach|generated-image|edit-image-check|automation|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift broker start|stop|status|doctor|events|dry-run-scan
           codexmsgctl-swift reset
         """)
@@ -175,7 +175,7 @@ struct CodexMsgCtlSwift {
     private static func runSmokeCommand(_ args: [String], paths: RuntimePaths, stores: RuntimeStores) async throws {
         let subcommand = args.first ?? "help"
         if subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
-            print("Usage: codexmsgctl-swift smoke text|attachment|bridge-attach|generated-image|automation|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]")
+            print("Usage: codexmsgctl-swift smoke text|attachment|bridge-attach|generated-image|edit-image-check|automation|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]")
             return
         }
         let config = try stores.config.load()
@@ -193,6 +193,8 @@ struct CodexMsgCtlSwift {
             try await runBridgeAttachSmoke(recipient: recipient, service: service, config: config, paths: paths)
         case "generated-image":
             try await runGeneratedImageSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
+        case "edit-image-check":
+            try await runEditImageCheckSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
         case "automation":
             try runAutomationSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
         case "app-server":
@@ -385,6 +387,80 @@ struct CodexMsgCtlSwift {
         print("Generated image row: \(matched.rowId)")
         print("Generated image path: \(artifact.path)")
         print("Smoke generated-image passed.")
+    }
+
+    private static func runEditImageCheckSmoke(recipient: String, service: String, config: BridgeConfig, paths: RuntimePaths, stores: RuntimeStores) async throws {
+        let marker = "CODEXMSGCTL_SMOKE_EDIT_IMAGE_\(UUID().uuidString)"
+        try FileManager.default.createDirectory(at: paths.tmpDir, withIntermediateDirectories: true)
+        let artifact = paths.tmpDir.appendingPathComponent("codexmsgctl-edited-image-\(marker).png")
+        try? FileManager.default.removeItem(at: artifact)
+        var smokeConfig = config
+        smokeConfig.timeoutMs = min(config.timeoutMs, 60_000)
+        let state = try stores.state.load()
+        let smoke = try buildImageEditSmokeRequest(
+            recipient: recipient,
+            service: service,
+            recentMediaRefs: state.recentMediaRefs ?? [],
+            artifactPath: artifact.path,
+            marker: marker
+        )
+        let beforeRowId = try await latestOutgoingMessageRowId(config: config)
+        print("Smoke edit-image-check marker: \(marker)")
+        print("Source image row: \(smoke.mediaRef.rowId.map(String.init) ?? "none")")
+        print("Source image path: \(smoke.mediaRef.path)")
+        print("Expected artifact: \(artifact.path)")
+        print("Recipient: \(recipient) via \(service)")
+        print("Messages DB baseline row: \(beforeRowId)")
+        let response = try await invokeAppServerSmoke(
+            label: "edit-image-check",
+            marker: marker,
+            request: smoke.request,
+            config: smokeConfig,
+            paths: paths,
+            requireSuccessToken: true
+        )
+        let outgoing = prepareOutgoingReply(response.text, config: config)
+        guard outgoing.attachments == [artifact.path] else {
+            throw StoreError.validation("Smoke edit-image-check failed: app-server response did not include the expected BRIDGE_ATTACH directive for \(artifact.path).")
+        }
+        guard FileManager.default.fileExists(atPath: artifact.path) else {
+            throw StoreError.validation("Smoke edit-image-check failed: expected edited artifact was not created at \(artifact.path).")
+        }
+        let sink = AppleMessagesReplySink(osascriptCommand: config.osascriptCommand, chunkSize: config.chunkSize, messagesDbPath: config.messagesDbPath)
+        let attachmentEvidence = try await sink.sendAttachment(recipient: recipient, service: service, filePath: artifact.path)
+        print("Attachment send result: \(outboundDeliveryEvidenceText(attachmentEvidence))")
+        guard attachmentEvidence.dbError ?? 0 == 0, attachmentEvidence.transferState != 6 else {
+            throw StoreError.validation("Smoke edit-image-check failed: attachment delivery did not validate, so success text was not sent.")
+        }
+        if !outgoing.text.isEmpty {
+            let textEvidence = try await sink.sendReply(recipient: recipient, service: service, text: outgoing.text)
+            print("Success text send result: \(outboundDeliveryEvidenceText(textEvidence))")
+        }
+        let matched = try await waitForSmokeEvidence {
+            try await outboundSmokeAttachmentEvidence(marker: marker, afterRowId: beforeRowId, config: config)
+        }
+        printSmokeEvidence(matched)
+        guard let matched, matched.dbError == 0, matched.transferState != 6 else {
+            throw StoreError.validation("Smoke edit-image-check failed: marker was not found in a successful outgoing attachment DB row.")
+        }
+        var reloaded = try stores.state.load()
+        var refs = reloaded.recentMediaRefs ?? []
+        refs.append(RecentMediaRef(
+            direction: "outbound",
+            rowId: matched.rowId,
+            handleId: recipient,
+            service: service,
+            path: artifact.path,
+            transferName: artifact.lastPathComponent,
+            kind: "image",
+            createdAt: DateCodec.iso(Date()),
+            exists: FileManager.default.fileExists(atPath: artifact.path)
+        ))
+        reloaded.recentMediaRefs = Array(refs.suffix(30))
+        try stores.state.save(reloaded)
+        print("Edited image row: \(matched.rowId)")
+        print("Edited image path: \(artifact.path)")
+        print("Smoke edit-image-check passed.")
     }
 
     private static func runAutomationSmoke(recipient: String, service: String, config: BridgeConfig, paths: RuntimePaths, stores: RuntimeStores) throws {

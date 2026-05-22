@@ -430,7 +430,7 @@ public final class BridgeService: @unchecked Sendable {
             let evidence = try await trustedGateEvidence(config: config, recipient: recipient, service: service)
             return formatTrustedGateEvidence(evidence)
         default:
-            return "Use /codex status, /codex open, /codex history, /codex automations, /codex gates, /codex trusted-gates, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|bridge-attach|generated-image|app-server-callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
+            return "Use /codex status, /codex open, /codex history, /codex automations, /codex gates, /codex trusted-gates, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|bridge-attach|generated-image|edit-image-check|app-server-callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
         }
     }
 
@@ -503,6 +503,16 @@ public final class BridgeService: @unchecked Sendable {
             } catch {
                 summary = """
                 Smoke generated-image failed: \(marker)
+                Error: \(error)
+                Evidence: \(lastOutboundSendStatusText())
+                """
+            }
+        case "edit-image-check":
+            do {
+                summary = try await startEditImageCheckSmoke(marker: marker, message: message, config: config, sink: sink)
+            } catch {
+                summary = """
+                Smoke edit-image-check failed: \(marker)
                 Error: \(error)
                 Evidence: \(lastOutboundSendStatusText())
                 """
@@ -631,7 +641,7 @@ public final class BridgeService: @unchecked Sendable {
                 summary = await runBridgeAppServerSmoke(label: subcommand, marker: marker, request: request, config: smokeConfig)
             }
         default:
-            summary = "Use /codex smoke text, attachment, bridge-attach, generated-image, automation, callback, app-server-callback, app-server, inbound-image-check, outbound-image-check, chrome, browser, or computer-use."
+            summary = "Use /codex smoke text, attachment, bridge-attach, generated-image, edit-image-check, automation, callback, app-server-callback, app-server, inbound-image-check, outbound-image-check, chrome, browser, or computer-use."
         }
         _ = try await sink.sendReply(recipient: message.handleId, service: message.service, text: summary)
     }
@@ -666,6 +676,44 @@ public final class BridgeService: @unchecked Sendable {
         Smoke generated-image started: \(marker)
         Expected artifact: \(artifact.path)
         Success requires Codex to create that file and return BRIDGE_ATTACH for the bridge to deliver.
+        """
+    }
+
+    private func startEditImageCheckSmoke(marker: String, message: MessageItem, config: BridgeConfig, sink: ReplySink) async throws -> String {
+        guard state.activeJob == nil else {
+            return "Smoke edit-image-check skipped: \(marker)\nA Codex job is already active. Send /codex status or /cancel first."
+        }
+        try FileManager.default.createDirectory(at: paths.tmpDir, withIntermediateDirectories: true)
+        let artifact = paths.tmpDir.appendingPathComponent("codex-edited-image-\(marker).png")
+        try? FileManager.default.removeItem(at: artifact)
+        let smoke = try buildImageEditSmokeRequest(
+            recipient: message.handleId,
+            service: message.service,
+            recentMediaRefs: state.recentMediaRefs ?? [],
+            artifactPath: artifact.path,
+            marker: marker
+        )
+        let appServerSummary = await runBridgeAppServerSmoke(
+            label: "edit-image-check",
+            marker: smoke.marker,
+            request: smoke.request,
+            config: config,
+            requireSuccessToken: true
+        )
+        let outgoing = prepareOutgoingReply(appServerSummary, config: config)
+        guard outgoing.attachments == [artifact.path] else {
+            throw StoreError.validation("app-server response did not include the expected BRIDGE_ATTACH directive for \(artifact.path).")
+        }
+        guard FileManager.default.fileExists(atPath: artifact.path) else {
+            throw StoreError.validation("expected edited artifact was not created at \(artifact.path).")
+        }
+        try await sendAttachmentRecording(sink, recipient: message.handleId, service: message.service, filePath: artifact.path)
+        return """
+        Smoke edit-image-check passed: \(marker)
+        Source image: \(smoke.mediaRef.path)
+        Edited artifact: \(artifact.path)
+        Evidence: \(lastOutboundSendStatusText())
+        \(outgoing.text)
         """
     }
 
@@ -990,6 +1038,7 @@ public final class BridgeService: @unchecked Sendable {
             /codex smoke attachment - send a marked image probe and report delivery evidence
             /codex smoke bridge-attach - verify BRIDGE_ATTACH sends media before success text
             /codex smoke generated-image - ask Codex to create and BRIDGE_ATTACH a marked image
+            /codex smoke edit-image-check - ask Codex to edit the latest chat image and BRIDGE_ATTACH the result
             /codex smoke automation - create a paused marked automation and route
             /codex smoke callback - create a pending callback and verify the next reply is routed to it
             /codex smoke app-server-callback - start a real app-server callback turn and reply to finish it
@@ -1869,6 +1918,7 @@ private let supportedBridgeCodexSmokeSubcommands: Set<String> = [
     "attachment",
     "bridge-attach",
     "generated-image",
+    "edit-image-check",
     "automation",
     "callback",
     "app-server-callback",
