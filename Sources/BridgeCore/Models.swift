@@ -439,6 +439,26 @@ public struct RecentMediaRef: Codable, Equatable, Sendable {
     }
 }
 
+public struct LiveSmokeResult: Codable, Equatable, Sendable {
+    public var name: String
+    public var marker: String
+    public var status: String
+    public var detail: String
+    public var threadId: String?
+    public var turnId: String?
+    public var updatedAt: String
+
+    public init(name: String, marker: String, status: String, detail: String, threadId: String? = nil, turnId: String? = nil, updatedAt: String) {
+        self.name = name
+        self.marker = marker
+        self.status = status
+        self.detail = detail
+        self.threadId = threadId
+        self.turnId = turnId
+        self.updatedAt = updatedAt
+    }
+}
+
 public struct AutomationCreationStatus: Codable, Equatable, Sendable {
     public var automationId: String?
     public var name: String?
@@ -510,10 +530,11 @@ public struct BridgeState: Codable, Equatable, Sendable {
     public var automationRoutes: [CodexAutomationRoute]?
     public var lastOutboundSend: OutboundSendRecord?
     public var recentMediaRefs: [RecentMediaRef]?
+    public var liveSmokeResults: [LiveSmokeResult]?
     public var automationCreationStatus: AutomationCreationStatus?
     public var pendingInteractiveCallback: PendingInteractiveCallback?
 
-    public init(lastProcessedGuid: String?, lastProcessedRowId: Int64, pendingBatch: PendingBatch?, activeJob: ActiveJob?, codexSession: CodexSessionState, automationRoutes: [CodexAutomationRoute]? = nil, lastOutboundSend: OutboundSendRecord? = nil, recentMediaRefs: [RecentMediaRef]? = nil, automationCreationStatus: AutomationCreationStatus? = nil, pendingInteractiveCallback: PendingInteractiveCallback? = nil) {
+    public init(lastProcessedGuid: String?, lastProcessedRowId: Int64, pendingBatch: PendingBatch?, activeJob: ActiveJob?, codexSession: CodexSessionState, automationRoutes: [CodexAutomationRoute]? = nil, lastOutboundSend: OutboundSendRecord? = nil, recentMediaRefs: [RecentMediaRef]? = nil, liveSmokeResults: [LiveSmokeResult]? = nil, automationCreationStatus: AutomationCreationStatus? = nil, pendingInteractiveCallback: PendingInteractiveCallback? = nil) {
         self.lastProcessedGuid = lastProcessedGuid
         self.lastProcessedRowId = lastProcessedRowId
         self.pendingBatch = pendingBatch
@@ -522,6 +543,7 @@ public struct BridgeState: Codable, Equatable, Sendable {
         self.automationRoutes = automationRoutes
         self.lastOutboundSend = lastOutboundSend
         self.recentMediaRefs = recentMediaRefs
+        self.liveSmokeResults = liveSmokeResults
         self.automationCreationStatus = automationCreationStatus
         self.pendingInteractiveCallback = pendingInteractiveCallback
     }

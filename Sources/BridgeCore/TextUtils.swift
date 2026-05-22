@@ -132,3 +132,42 @@ public func recentMediaRefsStatusText(_ refs: [RecentMediaRef]) -> String {
     }.joined(separator: " | ")
     return "\(refs.count) ref(s); latest: \(details)"
 }
+
+public func liveSmokeResultsStatusText(_ results: [LiveSmokeResult]) -> String {
+    guard !results.isEmpty else { return "none" }
+    let latest = results.sorted { lhs, rhs in
+        if lhs.updatedAt == rhs.updatedAt { return lhs.name < rhs.name }
+        return lhs.updatedAt < rhs.updatedAt
+    }.suffix(3)
+    let details = latest.map { result in
+        var parts = [
+            "\(result.name) \(result.status)",
+            result.marker
+        ]
+        if let threadId = result.threadId, !threadId.isEmpty {
+            parts.append("thread \(threadId)")
+        }
+        if let turnId = result.turnId, !turnId.isEmpty {
+            parts.append("turn \(turnId)")
+        }
+        if !result.detail.isEmpty {
+            let short = result.detail.count > 180 ? String(result.detail.prefix(180)) : result.detail
+            parts.append(short)
+        }
+        return parts.joined(separator: "; ")
+    }.joined(separator: " | ")
+    return "\(results.count) result(s); latest: \(details)"
+}
+
+public func updatedLiveSmokeResults(_ existing: [LiveSmokeResult], with result: LiveSmokeResult, limit: Int = 30) -> [LiveSmokeResult] {
+    var byName = Dictionary(uniqueKeysWithValues: existing.map { ($0.name, $0) })
+    if let current = byName[result.name], current.updatedAt > result.updatedAt {
+        return existing
+    }
+    byName[result.name] = result
+    let sorted = byName.values.sorted { lhs, rhs in
+        if lhs.updatedAt == rhs.updatedAt { return lhs.name < rhs.name }
+        return lhs.updatedAt < rhs.updatedAt
+    }
+    return Array(sorted.suffix(limit))
+}

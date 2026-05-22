@@ -75,6 +75,7 @@ public final class Doctor: @unchecked Sendable {
         checks.append(checkTrustedSenders(config))
         checks.append(checkMessagesDb(config))
         checks.append(checkLastOutboundSend(state?.lastOutboundSend))
+        checks.append(checkLiveSmokeResults(state?.liveSmokeResults))
         checks.append(await checkRecentFailedOutboundEvidence(config))
         checks.append(checkCodexAppServerProcessSnapshot())
         checks.append(await checkMessagesAutomation(config))
@@ -108,6 +109,10 @@ public final class Doctor: @unchecked Sendable {
         var lines = [report.ok ? "Doctor passed." : "Doctor found issues."]
         lines += report.checks.map { "\($0.ok ? "OK" : "FAIL")  \($0.name): \($0.detail)" }
         return lines.joined(separator: "\n")
+    }
+
+    private func checkLiveSmokeResults(_ results: [LiveSmokeResult]?) -> DoctorCheck {
+        DoctorCheck(name: "Live smoke results", ok: true, detail: liveSmokeResultsStatusText(results ?? []))
     }
 
     private func checkCodex(_ config: BridgeConfig) -> DoctorCheck {

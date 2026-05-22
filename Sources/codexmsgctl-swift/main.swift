@@ -106,6 +106,7 @@ struct CodexMsgCtlSwift {
             print("Active job Codex turn id: \(state.activeJob?.codexTurnId ?? "none")")
             print("Last outbound send: \(outboundSendStatusText(state.lastOutboundSend))")
             print("Recent media refs: \(recentMediaRefsStatusText(state.recentMediaRefs ?? []))")
+            print("Live smoke results: \(liveSmokeResultsStatusText(state.liveSmokeResults ?? []))")
             print("Automation creation status: \(automationCreationStatusText(state.automationCreationStatus))")
             print("Automation routes: \(automationRoutesStatusText(state.automationRoutes ?? []))")
             do {
@@ -198,15 +199,15 @@ struct CodexMsgCtlSwift {
         case "automation":
             try runAutomationSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
         case "app-server":
-            try await runAppServerFinalAnswerSmoke(config: config, paths: paths)
+            try await runAppServerFinalAnswerSmoke(config: config, paths: paths, stores: stores)
         case "app-server-callback":
-            try await runAppServerCallbackSmoke(config: config, paths: paths)
+            try await runAppServerCallbackSmoke(config: config, paths: paths, stores: stores)
         case "inbound-image-check":
             try await runInboundImageCheckSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
         case "outbound-image-check":
             try await runOutboundImageCheckSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
         case "chrome", "browser", "computer-use":
-            try await runCapabilitySmoke(subcommand, config: config, paths: paths)
+            try await runCapabilitySmoke(subcommand, config: config, paths: paths, stores: stores)
         default:
             throw StoreError.validation("Unknown smoke command: \(subcommand)")
         }
@@ -482,7 +483,7 @@ struct CodexMsgCtlSwift {
         print("Smoke automation passed.")
     }
 
-    private static func runAppServerFinalAnswerSmoke(config: BridgeConfig, paths: RuntimePaths) async throws {
+    private static func runAppServerFinalAnswerSmoke(config: BridgeConfig, paths: RuntimePaths, stores: RuntimeStores) async throws {
         let marker = "CODEXMSGCTL_SMOKE_APP_SERVER_\(UUID().uuidString)"
         var smokeConfig = config
         smokeConfig.timeoutMs = min(config.timeoutMs, 60_000)
@@ -491,10 +492,17 @@ struct CodexMsgCtlSwift {
             attachments: []
         )
         print("Smoke app-server marker: \(marker)")
-        try await runAppServerMarkerSmoke(label: "app-server", marker: marker, request: request, config: smokeConfig, paths: paths, requireSuccessToken: true)
+        do {
+            let response = try await invokeAppServerSmoke(label: "app-server", marker: marker, request: request, config: smokeConfig, paths: paths, requireSuccessToken: true)
+            try recordLiveSmokeResult(stores: stores, name: "app-server", marker: marker, status: "passed", detail: response.text, threadId: response.sessionId, turnId: nil)
+            print("Smoke app-server passed.")
+        } catch {
+            try? recordLiveSmokeResult(stores: stores, name: "app-server", marker: marker, status: "failed", detail: String(describing: error), threadId: nil, turnId: nil)
+            throw error
+        }
     }
 
-    private static func runAppServerCallbackSmoke(config: BridgeConfig, paths: RuntimePaths) async throws {
+    private static func runAppServerCallbackSmoke(config: BridgeConfig, paths: RuntimePaths, stores: RuntimeStores) async throws {
         let marker = "CODEXMSGCTL_SMOKE_APP_SERVER_CALLBACK_\(UUID().uuidString)"
         let answer = "cli-callback-answer-\(UUID().uuidString.prefix(8))"
         var smokeConfig = config
@@ -524,14 +532,21 @@ struct CodexMsgCtlSwift {
             print("Callback request: method=\(record.method) id=\(record.requestId) prompt=\"\(record.prompt)\" answer=\"\(record.answer)\"")
         }
         guard !records.isEmpty else {
-            throw StoreError.validation("Smoke app-server-callback failed: app-server completed without invoking an interactive callback. Response: \(computerUseProbeDetailWithWindowDiagnostics(response.text))")
+            let detail = computerUseProbeDetailWithWindowDiagnostics(response.text)
+            try recordLiveSmokeResult(stores: stores, name: "app-server-callback", marker: marker, status: "blocked", detail: detail, threadId: response.sessionId, turnId: nil)
+            throw StoreError.validation("Smoke app-server-callback failed: app-server completed without invoking an interactive callback. Response: \(detail)")
         }
         guard response.text.localizedCaseInsensitiveContains("SUCCESS") else {
-            throw StoreError.validation("Smoke app-server-callback failed: callback was handled but final answer did not report SUCCESS. Response: \(computerUseProbeDetailWithWindowDiagnostics(response.text))")
+            let detail = computerUseProbeDetailWithWindowDiagnostics(response.text)
+            try recordLiveSmokeResult(stores: stores, name: "app-server-callback", marker: marker, status: "failed", detail: detail, threadId: response.sessionId, turnId: nil)
+            throw StoreError.validation("Smoke app-server-callback failed: callback was handled but final answer did not report SUCCESS. Response: \(detail)")
         }
         guard response.text.contains(answer) else {
+            let detail = "Final answer did not echo callback answer \(answer). Response: \(computerUseProbeDetailWithWindowDiagnostics(response.text))"
+            try recordLiveSmokeResult(stores: stores, name: "app-server-callback", marker: marker, status: "failed", detail: detail, threadId: response.sessionId, turnId: nil)
             throw StoreError.validation("Smoke app-server-callback failed: final answer did not echo callback answer \(answer).")
         }
+        try recordLiveSmokeResult(stores: stores, name: "app-server-callback", marker: marker, status: "passed", detail: response.text, threadId: response.sessionId, turnId: nil)
         print("Smoke app-server-callback passed.")
     }
 
@@ -608,13 +623,22 @@ struct CodexMsgCtlSwift {
         )
     }
 
-    private static func runCapabilitySmoke(_ capability: String, config: BridgeConfig, paths: RuntimePaths) async throws {
+    private static func runCapabilitySmoke(_ capability: String, config: BridgeConfig, paths: RuntimePaths, stores: RuntimeStores) async throws {
         let marker = "CODEXMSGCTL_SMOKE_\(capability.replacingOccurrences(of: "-", with: "_").uppercased())_\(UUID().uuidString)"
         var smokeConfig = config
         smokeConfig.timeoutMs = min(config.timeoutMs, 60_000)
         let request = PromptRequest(promptText: bridgeCapabilitySmokePrompt(capability: capability, marker: marker), attachments: [])
         print("Smoke \(capability) marker: \(marker)")
-        try await runAppServerMarkerSmoke(label: capability, marker: marker, request: request, config: smokeConfig, paths: paths)
+        do {
+            let response = try await invokeAppServerSmoke(label: capability, marker: marker, request: request, config: smokeConfig, paths: paths)
+            let responseText = computerUseProbeDetailWithWindowDiagnostics(response.text)
+            let status = liveSmokeStatus(from: responseText)
+            try recordLiveSmokeResult(stores: stores, name: capability, marker: marker, status: status, detail: responseText, threadId: response.sessionId, turnId: nil)
+            print("Smoke \(capability) passed.")
+        } catch {
+            try? recordLiveSmokeResult(stores: stores, name: capability, marker: marker, status: "failed", detail: String(describing: error), threadId: nil, turnId: nil)
+            throw error
+        }
     }
 
     private static func runAppServerMarkerSmoke(label: String, marker: String, request: PromptRequest, config: BridgeConfig, paths: RuntimePaths, requireSuccessToken: Bool = false) async throws {
@@ -946,4 +970,29 @@ private func callbackSmokeTruncate(_ value: String, limit: Int) -> String {
     guard value.count > limit else { return value }
     let index = value.index(value.startIndex, offsetBy: limit)
     return String(value[..<index])
+}
+
+private func liveSmokeStatus(from responseText: String) -> String {
+    if responseText.localizedCaseInsensitiveContains("BLOCKED") {
+        return "blocked"
+    }
+    if responseText.localizedCaseInsensitiveContains("SUCCESS") {
+        return "passed"
+    }
+    return "unknown"
+}
+
+private func recordLiveSmokeResult(stores: RuntimeStores, name: String, marker: String, status: String, detail: String, threadId: String?, turnId: String?) throws {
+    var state = try stores.state.load()
+    let result = LiveSmokeResult(
+        name: name,
+        marker: marker,
+        status: status,
+        detail: cleanPlainText(detail),
+        threadId: threadId,
+        turnId: turnId,
+        updatedAt: DateCodec.iso(Date())
+    )
+    state.liveSmokeResults = updatedLiveSmokeResults(state.liveSmokeResults ?? [], with: result)
+    try stores.state.save(state)
 }

@@ -55,6 +55,7 @@ Use explicit markers in message text and filenames so live probes are searchable
 - Attachment probe: generate `bridge-smoke-attachment-<timestamp>.png`, send via `BRIDGE_ATTACH:`, and verify attachment evidence; use `codexmsgctl-swift smoke bridge-attach` for the final-reply directive path.
 - Inbound image probe: send an image into the trusted chat and verify app-server input includes a `localImage` item.
 - Capability probes: ask for marked Browser, Chrome, and Computer Use actions; require exact blocker text instead of fallback prose.
+- Live smoke provenance: CLI smoke results persist the latest marker/status/detail by smoke name into bridge state, and status/doctor show that evidence next to capability inventory so callable/discovered inventory cannot hide a real runtime blocker.
 - Messages command probes: send `/codex smoke app-server`, `/codex smoke app-server-callback`, `/codex smoke generated-image`, `/codex smoke chrome`, `/codex smoke browser`, `/codex smoke computer-use`, `/codex smoke automation`, `/codex smoke callback`, `/codex smoke bridge-attach`, `/codex smoke inbound-image-check`, and `/codex smoke outbound-image-check` from the trusted chat.
 
 ## Codex Changelog Adoption

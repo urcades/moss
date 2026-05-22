@@ -928,7 +928,8 @@ public final class BridgeService: @unchecked Sendable {
             "Active approval: \(activeApprovalStatusText())",
             "Pending interactive callback: \(pendingInteractiveCallbackStatusText())",
             "Last outbound send: \(lastOutboundSendStatusText())",
-            "Recent media refs: \(recentMediaRefsStatusText(state.recentMediaRefs ?? []))"
+            "Recent media refs: \(recentMediaRefsStatusText(state.recentMediaRefs ?? []))",
+            "Live smoke results: \(liveSmokeResultsStatusText(state.liveSmokeResults ?? []))"
         ]
         if let capabilitySnapshot {
             lines.append(formatCodexCapabilityCacheLine(capabilitySnapshot))

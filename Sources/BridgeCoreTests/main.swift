@@ -22,6 +22,8 @@ struct BridgeCoreFocusedTests {
         try await testSQLiteMessageSourceAttachmentRowsAndClassification()
         try testPreviousImageReferenceAddsRecentImage()
         try testPreviousImageReferenceSkipsUnsupportedRecentImage()
+        try testLiveSmokeResultsStatusHighlightsLatestBlocker()
+        try testLiveSmokeResultsKeepLatestPerSmokeName()
         try await testMissingPreviousImageReferenceAsksForSource()
         try await testCodexSmokeAttachmentCommandSendsProbeAndSummary()
         try await testCodexSmokeBridgeAttachCommandUsesDirectiveHandoff()
@@ -362,6 +364,50 @@ struct BridgeCoreFocusedTests {
         try expect(request.attachments.map(\.absolutePath) == [supportedPath], "previous image reference skips unsupported newer image and attaches older compatible image")
         try expect(latestUsableImageRef(for: "+1", service: "iMessage", recentMediaRefs: [newerUnsupported]) == nil, "unsupported recent image is not usable for app-server image input")
         try expect(recentMediaRefsStatusText([newerUnsupported]).contains("app-server-unsupported"), "status marks unsupported image refs")
+    }
+
+    private static func testLiveSmokeResultsStatusHighlightsLatestBlocker() throws {
+        let results = [
+            LiveSmokeResult(
+                name: "chrome",
+                marker: "MARKER_OLD",
+                status: "passed",
+                detail: "SUCCESS",
+                threadId: nil,
+                turnId: nil,
+                updatedAt: "2026-05-22T12:00:00.000Z"
+            ),
+            LiveSmokeResult(
+                name: "app-server-callback",
+                marker: "MARKER_NEW",
+                status: "blocked",
+                detail: "request_user_input is unavailable in Default mode",
+                threadId: "thread-callback",
+                turnId: "turn-callback",
+                updatedAt: "2026-05-22T12:10:00.000Z"
+            )
+        ]
+
+        let text = liveSmokeResultsStatusText(results)
+
+        try expect(text.contains("2 result(s)"), "live smoke status reports result count")
+        try expect(text.contains("app-server-callback blocked"), "live smoke status highlights blocked latest result")
+        try expect(text.contains("MARKER_NEW"), "live smoke status includes marker")
+        try expect(text.contains("thread thread-callback"), "live smoke status includes thread id")
+        try expect(text.contains("request_user_input is unavailable in Default mode"), "live smoke status includes blocker detail")
+    }
+
+    private static func testLiveSmokeResultsKeepLatestPerSmokeName() throws {
+        let older = LiveSmokeResult(name: "chrome", marker: "OLD", status: "passed", detail: "old success", updatedAt: "2026-05-22T12:00:00.000Z")
+        let newer = LiveSmokeResult(name: "chrome", marker: "NEW", status: "blocked", detail: "new blocker", updatedAt: "2026-05-22T12:10:00.000Z")
+        let browser = LiveSmokeResult(name: "browser", marker: "BROWSER", status: "blocked", detail: "iab", updatedAt: "2026-05-22T12:05:00.000Z")
+
+        let results = updatedLiveSmokeResults([older, browser], with: newer)
+
+        try expect(results.count == 2, "live smoke results keep one result per smoke name")
+        try expect(results.contains(where: { $0.name == "chrome" && $0.marker == "NEW" }), "live smoke results replace older same-name result")
+        try expect(!results.contains(where: { $0.marker == "OLD" }), "live smoke results drop older same-name result")
+        try expect(results.map(\.name) == ["browser", "chrome"], "live smoke results remain sorted by update time")
     }
 
     private static func testMissingPreviousImageReferenceAsksForSource() async throws {
@@ -1103,6 +1149,17 @@ struct BridgeCoreFocusedTests {
                 exists: true
             )
         ]
+        existing.liveSmokeResults = [
+            LiveSmokeResult(
+                name: "chrome",
+                marker: "SMOKE_CHROME",
+                status: "blocked",
+                detail: "browser-client is not trusted",
+                threadId: "thread-smoke",
+                turnId: "turn-smoke",
+                updatedAt: "2026-05-22T07:01:30.000Z"
+            )
+        ]
         existing.pendingInteractiveCallback = PendingInteractiveCallback(
             callbackId: "callback-1",
             jobId: "job-1",
@@ -1141,6 +1198,8 @@ struct BridgeCoreFocusedTests {
         try expect(reloaded.automationCreationStatus?.automationId == "bridge-smoke-test", "state save preserves concurrent automation creation status")
         try expect(reloaded.recentMediaRefs?.contains(where: { $0.rowId == 43 && $0.path == "/tmp/source.png" }) == true, "state save preserves concurrent recent media refs")
         try expect(recentMediaRefsStatusText(reloaded.recentMediaRefs ?? []).contains("source.png"), "recent media status exposes latest image ref")
+        try expect(reloaded.liveSmokeResults?.contains(where: { $0.name == "chrome" && $0.marker == "SMOKE_CHROME" }) == true, "state save preserves concurrent live smoke results")
+        try expect(liveSmokeResultsStatusText(reloaded.liveSmokeResults ?? []).contains("browser-client is not trusted"), "live smoke status exposes persisted blocker")
         try expect(reloaded.pendingInteractiveCallback?.callbackId == "callback-1", "state save preserves non-terminal pending interactive callback")
         try expect(reloaded.lastOutboundSend?.attemptId == "send-1", "state save preserves concurrent outbound send evidence")
 

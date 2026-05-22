@@ -287,6 +287,8 @@ private func mergeBridgeStateForConcurrentSave(incoming: BridgeState, existing: 
     merged.automationRoutes = routes.isEmpty ? nil : routes
     let mediaRefs = mergeRecentMediaRefs(incoming: incoming.recentMediaRefs ?? [], existing: existing.recentMediaRefs ?? [])
     merged.recentMediaRefs = mediaRefs.isEmpty ? nil : mediaRefs
+    let liveSmokeResults = mergeLiveSmokeResults(incoming: incoming.liveSmokeResults ?? [], existing: existing.liveSmokeResults ?? [])
+    merged.liveSmokeResults = liveSmokeResults.isEmpty ? nil : liveSmokeResults
     merged.automationCreationStatus = latestAutomationCreationStatus(
         incoming: incoming.automationCreationStatus,
         existing: existing.automationCreationStatus
@@ -331,6 +333,14 @@ private func mergeRecentMediaRefs(incoming: [RecentMediaRef], existing: [RecentM
         return lhs.createdAt < rhs.createdAt
     }
     return Array(merged.suffix(30))
+}
+
+private func mergeLiveSmokeResults(incoming: [LiveSmokeResult], existing: [LiveSmokeResult]) -> [LiveSmokeResult] {
+    var merged = existing
+    for result in incoming {
+        merged = updatedLiveSmokeResults(merged, with: result)
+    }
+    return merged
 }
 
 private func recentMediaRefKey(_ ref: RecentMediaRef) -> String {
