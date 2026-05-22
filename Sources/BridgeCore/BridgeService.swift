@@ -357,6 +357,11 @@ public final class BridgeService: @unchecked Sendable {
             try stores.state.save(state)
             return
         }
+        if command == "/codex", isCodexSmokeCommand(message.text) {
+            try await runCodexSmokeCommand(message.text, message: message, config: config)
+            try stores.state.save(state)
+            return
+        }
         let text = command == "/codex"
             ? try await runCodexCommand(message.text, config: config)
             : runLocalCommand(message.text)
@@ -394,8 +399,52 @@ public final class BridgeService: @unchecked Sendable {
         case "/codex automations":
             return codexAutomationRoutesText()
         default:
-            return "Use /codex status, /codex open, /codex history, /codex automations, or /codex retry-last-send."
+            return "Use /codex status, /codex open, /codex history, /codex automations, /codex retry-last-send, /codex smoke text, or /codex smoke attachment."
         }
+    }
+
+    private func runCodexSmokeCommand(_ command: String, message: MessageItem, config: BridgeConfig) async throws {
+        let sink = makeReplySink(config)
+        let subcommand = codexSmokeSubcommand(command)
+        let marker = "CODEX_BRIDGE_SMOKE_\(subcommand.uppercased())_\(UUID().uuidString)"
+        let summary: String
+        switch subcommand {
+        case "text":
+            do {
+                try await sendReplyRecording(sink, recipient: message.handleId, service: message.service, text: marker)
+                summary = """
+                Smoke text passed: \(marker)
+                Evidence: \(lastOutboundSendStatusText())
+                """
+            } catch {
+                summary = """
+                Smoke text failed: \(marker)
+                Error: \(error)
+                Evidence: \(lastOutboundSendStatusText())
+                """
+            }
+        case "attachment":
+            do {
+                try FileManager.default.createDirectory(at: paths.tmpDir, withIntermediateDirectories: true)
+                let attachment = paths.tmpDir.appendingPathComponent("codex-bridge-smoke-\(marker).png")
+                try bridgeSmokePNGData().write(to: attachment)
+                try await sendAttachmentRecording(sink, recipient: message.handleId, service: message.service, filePath: attachment.path)
+                summary = """
+                Smoke attachment passed: \(marker)
+                Attachment: \(attachment.path)
+                Evidence: \(lastOutboundSendStatusText())
+                """
+            } catch {
+                summary = """
+                Smoke attachment failed: \(marker)
+                Error: \(error)
+                Evidence: \(lastOutboundSendStatusText())
+                """
+            }
+        default:
+            summary = "Use /codex smoke text or /codex smoke attachment."
+        }
+        _ = try await sink.sendReply(recipient: message.handleId, service: message.service, text: summary)
     }
 
     private func retryLastOutboundSend(config: BridgeConfig) async throws -> String {
@@ -578,6 +627,8 @@ public final class BridgeService: @unchecked Sendable {
             /codex history - summarize recent app-server thread history
             /codex automations - list Codex automation result routes bridged to Messages
             /codex retry-last-send - retry the last retryable outbound text or attachment
+            /codex smoke text - send a marked text probe and report delivery evidence
+            /codex smoke attachment - send a marked image probe and report delivery evidence
             /cancel - stop the active Codex job
             /reset or /new - start a fresh Codex session
             /permissions status - show permission broker status
@@ -1346,7 +1397,7 @@ private enum Job {
 
 public func bridgeLocalCommandName(_ text: String) -> String? {
     let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    if ["/codex status", "/codex open", "/codex history", "/codex automations", "/codex retry-last-send"].contains(normalized) {
+    if ["/codex status", "/codex open", "/codex history", "/codex automations", "/codex retry-last-send"].contains(normalized) || isCodexSmokeCommand(normalized) {
         return "/codex"
     }
     let command = normalized.split(separator: " ").first.map(String.init)
@@ -1356,6 +1407,25 @@ public func bridgeLocalCommandName(_ text: String) -> String? {
 
 private func localCommandName(_ text: String) -> String? {
     bridgeLocalCommandName(text)
+}
+
+private func isCodexSmokeCommand(_ text: String) -> Bool {
+    let subcommand = codexSmokeSubcommand(text)
+    return subcommand == "text" || subcommand == "attachment"
+}
+
+private func codexSmokeSubcommand(_ text: String) -> String {
+    let parts = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().split(separator: " ").map(String.init)
+    guard parts.count == 3, parts[0] == "/codex", parts[1] == "smoke" else { return "" }
+    return parts[2]
+}
+
+private func bridgeSmokePNGData() throws -> Data {
+    let encoded = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+    guard let data = Data(base64Encoded: encoded) else {
+        throw StoreError.validation("Could not decode smoke PNG fixture.")
+    }
+    return data
 }
 
 private func failureText(_ error: CodexBackendFailure) -> String {

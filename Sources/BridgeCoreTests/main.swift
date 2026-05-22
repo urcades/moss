@@ -20,6 +20,7 @@ struct BridgeCoreFocusedTests {
         try testPromptBatchPreservesPluginIntentAndOrder()
         try testPreviousImageReferenceAddsRecentImage()
         try await testMissingPreviousImageReferenceAsksForSource()
+        try await testCodexSmokeAttachmentCommandSendsProbeAndSummary()
         try testInboundImageSmokeBuildsLocalImageRequest()
         try testInboundImageSmokeRequiresTrustedInboundImage()
         try testDiagnosticMentionOfDailyBriefingDoesNotCreateAutomation()
@@ -77,6 +78,9 @@ struct BridgeCoreFocusedTests {
         try expect(bridgeLocalCommandName("/codex history") == "/codex", "exact codex history command")
         try expect(bridgeLocalCommandName("/codex automations") == "/codex", "exact codex automations command")
         try expect(bridgeLocalCommandName("/codex retry-last-send") == "/codex", "exact codex retry command")
+        try expect(bridgeLocalCommandName("/codex smoke text") == "/codex", "codex text smoke command")
+        try expect(bridgeLocalCommandName("/codex smoke attachment") == "/codex", "codex attachment smoke command")
+        try expect(bridgeLocalCommandName("/codex smoke browser") == nil, "unsupported codex smoke command is prompt text")
         try expect(bridgeLocalCommandName("/codex status please") == nil, "non-exact codex command is prompt text")
         try expect(bridgeLocalCommandName("what does /codex status show?") == nil, "natural language codex mention is prompt text")
         try expect(bridgeLocalCommandName("/status please") == "/status", "existing command arguments still work")
@@ -187,6 +191,40 @@ struct BridgeCoreFocusedTests {
         try await service.tick()
         let replies = await sink.repliesSnapshot()
         try expect(replies.map(\.text) == ["Please send the image you want me to modify, then tell me the edit you want."], "missing image follow-up asks for source")
+    }
+
+    private static func testCodexSmokeAttachmentCommandSendsProbeAndSummary() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        try stores.config.save(config)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 1, guid: "guid-smoke-attachment", text: "/codex smoke attachment", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in FakeProgressCodexBackend(events: [], response: "should not run") },
+            now: { Date(timeIntervalSince1970: 1_777_777_777) }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        let attachments = await sink.attachmentsSnapshot()
+        let replies = await sink.repliesSnapshot()
+
+        try expect(attachments.count == 1, "codex smoke attachment sends one image probe")
+        try expect(attachments.first?.filePath.hasSuffix(".png") == true, "codex smoke attachment creates png probe")
+        try expect(replies.count == 1, "codex smoke attachment sends one summary reply")
+        try expect(replies.first?.text.contains("Smoke attachment passed: CODEX_BRIDGE_SMOKE_ATTACHMENT_") == true, "codex smoke attachment reports marker")
+        try expect(replies.first?.text.contains("Evidence: attachment dbObserved") == true, "codex smoke attachment reports delivery evidence")
+        let state = try stores.state.load()
+        try expect(state.lastOutboundSend?.kind == "attachment", "codex smoke attachment preserves probe as last outbound send")
     }
 
     private static func testInboundImageSmokeBuildsLocalImageRequest() throws {
