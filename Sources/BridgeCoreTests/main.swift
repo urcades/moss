@@ -47,6 +47,8 @@ struct BridgeCoreFocusedTests {
         try testBridgeServiceSessionAndJobStartMutationsUseStateOwner()
         try testBridgeServiceAutomationMutationsUseStateOwner()
         try testBridgeServiceBatchAndCallbackMutationsUseStateOwner()
+        try testBridgeJobQueuePrioritizesCutThroughJobs()
+        try testBridgeServiceUsesJobQueueOwner()
         try testCapabilityFormattingAndCacheSnapshot()
         try await testCapabilityBestEffortPrefersCache()
         try await testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb()
@@ -1257,6 +1259,55 @@ struct BridgeCoreFocusedTests {
         ]
         for pattern in forbidden {
             try expect(!source.contains(pattern), "BridgeService batch/callback mutation should use state owner instead of direct pattern \(pattern)")
+        }
+    }
+
+    private static func testBridgeJobQueuePrioritizesCutThroughJobs() throws {
+        let queue = BridgeJobQueue()
+        let prompt = PendingBatch(
+            handleId: "+1",
+            service: "iMessage",
+            startedAt: "2026-01-01T00:00:00.000Z",
+            deadlineAt: "2026-01-01T00:00:01.000Z",
+            items: [
+                MessageItem(rowId: 1, guid: "prompt", text: "ordinary", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+            ]
+        )
+        let command = MessageItem(rowId: 2, guid: "command", text: "/codex status", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+        let callback = MessageItem(rowId: 3, guid: "callback", text: "answer", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+
+        queue.enqueuePromptBatch(prompt)
+        queue.enqueueLocalCommand("/codex", command)
+        queue.enqueueInteractiveCallbackReply(callback)
+
+        guard case .localCommand? = queue.dequeueNext(hasActiveJob: true) else {
+            throw TestFailure(description: "active job lets local command cut through prompt batch")
+        }
+        guard case .interactiveCallbackReply? = queue.dequeueNext(hasActiveJob: true) else {
+            throw TestFailure(description: "active job lets callback reply cut through prompt batch")
+        }
+        try expect(queue.dequeueNext(hasActiveJob: true) == nil, "active job keeps prompt batch queued")
+        guard case .promptBatch? = queue.dequeueNext(hasActiveJob: false) else {
+            throw TestFailure(description: "prompt batch drains when no active job remains")
+        }
+        try expect(queue.isEmpty, "queue drains after prompt batch")
+    }
+
+    private static func testBridgeServiceUsesJobQueueOwner() throws {
+        let sourcePath = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("BridgeCore/BridgeService.swift")
+        let source = try String(contentsOf: sourcePath, encoding: .utf8)
+        let forbidden = [
+            "private var queue: [Job]",
+            "queue.append(",
+            "queue.isEmpty",
+            "queue.firstIndex",
+            "queue.remove("
+        ]
+        for pattern in forbidden {
+            try expect(!source.contains(pattern), "BridgeService queue mutation should use BridgeJobQueue instead of direct pattern \(pattern)")
         }
     }
 

@@ -80,6 +80,5 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
     Open proof gaps:
     - Live trusted-chat evidence for `/codex smoke app-server-callback`.
     - Live trusted-chat evidence for `/codex smoke generated-image` and a follow-up edit probe.
-    - Full BridgeState actor/reducer migration beyond store-level write serialization.
     """
 }

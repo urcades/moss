@@ -54,7 +54,7 @@ Evidence:
 - Doctor reports app-server process groups and orphan checks.
 - Timeout/cancel tests verify process-tree cleanup.
 
-Current status: field merge and path-scoped state write locking exist, and `BridgeService` now stores its in-memory state behind a serialized `BridgeStateBox` with deterministic concurrent-mutation coverage. Cursor updates, outbound send evidence, media refs, pending batch state, interactive callback reply/expiry/clear, active-job updates, callback completion, cancel transitions, prompt job-start, Codex session lifecycle updates, automation creation status, automation route persistence, and automation delivery cursors now use serialized mutation helpers. The full actor/reducer migration is still open because the transient in-memory job queue dispatch is still owned directly by `BridgeService`.
+Current status: field merge and path-scoped state write locking exist, and `BridgeService` now stores its in-memory state behind a serialized `BridgeStateBox` with deterministic concurrent-mutation coverage. Cursor updates, outbound send evidence, media refs, pending batch state, interactive callback reply/expiry/clear, active-job updates, callback completion, cancel transitions, prompt job-start, Codex session lifecycle updates, automation creation status, automation route persistence, and automation delivery cursors now use serialized mutation helpers. Transient prompt, command, and callback dispatch now flows through `BridgeJobQueue`, with source-level regression coverage preventing raw queue mutation from creeping back into `BridgeService`. Remaining proof gaps are live trusted-chat evidence and live runtime/process diagnostics rather than local state-owner migration.
 
 ## Goal F: Capability Drift And Changelog Adoption
 

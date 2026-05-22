@@ -13,7 +13,7 @@ public final class BridgeService: @unchecked Sendable {
     private let now: () -> Date
     private let stateBox: BridgeStateBox
     private var stopped = false
-    private var queue: [Job] = []
+    private let jobQueue = BridgeJobQueue()
     private var activeCodexTask: Task<Void, Never>?
     private var state: BridgeState {
         get { stateBox.snapshot() }
@@ -105,12 +105,12 @@ public final class BridgeService: @unchecked Sendable {
 
     private func processIncoming(config: BridgeConfig, message: MessageItem) {
         if shouldRouteToPendingInteractiveCallback(message) {
-            queue.append(.interactiveCallbackReply(message))
+            jobQueue.enqueueInteractiveCallbackReply(message)
             return
         }
         if state.activeJob != nil {
             if let command = localCommandName(message.text), message.attachments.isEmpty {
-                queue.append(.localCommand(command, message))
+                jobQueue.enqueueLocalCommand(command, message)
             } else {
                 appendToPendingBatch(config: config, message: message)
             }
@@ -118,7 +118,7 @@ public final class BridgeService: @unchecked Sendable {
         }
         if let command = localCommandName(message.text), message.attachments.isEmpty {
             finalizePendingBatch()
-            queue.append(.localCommand(command, message))
+            jobQueue.enqueueLocalCommand(command, message)
             return
         }
         appendToPendingBatch(config: config, message: message)
@@ -134,7 +134,7 @@ public final class BridgeService: @unchecked Sendable {
             state.appendPendingBatchMessage(message, batchWindowMs: config.batchWindowMs, messageDate: messageDate)
         }
         if let finalized {
-            queue.append(.promptBatch(finalized))
+            jobQueue.enqueuePromptBatch(finalized)
         }
     }
 
@@ -144,7 +144,7 @@ public final class BridgeService: @unchecked Sendable {
             state.finalizePendingBatchForQueue()
         }
         if let batch {
-            queue.append(.promptBatch(batch))
+            jobQueue.enqueuePromptBatch(batch)
         }
         return batch
     }
@@ -158,21 +158,7 @@ public final class BridgeService: @unchecked Sendable {
     }
 
     private func drainQueue() async throws {
-        while !queue.isEmpty {
-            let index: Int
-            if state.activeJob != nil {
-                guard let localCommandIndex = queue.firstIndex(where: {
-                    if case .localCommand = $0 { return true }
-                    if case .interactiveCallbackReply = $0 { return true }
-                    return false
-                }) else {
-                    return
-                }
-                index = localCommandIndex
-            } else {
-                index = 0
-            }
-            let job = queue.remove(at: index)
+        while let job = jobQueue.dequeueNext(hasActiveJob: state.activeJob != nil) {
             switch job {
             case .localCommand(let command, let message):
                 try await handleLocalCommand(command, message: message)
@@ -1839,12 +1825,6 @@ private final class LockedResultBox<T>: @unchecked Sendable {
         defer { lock.unlock() }
         return try result!.get()
     }
-}
-
-private enum Job {
-    case localCommand(String, MessageItem)
-    case interactiveCallbackReply(MessageItem)
-    case promptBatch(PendingBatch)
 }
 
 private struct CancelTransition {
