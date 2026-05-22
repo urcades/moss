@@ -49,6 +49,7 @@ struct BridgeCoreFocusedTests {
         try testBridgeServiceBatchAndCallbackMutationsUseStateOwner()
         try testBridgeJobQueuePrioritizesCutThroughJobs()
         try testBridgeServiceUsesJobQueueOwner()
+        try testComputerUseProbeDetailIncludesWindowDiagnostics()
         try testCapabilityFormattingAndCacheSnapshot()
         try await testCapabilityBestEffortPrefersCache()
         try await testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb()
@@ -1309,6 +1310,18 @@ struct BridgeCoreFocusedTests {
         for pattern in forbidden {
             try expect(!source.contains(pattern), "BridgeService queue mutation should use BridgeJobQueue instead of direct pattern \(pattern)")
         }
+    }
+
+    private static func testComputerUseProbeDetailIncludesWindowDiagnostics() throws {
+        let plain = computerUseProbeDetailWithWindowDiagnostics("SUCCESS Start Page", windowSummary: "Safari=1")
+        try expect(plain == "SUCCESS Start Page", "successful probe text is not decorated")
+
+        let blocked = computerUseProbeDetailWithWindowDiagnostics(
+            "Computer Use server error -10005: cgWindowNotFound",
+            windowSummary: "Safari=0; Messages=0; Finder=0"
+        )
+        try expect(blocked.contains("Computer Use server error -10005: cgWindowNotFound"), "blocker text is preserved")
+        try expect(blocked.contains("Local accessibility windows: Safari=0; Messages=0; Finder=0"), "window preflight is appended")
     }
 
     private static func testCapabilityFormattingAndCacheSnapshot() throws {

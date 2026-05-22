@@ -369,12 +369,58 @@ public final class Doctor: @unchecked Sendable {
                 }
             }
             let ok = response.text.contains(marker) && response.text.localizedCaseInsensitiveContains("SUCCESS")
-            return DoctorCheck(name: "Computer Use probe", ok: ok, detail: response.text)
+            let detail = ok
+                ? response.text
+                : computerUseProbeDetailWithWindowDiagnostics(response.text, windowSummary: localAccessibilityWindowSummary(runner: runner))
+            return DoctorCheck(name: "Computer Use probe", ok: ok, detail: detail)
         } catch let error as CodexBackendFailure {
-            return DoctorCheck(name: "Computer Use probe", ok: false, detail: error.blockedText ?? error.message)
+            let detail = computerUseProbeDetailWithWindowDiagnostics(error.blockedText ?? error.message, windowSummary: localAccessibilityWindowSummary(runner: runner))
+            return DoctorCheck(name: "Computer Use probe", ok: false, detail: detail)
         } catch {
             return DoctorCheck(name: "Computer Use probe", ok: false, detail: String(describing: error))
         }
+    }
+}
+
+public func computerUseProbeDetailWithWindowDiagnostics(_ detail: String, windowSummary: String) -> String {
+    guard permissionBlock(in: detail)?.contains("cgWindowNotFound") == true else {
+        return detail
+    }
+    let trimmed = windowSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return detail
+    }
+    return "\(detail); Local accessibility windows: \(trimmed)"
+}
+
+public func localAccessibilityWindowSummary(
+    runner: ProcessRunner = ProcessRunner(),
+    appNames: [String] = ["Safari", "Messages", "Finder", "TextEdit", "System Settings"]
+) -> String {
+    let quotedNames = appNames.map { "\"\($0.replacingOccurrences(of: "\"", with: "\\\""))\"" }.joined(separator: ", ")
+    let script = """
+    set outputItems to {}
+    set oldDelims to AppleScript's text item delimiters
+    set AppleScript's text item delimiters to "; "
+    tell application "System Events"
+      repeat with pname in {\(quotedNames)}
+        try
+          tell process (pname as text)
+            set end of outputItems to (pname as text) & "=" & ((count of windows) as text)
+          end tell
+        on error errMsg number errNo
+          set end of outputItems to (pname as text) & "=error(" & (errNo as text) & ")"
+        end try
+      end repeat
+    end tell
+    set summaryText to outputItems as text
+    set AppleScript's text item delimiters to oldDelims
+    return summaryText
+    """
+    do {
+        return try runner.runSync("/usr/bin/osascript", ["-e", script], timeoutMs: 5_000)
+    } catch {
+        return "unavailable(\(error))"
     }
 }
 
