@@ -110,7 +110,7 @@ Success means bridge state writes cannot clobber each other and cancellation lea
   - Doctor now reports corrupt `state.json` recovery backups by exact backup path when they exist. Deterministic coverage verifies the latest backup path is discoverable; current live doctor reports `State recovery backups: none`.
   - Doctor now reports helper and permission-broker LaunchAgent loaded state plus provenance across expected installed executable path, LaunchAgent plist `ProgramArguments[0]`, and the loaded `launchctl print` program path. Current live doctor shows all three paths agree for both LaunchAgents.
   - Doctor now compares built helper/broker executables with the installed runtime copies and reports byte-level match/mismatch when both artifacts exist. Deterministic coverage verifies match, mismatch, and missing-built-artifact behavior.
-  - Current live doctor reports built-vs-installed identity matches for the helper (`3349440` bytes) and permission broker (`3412384` bytes), with matching built/installed mtimes.
+  - Current live doctor reports built-vs-installed identity matches for the helper (`3367392` bytes) and permission broker (`3430304` bytes), with matching built/installed mtimes.
 - Live gates:
   - Doctor reports app-server process snapshots without hanging.
   - Cancel/timeout leaves no bridge-owned orphan `codex app-server` or Computer Use child process.
@@ -146,6 +146,8 @@ Success means the bridge continuously reports what Codex can really do from Mess
   - `codexmsgctl-swift status` and `/codex status` now use the capability cache first and bound live refresh attempts, so a stuck app-server capability refresh cannot hang status. Deterministic coverage verifies the best-effort status lookup returns an existing cache even when the Codex command is unavailable.
   - Capability cache formatting now marks caches stale after 24h in status and doctor output, so version/tool drift is visible even when bounded refreshes are skipped.
   - Dynamic tool forwarding now has deterministic stalled-call coverage using a fake app-server connection that waits until the RPC deadline, then verifies the bridge sends an explicit failed tool result for the original dynamic call.
+  - `codexmsgctl-swift smoke app-server` and `/codex smoke app-server` now run a no-tool marked app-server turn and require the final response to contain the marker plus `SUCCESS`.
+  - Current `swift run codexmsgctl-swift smoke app-server` passed with marker `CODEXMSGCTL_SMOKE_APP_SERVER_67979A3A-523E-4A7D-8938-B9CABF065197`, thread `019e4f19-beec-70c1-8786-1ec4e10486f2`, and turn `019e4f19-c068-75d2-96ab-0fddbd3b903c`.
   - Post-restart `swift run codexmsgctl-swift status` returned with `Codex capability cache: cached at 2026-05-22T08:38:33.701Z` and callable Chrome, Computer Use, and Apps/connectors invocation status.
   - The Messages command surface now recognizes `/codex smoke automation`, `/codex smoke callback`, `/codex smoke inbound-image-check`, `/codex smoke chrome`, `/codex smoke browser`, and `/codex smoke computer-use`, so capability probes can be launched from Apple Messages instead of only from the CLI. Deterministic coverage verifies `/codex smoke chrome` invokes the app-server probe path and returns thread/turn evidence in the reply.
   - Post-restart `swift run codexmsgctl-swift smoke chrome` passed with marker `CODEXMSGCTL_SMOKE_CHROME_33E4142A-6BDF-4224-A9BD-2D7148DAACCA` and exact blocker `privileged native pipe bridge is not available; browser-client is not trusted`.
@@ -160,6 +162,7 @@ Before this workstream is complete, the installed helper must satisfy:
 - `swift run codexmsgctl-swift doctor --probe-computer-use`
 - `swift run codexmsgctl-swift smoke text`
 - `swift run codexmsgctl-swift smoke attachment`
+- `swift run codexmsgctl-swift smoke app-server`
 - `swift run codexmsgctl-swift smoke inbound-image-check`
 - `/codex status` from the trusted Messages chat
 - A live inbound-image follow-up edit probe

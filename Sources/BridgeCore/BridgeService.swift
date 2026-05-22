@@ -430,7 +430,7 @@ public final class BridgeService: @unchecked Sendable {
         case "/codex automations":
             return codexAutomationRoutesText()
         default:
-            return "Use /codex status, /codex open, /codex history, /codex automations, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|inbound-image-check|chrome|browser|computer-use."
+            return "Use /codex status, /codex open, /codex history, /codex automations, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|app-server|inbound-image-check|chrome|browser|computer-use."
         }
     }
 
@@ -504,6 +504,15 @@ public final class BridgeService: @unchecked Sendable {
                 Error: \(error)
                 """
             }
+        case "app-server":
+            if state.activeJob != nil {
+                summary = "Smoke app-server skipped: a Codex job is already active. Send /codex status or /cancel first."
+            } else {
+                var smokeConfig = config
+                smokeConfig.timeoutMs = min(config.timeoutMs, 60_000)
+                let request = PromptRequest(promptText: bridgeAppServerSmokePrompt(marker: marker), attachments: [])
+                summary = await runBridgeAppServerSmoke(label: "app-server", marker: marker, request: request, config: smokeConfig, requireSuccessToken: true)
+            }
         case "inbound-image-check":
             var refs = state.recentMediaRefs ?? []
             if (try? buildInboundImageSmokeRequest(recipient: message.handleId, service: message.service, recentMediaRefs: refs)) == nil,
@@ -542,7 +551,7 @@ public final class BridgeService: @unchecked Sendable {
                 summary = await runBridgeAppServerSmoke(label: subcommand, marker: marker, request: request, config: smokeConfig)
             }
         default:
-            summary = "Use /codex smoke text, attachment, automation, inbound-image-check, chrome, browser, or computer-use."
+            summary = "Use /codex smoke text, attachment, automation, callback, app-server, inbound-image-check, chrome, browser, or computer-use."
         }
         _ = try await sink.sendReply(recipient: message.handleId, service: message.service, text: summary)
     }
@@ -825,6 +834,7 @@ public final class BridgeService: @unchecked Sendable {
             /codex smoke attachment - send a marked image probe and report delivery evidence
             /codex smoke automation - create a paused marked automation and route
             /codex smoke callback - create a pending callback and verify the next reply is routed to it
+            /codex smoke app-server - verify a normal app-server turn returns a final marked reply
             /codex smoke inbound-image-check - verify the latest trusted inbound image reaches app-server
             /codex smoke chrome|browser|computer-use - verify delegated capability success or blocker text
             /cancel - stop the active Codex job
@@ -1619,6 +1629,7 @@ private let supportedBridgeCodexSmokeSubcommands: Set<String> = [
     "attachment",
     "automation",
     "callback",
+    "app-server",
     "inbound-image-check",
     "chrome",
     "browser",
@@ -1626,6 +1637,10 @@ private let supportedBridgeCodexSmokeSubcommands: Set<String> = [
 ]
 
 private let bridgeSmokeCallbackMethod = "bridge/smoke/interactiveCallback"
+
+private func bridgeAppServerSmokePrompt(marker: String) -> String {
+    "Reply only with \(marker) SUCCESS. Do not call tools, plugins, apps, browser, or Computer Use."
+}
 
 private func bridgeCapabilitySmokePrompt(capability: String, marker: String) -> String {
     switch capability {

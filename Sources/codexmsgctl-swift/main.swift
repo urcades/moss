@@ -22,7 +22,7 @@ struct CodexMsgCtlSwift {
           codexmsgctl-swift configure --safety standard|permissive|preserve
           codexmsgctl-swift configure --preserve-safety
           codexmsgctl-swift doctor [--probe-computer-use]
-          codexmsgctl-swift smoke text|attachment|automation|inbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
+          codexmsgctl-swift smoke text|attachment|automation|app-server|inbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift broker start|stop|status|doctor|events|dry-run-scan
           codexmsgctl-swift reset
         """)
@@ -155,7 +155,7 @@ struct CodexMsgCtlSwift {
     private static func runSmokeCommand(_ args: [String], paths: RuntimePaths, stores: RuntimeStores) async throws {
         let subcommand = args.first ?? "help"
         if subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
-            print("Usage: codexmsgctl-swift smoke text|attachment|automation|inbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]")
+            print("Usage: codexmsgctl-swift smoke text|attachment|automation|app-server|inbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]")
             return
         }
         let config = try stores.config.load()
@@ -171,6 +171,8 @@ struct CodexMsgCtlSwift {
             try await runAttachmentSmoke(recipient: recipient, service: service, config: config, paths: paths)
         case "automation":
             try runAutomationSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
+        case "app-server":
+            try await runAppServerFinalAnswerSmoke(config: config, paths: paths)
         case "inbound-image-check":
             try await runInboundImageCheckSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
         case "chrome", "browser", "computer-use":
@@ -260,6 +262,18 @@ struct CodexMsgCtlSwift {
         print("Schedule: \(result.automation.rrule)")
         print("Route: \(result.route.recipient) via \(result.route.service)")
         print("Smoke automation passed.")
+    }
+
+    private static func runAppServerFinalAnswerSmoke(config: BridgeConfig, paths: RuntimePaths) async throws {
+        let marker = "CODEXMSGCTL_SMOKE_APP_SERVER_\(UUID().uuidString)"
+        var smokeConfig = config
+        smokeConfig.timeoutMs = min(config.timeoutMs, 60_000)
+        let request = PromptRequest(
+            promptText: appServerFinalAnswerSmokePrompt(marker: marker),
+            attachments: []
+        )
+        print("Smoke app-server marker: \(marker)")
+        try await runAppServerMarkerSmoke(label: "app-server", marker: marker, request: request, config: smokeConfig, paths: paths, requireSuccessToken: true)
     }
 
     private static func runInboundImageCheckSmoke(recipient: String, service: String, config: BridgeConfig, paths: RuntimePaths, stores: RuntimeStores) async throws {
@@ -358,6 +372,10 @@ struct CodexMsgCtlSwift {
         default:
             return "Use \(capability) and reply only with \(marker) SUCCESS, or \(marker) BLOCKED and the exact blocker text."
         }
+    }
+
+    private static func appServerFinalAnswerSmokePrompt(marker: String) -> String {
+        "Reply only with \(marker) SUCCESS. Do not call tools, plugins, apps, browser, or Computer Use."
     }
 
     private static func smokePNGData() throws -> Data {

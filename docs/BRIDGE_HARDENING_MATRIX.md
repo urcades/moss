@@ -8,7 +8,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 | --- | --- | --- | --- |
 | Messages ingress | Messages DB rows arrive before attachments are readable | Attachment metadata records `exists`; very recent rows with missing attachment files are deferred without advancing the cursor, then retried until files appear or the defer window expires | Add live evidence from a real delayed Messages attachment row if it recurs |
 | Messages ingress | Image/file classification drift | Focused tests cover prompt attachment preservation plus SQLite fixtures for attachment-only rows, multiple attachments, PDFs, unsupported files, existence flags, and `~/` path expansion | Add live evidence if Messages introduces new attachment metadata shapes |
-| Codex app-server turns | Final answer never arrives | App-server tests reject non-final agent messages and surface no-final failures | Add live marked smoke test for a Messages-launched long turn |
+| Codex app-server turns | Final answer never arrives | App-server tests reject non-final agent messages, surface no-final failures, and `/codex smoke app-server` / CLI smoke can run a marked final-answer probe | Add trusted-chat evidence for `/codex smoke app-server` |
 | Codex app-server callbacks | Tool/user-input callback silently returns empty or cancel | The default backend can persist a pending callback, send a Messages prompt, route the next trusted reply back to JSON-RPC, and clear terminal state | Add a live installed-helper callback smoke with a real app-server callback |
 | Capability delegation | User says "use Computer Use/Chrome/Browser" without `@` mention | Natural-language aliases now become structured plugin mentions; CLI and Messages smoke commands can launch marked Chrome, Browser, and Computer Use probes | Add trusted-chat live Messages runs for each blocker-or-success probe |
 | Dynamic tools | MCP tool succeeds/fails with odd content | Tests cover forwarding, unsupported non-MCP namespaces, malformed request fields, stalled MCP calls, MCP `isError`, image/text/primitive/unknown object normalization, and searchable object keys | Add live evidence from a real plugin/tool stall if it recurs |
@@ -26,6 +26,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 ## Tests Added Or Strengthened
 
 - App-server callbacks: `item/tool/requestUserInput` and `mcpServer/elicitation/request` have deterministic Messages-backed responder coverage.
+- App-server final answers: app-server smoke commands verify a normal marked turn returns a final reply with thread/turn evidence.
 - Dynamic app-server tools: MCP forwarding now has contract coverage for unsupported namespaces, malformed requests, stalled MCP calls, error responses, images, primitives, and unknown JSON object content.
 - Natural-language capability mentions: `use Computer Use`, `use Chrome`, and `use Browser` become structured plugin mentions.
 - Explicit attachment handoff: a valid `BRIDGE_ATTACH:` line sends the file even when the original prompt did not match attachment-request heuristics.
@@ -48,7 +49,7 @@ Use explicit markers in message text and filenames so live probes are searchable
 - Attachment probe: generate `bridge-smoke-attachment-<timestamp>.png`, send via `BRIDGE_ATTACH:`, and verify attachment evidence.
 - Inbound image probe: send an image into the trusted chat and verify app-server input includes a `localImage` item.
 - Capability probes: ask for marked Browser, Chrome, and Computer Use actions; require exact blocker text instead of fallback prose.
-- Messages command probes: send `/codex smoke chrome`, `/codex smoke browser`, `/codex smoke computer-use`, `/codex smoke automation`, `/codex smoke callback`, and `/codex smoke inbound-image-check` from the trusted chat.
+- Messages command probes: send `/codex smoke app-server`, `/codex smoke chrome`, `/codex smoke browser`, `/codex smoke computer-use`, `/codex smoke automation`, `/codex smoke callback`, and `/codex smoke inbound-image-check` from the trusted chat.
 
 ## Codex Changelog Adoption
 
