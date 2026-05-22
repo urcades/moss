@@ -70,12 +70,23 @@ public final class AppleMessagesReplySink: ReplySink {
     private let chunkSize: Int
     private let messagesDbPath: String?
     private let runner: ProcessRunner
+    private let attachmentVerificationTimeoutMs: Int
+    private let clipboardAttachmentAttempts: Int
 
-    public init(osascriptCommand: String = "/usr/bin/osascript", chunkSize: Int = BridgeConstants.defaultChunkSize, messagesDbPath: String? = nil, runner: ProcessRunner = ProcessRunner()) {
+    public init(
+        osascriptCommand: String = "/usr/bin/osascript",
+        chunkSize: Int = BridgeConstants.defaultChunkSize,
+        messagesDbPath: String? = nil,
+        runner: ProcessRunner = ProcessRunner(),
+        attachmentVerificationTimeoutMs: Int = 8_000,
+        clipboardAttachmentAttempts: Int = 2
+    ) {
         self.osascriptCommand = osascriptCommand
         self.chunkSize = chunkSize
         self.messagesDbPath = messagesDbPath
         self.runner = runner
+        self.attachmentVerificationTimeoutMs = attachmentVerificationTimeoutMs
+        self.clipboardAttachmentAttempts = max(1, clipboardAttachmentAttempts)
     }
 
     public func sendReply(recipient: String, service: String, text: String) async throws -> OutboundDeliveryEvidence {
@@ -121,11 +132,26 @@ public final class AppleMessagesReplySink: ReplySink {
     }
 
     private func sendClipboardImage(recipient: String, serviceType: String, filePath: String) async throws -> OutboundDeliveryEvidence {
-        let fallbackBeforeRowId = try await latestOutgoingMessageRowId()
         let lines = appleMessagesClipboardImageScriptLines()
         let args = lines.flatMap { ["-e", $0] } + ["--", smsURLRecipient(recipient), serviceType, filePath]
-        _ = try await runner.run(osascriptCommand, args)
-        return try await verifyAttachmentSend(afterRowId: fallbackBeforeRowId, originalFileName: nil)
+        var lastNoRowFailure: OutboundDeliveryFailure?
+        for attempt in 1...clipboardAttachmentAttempts {
+            let fallbackBeforeRowId = try await latestOutgoingMessageRowId()
+            _ = try await runner.run(osascriptCommand, args)
+            do {
+                var evidence = try await verifyAttachmentSend(afterRowId: fallbackBeforeRowId, originalFileName: nil)
+                if attempt > 1 {
+                    evidence.detail = [evidence.detail, "Succeeded after clipboard retry \(attempt)."].compactMap { $0 }.joined(separator: " ")
+                }
+                return evidence
+            } catch let failure as OutboundDeliveryFailure {
+                if failure.evidence != nil {
+                    throw failure
+                }
+                lastNoRowFailure = failure
+            }
+        }
+        throw lastNoRowFailure ?? OutboundDeliveryFailure(message: "Messages did not create an outgoing attachment row.")
     }
 
     private func createClipboardFriendlyJPEG(from filePath: String) async throws -> String? {
@@ -167,7 +193,6 @@ public final class AppleMessagesReplySink: ReplySink {
         guard let messagesDbPath else {
             return OutboundDeliveryEvidence(transport: "AppleScript", detail: "No Messages database configured for attachment verification.")
         }
-        try? await Task.sleep(nanoseconds: 3_000_000_000)
         let nameFilter: String
         if let originalFileName {
             let fileName = originalFileName.replacingOccurrences(of: "'", with: "''")
@@ -175,19 +200,25 @@ public final class AppleMessagesReplySink: ReplySink {
         } else {
             nameFilter = ""
         }
-        let sql = """
-        SELECT m.ROWID || '|' || COALESCE(m.error, 0) || '|' || COALESCE(a.transfer_state, 0) || '|' || COALESCE(m.date_delivered, 0)
-        FROM message m
-        JOIN message_attachment_join maj ON maj.message_id = m.ROWID
-        JOIN attachment a ON a.ROWID = maj.attachment_id
-        WHERE m.is_from_me = 1
-          AND m.ROWID > \(afterRowId)
-          \(nameFilter)
-        ORDER BY m.ROWID DESC
-        LIMIT 1;
-        """
-        let result = try await runner.run("/usr/bin/sqlite3", ["-readonly", messagesDbPath, sql])
-        let fields = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "|").map(String.init)
+        let deadline = Date().addingTimeInterval(Double(attachmentVerificationTimeoutMs) / 1_000)
+        var fields: [String] = []
+        repeat {
+            let sql = """
+            SELECT m.ROWID || '|' || COALESCE(m.error, 0) || '|' || COALESCE(a.transfer_state, 0) || '|' || COALESCE(m.date_delivered, 0)
+            FROM message m
+            JOIN message_attachment_join maj ON maj.message_id = m.ROWID
+            JOIN attachment a ON a.ROWID = maj.attachment_id
+            WHERE m.is_from_me = 1
+              AND m.ROWID > \(afterRowId)
+              \(nameFilter)
+            ORDER BY m.ROWID DESC
+            LIMIT 1;
+            """
+            let result = try await runner.run("/usr/bin/sqlite3", ["-readonly", messagesDbPath, sql])
+            fields = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "|").map(String.init)
+            if fields.count == 4 { break }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        } while Date() < deadline
         guard fields.count == 4 else {
             throw OutboundDeliveryFailure(message: "Messages did not create an outgoing attachment row.")
         }
@@ -312,13 +343,15 @@ public func appleMessagesClipboardImageScriptLines() -> [String] {
         "open location \"sms:\" & recipientHandle",
         "end if",
         "tell application \"Messages\" to activate",
-        "delay 0.8",
+        "delay 1.2",
         "tell application \"System Events\"",
         "tell process \"Messages\"",
         "set frontmost to true",
+        "delay 0.3",
         "keystroke \"v\" using command down",
-        "delay 0.8",
+        "delay 1.2",
         "key code 36",
+        "delay 0.4",
         "end tell",
         "end tell",
         "end run"

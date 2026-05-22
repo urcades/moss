@@ -30,6 +30,7 @@ struct BridgeCoreFocusedTests {
         try await testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb()
         try await testOutboundSmokeAttachmentEvidenceFindsMarkerInTransferName()
         try await testOutboundSmokeAttachmentEvidenceFallsBackToLatestAttachment()
+        try await testClipboardAttachmentSendRetriesWhenNoDbRowAppears()
         try await testRecentFailedOutboundEvidenceFindsFailedTextAndAttachmentRows()
         try testCodexMentionExtraction()
         try testNaturalLanguageCodexMentionExtraction()
@@ -497,6 +498,44 @@ struct BridgeCoreFocusedTests {
         try expect(evidence?.rowId == 41, "smoke attachment fallback row id")
         try expect(evidence?.attachmentName == "IMG_0001.jpeg", "smoke attachment fallback accepts Messages-renamed image")
         try expect(evidence?.detail == "matched latest outbound attachment after baseline", "smoke attachment fallback detail")
+    }
+
+    private static func testClipboardAttachmentSendRetriesWhenNoDbRowAppears() async throws {
+        let paths = testPaths()
+        let db = try makeSmokeMessagesDb(paths: paths)
+        let countFile = paths.tmpDir.appendingPathComponent("fake-osascript-count")
+        let image = paths.tmpDir.appendingPathComponent("probe.jpg")
+        try Data([0xff, 0xd8, 0xff, 0xd9]).write(to: image)
+        let script = paths.tmpDir.appendingPathComponent("fake-osascript.sh")
+        try Data("""
+        #!/bin/sh
+        count_file=\(shellQuoted(countFile.path))
+        db=\(shellQuoted(db.path))
+        count=0
+        if [ -f "$count_file" ]; then
+          count=$(cat "$count_file")
+        fi
+        count=$((count + 1))
+        printf "%s" "$count" > "$count_file"
+        if [ "$count" -ge 2 ]; then
+          /usr/bin/sqlite3 "$db" "INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered) VALUES (50, 'retry-attachment-guid', '', 1, 0, 0); INSERT INTO attachment (ROWID, transfer_name, transfer_state) VALUES (12, 'IMG_retry.jpeg', 5); INSERT INTO message_attachment_join (message_id, attachment_id) VALUES (50, 12);"
+        fi
+        exit 0
+        """.utf8).write(to: script)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let sink = AppleMessagesReplySink(
+            osascriptCommand: script.path,
+            messagesDbPath: db.path,
+            attachmentVerificationTimeoutMs: 50,
+            clipboardAttachmentAttempts: 2
+        )
+
+        let evidence = try await sink.sendAttachment(recipient: "+1-520-609-9095", service: "iMessage", filePath: image.path)
+
+        try expect(evidence.dbRowId == 50, "clipboard attachment retry finds second-attempt row")
+        try expect(evidence.detail?.contains("Succeeded after clipboard retry 2") == true, "clipboard attachment retry records retry detail")
+        let attempts = try String(contentsOf: countFile, encoding: .utf8)
+        try expect(attempts == "2", "clipboard attachment send retries exactly once after no-row failure")
     }
 
     private static func testCodexMentionExtraction() throws {
@@ -1784,6 +1823,10 @@ private func runSQLite(_ db: URL, _ sql: String) throws {
     if process.terminationStatus != 0 {
         throw TestFailure(description: "sqlite3 failed with status \(process.terminationStatus)")
     }
+}
+
+private func shellQuoted(_ value: String) -> String {
+    "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
 }
 
 private func message(rowId: Int64, text: String) -> MessageItem {

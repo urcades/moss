@@ -17,6 +17,7 @@ Success means outbound text and media can never look successful when Messages re
   - Text smoke passed on row 731.
   - Old file-attachment smoke exposed row 732 with `error=25`, `transfer_state=6`; this was useful evidence but not the final image-media gate.
   - Image attachment smoke passed on row 737 after normalizing the configured phone handle before opening the `sms:` URL; Messages renamed the pasted image to `IMG_5972.jpeg`, so verification uses the DB baseline row instead of requiring the marker in `transfer_name`.
+  - A later image attachment smoke hit a no-row AppleScript/clipboard failure after baseline row 743. Attachment verification now polls longer and retries once only when no Messages DB row appears; the hardened smoke then passed on row 744 with `transfer_state=5`.
 
 ## Goal 2: Media Continuity
 
