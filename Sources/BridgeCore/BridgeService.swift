@@ -643,6 +643,7 @@ public final class BridgeService: @unchecked Sendable {
         default:
             summary = "Use /codex smoke text, attachment, bridge-attach, generated-image, edit-image-check, automation, callback, app-server-callback, app-server, inbound-image-check, outbound-image-check, chrome, browser, or computer-use."
         }
+        recordMessagesSmokeResult(name: subcommand, marker: marker, summary: summary)
         _ = try await sink.sendReply(recipient: message.handleId, service: message.service, text: summary)
     }
 
@@ -844,6 +845,24 @@ public final class BridgeService: @unchecked Sendable {
             Thread id: \(events.threadId() ?? "none")
             Turn id: \(events.turnId() ?? "none")
             """
+        }
+    }
+
+    private func recordMessagesSmokeResult(name: String, marker: String, summary: String) {
+        let status = bridgeSmokeSummaryStatus(summary)
+        let threadId = bridgeSmokeSummaryValue(prefix: "Thread id:", in: summary)
+        let turnId = bridgeSmokeSummaryValue(prefix: "Turn id:", in: summary)
+        try? mutateStateAndSave { state in
+            let result = LiveSmokeResult(
+                name: "messages-\(name)",
+                marker: marker,
+                status: status,
+                detail: cleanPlainText(summary),
+                threadId: threadId,
+                turnId: turnId,
+                updatedAt: DateCodec.iso(now())
+            )
+            state.liveSmokeResults = updatedLiveSmokeResults(state.liveSmokeResults ?? [], with: result)
         }
     }
 
@@ -1912,6 +1931,41 @@ private func codexSmokeSubcommand(_ text: String) -> String {
     let parts = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().split(separator: " ").map(String.init)
     guard parts.count == 3, parts[0] == "/codex", parts[1] == "smoke" else { return "" }
     return parts[2]
+}
+
+private func bridgeSmokeSummaryStatus(_ summary: String) -> String {
+    let normalized = summary.lowercased()
+    if normalized.contains(" blocked ") || normalized.contains(" blocked:") || normalized.contains("blocked ") {
+        return "blocked"
+    }
+    if normalized.contains("smoke ") && normalized.contains(" passed:") {
+        return "passed"
+    }
+    if normalized.contains("smoke ") && normalized.contains(" failed:") {
+        return "failed"
+    }
+    if normalized.contains("smoke ") && normalized.contains(" skipped:") {
+        return "skipped"
+    }
+    if normalized.contains("smoke ") && (normalized.contains(" pending:") || normalized.contains(" started:")) {
+        return "pending"
+    }
+    if normalized.contains("success") {
+        return "passed"
+    }
+    return "unknown"
+}
+
+private func bridgeSmokeSummaryValue(prefix: String, in summary: String) -> String? {
+    summary
+        .split(separator: "\n", omittingEmptySubsequences: false)
+        .compactMap { line -> String? in
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.range(of: prefix, options: [.caseInsensitive, .anchored]) != nil else { return nil }
+            let value = trimmed.dropFirst(prefix.count).trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.isEmpty || value == "none" ? nil : value
+        }
+        .first
 }
 
 private let supportedBridgeCodexSmokeSubcommands: Set<String> = [

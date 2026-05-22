@@ -647,11 +647,17 @@ struct BridgeCoreFocusedTests {
         try await service.tick()
         let replies = await sink.repliesSnapshot()
         let request = await backend.requestSnapshot()
+        let state = try stores.state.load()
+        let smokeResult = state.liveSmokeResults?.first { $0.name == "messages-chrome" }
 
         try expect(replies.count == 1, "codex smoke capability sends one summary reply")
         try expect(replies.first?.text.contains("Smoke chrome passed: CODEX_BRIDGE_SMOKE_CHROME_") == true, "codex smoke capability reports marker")
         try expect(replies.first?.text.contains("Thread id: thread-smoke") == true, "codex smoke capability reports thread id")
         try expect(request?.promptText.contains("Use @Chrome") == true, "codex smoke capability prompts app-server for Chrome")
+        try expect(smokeResult?.status == "passed", "messages smoke capability persists pass status")
+        try expect(smokeResult?.threadId == "thread-smoke", "messages smoke capability persists thread id")
+        try expect(smokeResult?.turnId == "turn-smoke", "messages smoke capability persists turn id")
+        try expect(smokeResult?.detail.contains("Smoke chrome passed:") == true, "messages smoke capability persists visible summary")
     }
 
     private static func testCodexSmokeAppServerCommandRunsFinalAnswerProbe() async throws {
