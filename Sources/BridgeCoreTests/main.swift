@@ -1329,6 +1329,8 @@ struct BridgeCoreFocusedTests {
         let data = try bridgeSmokePNGData()
         let bytes = [UInt8](data)
         try expect(bytes.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]), "smoke image has PNG signature")
+        try expect(pngUInt32(bytes, at: 16) >= 100, "smoke image is wide enough to be visually identifiable")
+        try expect(pngUInt32(bytes, at: 20) >= 24, "smoke image is tall enough to be visually identifiable")
         var offset = 8
         var sawIDAT = false
         while offset < bytes.count {
