@@ -205,8 +205,8 @@ struct CodexMsgCtlSwift {
     private static func runAttachmentSmoke(recipient: String, service: String, config: BridgeConfig, paths: RuntimePaths) async throws {
         let marker = "CODEXMSGCTL_SMOKE_ATTACHMENT_\(UUID().uuidString)"
         try FileManager.default.createDirectory(at: paths.tmpDir, withIntermediateDirectories: true)
-        let attachment = paths.tmpDir.appendingPathComponent("codexmsgctl-smoke-\(marker).txt")
-        try "Messages Codex Bridge smoke attachment marker: \(marker)\n".write(to: attachment, atomically: true, encoding: .utf8)
+        let attachment = paths.tmpDir.appendingPathComponent("codexmsgctl-smoke-\(marker).png")
+        try smokePNGData().write(to: attachment)
         let beforeRowId = try await latestOutgoingMessageRowId(config: config)
         print("Smoke attachment marker: \(marker)")
         print("Attachment path: \(attachment.path)")
@@ -231,6 +231,14 @@ struct CodexMsgCtlSwift {
             throw StoreError.validation("Smoke attachment failed: marker was not found in a successful outgoing attachment DB row.")
         }
         print("Smoke attachment passed.")
+    }
+
+    private static func smokePNGData() throws -> Data {
+        let encoded = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+        guard let data = Data(base64Encoded: encoded) else {
+            throw StoreError.validation("Could not decode smoke PNG fixture.")
+        }
+        return data
     }
 
     private static func smokeSendError(_ send: () async throws -> Void) async -> Error? {

@@ -25,6 +25,7 @@ struct BridgeCoreFocusedTests {
         try testCapabilityFormattingAndCacheSnapshot()
         try await testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb()
         try await testOutboundSmokeAttachmentEvidenceFindsMarkerInTransferName()
+        try await testOutboundSmokeAttachmentEvidenceFallsBackToLatestAttachment()
         try await testRecentFailedOutboundEvidenceFindsFailedTextAndAttachmentRows()
         try testCodexMentionExtraction()
         try testNaturalLanguageCodexMentionExtraction()
@@ -32,6 +33,7 @@ struct BridgeCoreFocusedTests {
         try testThreadHistoryFormattingSummarizesLastThreeTurns()
         try testEmptyHistoryHasClearDegradedMessage()
         try testAutomationDirectiveStripping()
+        try testSmsUrlRecipientNormalizesPhoneNumbers()
         try await testAppServerClientThreadReadSuccessAndCleanup()
         try await testAppServerClientRpcErrorAndCleanup()
         try await testAppServerClientInvalidResultAndTimeout()
@@ -305,7 +307,7 @@ struct BridgeCoreFocusedTests {
         INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered)
         VALUES (30, 'smoke-attachment-guid', '', 1, 0, 456);
         INSERT INTO attachment (ROWID, transfer_name, transfer_state)
-        VALUES (7, 'codexmsgctl-smoke-CODEXMSGCTL_SMOKE_ATTACHMENT_TEST.txt', 5);
+        VALUES (7, 'codexmsgctl-smoke-CODEXMSGCTL_SMOKE_ATTACHMENT_TEST.png', 5);
         INSERT INTO message_attachment_join (message_id, attachment_id)
         VALUES (30, 7);
         """)
@@ -314,8 +316,35 @@ struct BridgeCoreFocusedTests {
 
         try expect(evidence?.rowId == 30, "smoke attachment evidence row id")
         try expect(evidence?.guid == "smoke-attachment-guid", "smoke attachment evidence guid")
-        try expect(evidence?.attachmentName == "codexmsgctl-smoke-CODEXMSGCTL_SMOKE_ATTACHMENT_TEST.txt", "smoke attachment evidence transfer name")
+        try expect(evidence?.attachmentName == "codexmsgctl-smoke-CODEXMSGCTL_SMOKE_ATTACHMENT_TEST.png", "smoke attachment evidence transfer name")
         try expect(evidence?.transferState == 5, "smoke attachment evidence transfer state")
+    }
+
+    private static func testOutboundSmokeAttachmentEvidenceFallsBackToLatestAttachment() async throws {
+        let paths = testPaths()
+        let db = try makeSmokeMessagesDb(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.messagesDbPath = db.path
+        try runSQLite(db, """
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered)
+        VALUES (40, 'older-attachment-guid', '', 1, 0, 100);
+        INSERT INTO attachment (ROWID, transfer_name, transfer_state)
+        VALUES (8, 'older.png', 5);
+        INSERT INTO message_attachment_join (message_id, attachment_id)
+        VALUES (40, 8);
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered)
+        VALUES (41, 'clipboard-attachment-guid', '', 1, 0, 0);
+        INSERT INTO attachment (ROWID, transfer_name, transfer_state)
+        VALUES (9, 'IMG_0001.jpeg', 5);
+        INSERT INTO message_attachment_join (message_id, attachment_id)
+        VALUES (41, 9);
+        """)
+
+        let evidence = try await outboundSmokeAttachmentEvidence(marker: "CODEXMSGCTL_SMOKE_ATTACHMENT_MISSING_FROM_NAME", afterRowId: 40, config: config)
+
+        try expect(evidence?.rowId == 41, "smoke attachment fallback row id")
+        try expect(evidence?.attachmentName == "IMG_0001.jpeg", "smoke attachment fallback accepts Messages-renamed image")
+        try expect(evidence?.detail == "matched latest outbound attachment after baseline", "smoke attachment fallback detail")
     }
 
     private static func testCodexMentionExtraction() throws {
@@ -387,6 +416,12 @@ struct BridgeCoreFocusedTests {
         ::inbox-item{title="Morning digest" summary="Review highlights"}
         """
         try expect(sanitizedAutomationMessage(text) == "Morning Digest\nBring an umbrella.", "automation forwarding strips Codex-only directives")
+    }
+
+    private static func testSmsUrlRecipientNormalizesPhoneNumbers() throws {
+        try expect(smsURLRecipient("+1-520-609-9095") == "+15206099095", "sms URL phone recipient strips separators")
+        try expect(smsURLRecipient("520 609 9095") == "5206099095", "sms URL phone recipient preserves bare number")
+        try expect(smsURLRecipient("person@example.com") == "person@example.com", "sms URL recipient preserves emails")
     }
 
     private static func testAppServerClientThreadReadSuccessAndCleanup() async throws {

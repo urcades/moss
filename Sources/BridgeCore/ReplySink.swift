@@ -123,7 +123,7 @@ public final class AppleMessagesReplySink: ReplySink {
     private func sendClipboardImage(recipient: String, serviceType: String, filePath: String) async throws -> OutboundDeliveryEvidence {
         let fallbackBeforeRowId = try await latestOutgoingMessageRowId()
         let lines = appleMessagesClipboardImageScriptLines()
-        let args = lines.flatMap { ["-e", $0] } + ["--", recipient, serviceType, filePath]
+        let args = lines.flatMap { ["-e", $0] } + ["--", smsURLRecipient(recipient), serviceType, filePath]
         _ = try await runner.run(osascriptCommand, args)
         return try await verifyAttachmentSend(afterRowId: fallbackBeforeRowId, originalFileName: nil)
     }
@@ -204,14 +204,16 @@ public final class AppleMessagesReplySink: ReplySink {
             dateDelivered: delivered,
             detail: "Messages created an outgoing attachment row."
         )
-        if error != 0 || transferState == 6 || delivered == 0 {
+        if error != 0 || transferState == 6 {
             throw OutboundDeliveryFailure(
                 message: "Messages created an outgoing attachment row \(rowId), but did not deliver it: error=\(error), transfer_state=\(transferState), date_delivered=\(delivered).",
                 evidence: evidence
             )
         }
         var deliveredEvidence = evidence
-        deliveredEvidence.detail = "Messages created and delivered an outgoing attachment row."
+        deliveredEvidence.detail = delivered > 0
+            ? "Messages created and delivered an outgoing attachment row."
+            : "Messages created an outgoing attachment row that is not yet delivered."
         return deliveredEvidence
     }
 
@@ -236,6 +238,14 @@ public final class AppleMessagesReplySink: ReplySink {
         let args = lines.flatMap { ["-e", $0] } + ["--", recipient, serviceType, text]
         _ = try await runner.run(osascriptCommand, args)
     }
+}
+
+public func smsURLRecipient(_ recipient: String) -> String {
+    let trimmed = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.contains("@") else { return trimmed }
+    let digits = trimmed.unicodeScalars.filter { CharacterSet.decimalDigits.contains($0) }.map(String.init).joined()
+    guard !digits.isEmpty else { return trimmed }
+    return trimmed.hasPrefix("+") ? "+\(digits)" : digits
 }
 
 public func appleMessagesAttachmentScriptLines() -> [String] {

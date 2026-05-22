@@ -426,19 +426,19 @@ public func outboundSmokeTextEvidence(marker: String, afterRowId: Int64, config:
 public func outboundSmokeAttachmentEvidence(marker: String, afterRowId: Int64, config: BridgeConfig, runner: ProcessRunner = ProcessRunner()) async throws -> OutboundSmokeEvidence? {
     let literal = sqliteStringLiteral(marker)
     let sql = """
-    SELECT m.ROWID || '|' || COALESCE(m.guid, '') || '|' || COALESCE(m.error, 0) || '|' || COALESCE(a.transfer_state, '') || '|' || COALESCE(m.date_delivered, 0) || '|' || COALESCE(a.transfer_name, '')
+    SELECT m.ROWID || '|' || COALESCE(m.guid, '') || '|' || COALESCE(m.error, 0) || '|' || COALESCE(a.transfer_state, '') || '|' || COALESCE(m.date_delivered, 0) || '|' || COALESCE(a.transfer_name, '') || '|' || CASE WHEN instr(COALESCE(a.transfer_name, ''), \(literal)) > 0 THEN 1 ELSE 0 END
     FROM message m
     JOIN message_attachment_join maj ON maj.message_id = m.ROWID
     JOIN attachment a ON a.ROWID = maj.attachment_id
     WHERE m.is_from_me = 1
       AND m.ROWID > \(afterRowId)
-      AND instr(COALESCE(a.transfer_name, ''), \(literal)) > 0
-    ORDER BY m.ROWID DESC
+    ORDER BY CASE WHEN instr(COALESCE(a.transfer_name, ''), \(literal)) > 0 THEN 1 ELSE 0 END DESC, m.ROWID DESC
     LIMIT 1;
     """
     let result = try await runner.run("/usr/bin/sqlite3", ["-readonly", config.messagesDbPath, sql])
     let fields = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "|", omittingEmptySubsequences: false).map(String.init)
-    guard fields.count == 6, let rowId = Int64(fields[0]) else { return nil }
+    guard fields.count == 7, let rowId = Int64(fields[0]) else { return nil }
+    let matchedMarker = fields[6] == "1"
     return OutboundSmokeEvidence(
         rowId: rowId,
         guid: fields[1].isEmpty ? nil : fields[1],
@@ -446,7 +446,7 @@ public func outboundSmokeAttachmentEvidence(marker: String, afterRowId: Int64, c
         transferState: fields[3].isEmpty ? nil : Int(fields[3]),
         dateDelivered: Int64(fields[4]) ?? 0,
         attachmentName: fields[5].isEmpty ? nil : fields[5],
-        detail: "matched outbound attachment marker"
+        detail: matchedMarker ? "matched outbound attachment marker" : "matched latest outbound attachment after baseline"
     )
 }
 
