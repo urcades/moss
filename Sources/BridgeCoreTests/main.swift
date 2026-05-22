@@ -1254,6 +1254,7 @@ struct BridgeCoreFocusedTests {
         try expect(result.automation.name == "Bridge Smoke Test ION_TEST", "automation smoke name uses marker suffix")
         let toml = try String(contentsOfFile: result.automation.path, encoding: .utf8)
         try expect(toml.contains("CODEXMSGCTL_SMOKE_AUTOMATION_TEST"), "automation smoke prompt contains marker")
+        try expect(toml.contains(#"status = "INACTIVE""#), "automation smoke writes inactive automation")
         try expect(toml.contains(#"rrule = "FREQ=YEARLY;BYMONTH=12;BYMONTHDAY=31;BYHOUR=23;BYMINUTE=59;BYSECOND=0""#), "automation smoke uses harmless far-future schedule")
         let state = try stores.state.load()
         try expect(state.automationRoutes?.contains(where: { $0.automationId == result.automation.id && $0.recipient == "+1" }) == true, "automation smoke route persisted")

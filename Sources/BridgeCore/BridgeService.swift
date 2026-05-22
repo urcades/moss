@@ -1091,7 +1091,7 @@ public final class BridgeService: @unchecked Sendable {
             /codex smoke bridge-attach - verify BRIDGE_ATTACH sends media before success text
             /codex smoke generated-image - ask Codex to create and BRIDGE_ATTACH a marked image
             /codex smoke edit-image-check - ask Codex to edit the latest chat image and BRIDGE_ATTACH the result
-            /codex smoke automation - create a paused marked automation and route
+            /codex smoke automation - create an inactive marked automation and route
             /codex smoke callback - create a pending callback and verify the next reply is routed to it
             /codex smoke app-server-callback - start a real app-server requestUserInput callback turn and reply to finish it
             /codex smoke mcp-elicitation-callback - start a real app-server MCP elicitation callback turn and reply to finish it

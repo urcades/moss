@@ -15,8 +15,9 @@ public struct CodexAutomationSpec: Equatable, Sendable {
     public var reasoningEffort: String?
     public var executionEnvironment: String?
     public var cwds: [String]?
+    public var status: String
 
-    public init(name: String, prompt: String, rrule: String, model: String? = nil, reasoningEffort: String? = nil, executionEnvironment: String? = nil, cwds: [String]? = nil) {
+    public init(name: String, prompt: String, rrule: String, model: String? = nil, reasoningEffort: String? = nil, executionEnvironment: String? = nil, cwds: [String]? = nil, status: String = "ACTIVE") {
         self.name = name
         self.prompt = prompt
         self.rrule = rrule
@@ -24,6 +25,7 @@ public struct CodexAutomationSpec: Equatable, Sendable {
         self.reasoningEffort = reasoningEffort
         self.executionEnvironment = executionEnvironment
         self.cwds = cwds
+        self.status = status
     }
 }
 
@@ -58,7 +60,8 @@ public func createCodexAutomationSmoke(
         model: config.codex.model ?? "gpt-5.2",
         reasoningEffort: config.codex.reasoningEffort,
         executionEnvironment: "local",
-        cwds: [config.codex.cwd]
+        cwds: [config.codex.cwd],
+        status: "INACTIVE"
     )
     let batch = PendingBatch(
         handleId: recipient,
@@ -166,6 +169,7 @@ private struct CodexAutomationDraft {
     var reasoningEffort: String?
     var executionEnvironment: String
     var cwds: [String]
+    var status: String
 }
 
 private func codexAutomationDraft(from text: String, config: BridgeConfig) -> CodexAutomationDraft {
@@ -176,7 +180,8 @@ private func codexAutomationDraft(from text: String, config: BridgeConfig) -> Co
         model: config.codex.model ?? "gpt-5.2",
         reasoningEffort: config.codex.reasoningEffort,
         executionEnvironment: "local",
-        cwds: ["~"]
+        cwds: ["~"],
+        status: "ACTIVE"
     )
 }
 
@@ -188,7 +193,8 @@ private func codexAutomationDraft(from spec: CodexAutomationSpec, config: Bridge
         model: spec.model?.nilIfBlank ?? config.codex.model ?? "gpt-5.2",
         reasoningEffort: spec.reasoningEffort?.nilIfBlank ?? config.codex.reasoningEffort,
         executionEnvironment: spec.executionEnvironment == "worktree" ? "worktree" : "local",
-        cwds: spec.cwds?.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? [config.codex.cwd]
+        cwds: spec.cwds?.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? [config.codex.cwd],
+        status: normalizedAutomationStatus(spec.status)
     )
 }
 
@@ -210,6 +216,11 @@ private func automationName(from text: String) -> String {
         .replacingOccurrences(of: #"(?i)\b(create|set up|setup|make)\s+(a\s+|an\s+)?(new\s+)?automation\??"#, with: "Automation", options: .regularExpression)
         .trimmingCharacters(in: CharacterSet(charactersIn: " ?.!"))
     return automationTitle(cleaned.isEmpty ? "Codex Automation" : cleaned, limit: 80)
+}
+
+private func normalizedAutomationStatus(_ value: String) -> String {
+    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    return normalized == "INACTIVE" || normalized == "PAUSED" ? "INACTIVE" : "ACTIVE"
 }
 
 private func automationPrompt(from text: String) -> String {
@@ -305,7 +316,7 @@ private func automationToml(id: String, draft: CodexAutomationDraft, timestamp: 
         #"kind = "cron""#,
         "name = \(tomlString(draft.name))",
         "prompt = \(tomlString(draft.prompt))",
-        #"status = "ACTIVE""#,
+        "status = \(tomlString(draft.status))",
         "rrule = \(tomlString(draft.rrule))",
         "model = \(tomlString(draft.model))"
     ]

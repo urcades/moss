@@ -93,11 +93,12 @@ Success means Messages-triggered automation creation is bridge-owned, synchronou
   - `/codex automations` shows the route or the exact in-progress/failure phase.
 - Current status:
   - `/codex automations` now keeps the latest confirmed creation evidence visible too, including created file path, route status, and confirmation-send evidence before listing routes.
-  - `swift run codexmsgctl-swift smoke automation` creates a real paused `automation.toml`, persists its route, and records `automationCreationStatus`.
+  - `swift run codexmsgctl-swift smoke automation` creates a real inactive `automation.toml`, persists its route, and records `automationCreationStatus`.
   - Live smoke passed for `bridge-smoke-test-7431ce30` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_B219F241-59D2-449C-BF80-244C7431CE30`.
   - Current live smoke passed for `bridge-smoke-test-8fd10e85` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_2B366AD1-1F91-45B3-99C9-6B728FD10E85`.
   - Current post-app-server-smoke automation smoke passed for `bridge-smoke-test-0a76716f` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_162A28FB-86ED-4E98-B083-5A6F0A76716F`; status showed `Automation creation status: confirmed` and route persisted with active job `none`.
   - Latest automation smoke passed for `bridge-smoke-test-6865d9b0` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_5CB8E56E-8227-4914-943A-37876865D9B0`; route persisted to +1-520-609-9095 via iMessage.
+  - Current inactive automation smoke passed for `bridge-smoke-test-ae750198` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_D6E56FDD-4717-4699-9518-142EAE750198`; the created `automation.toml` contains `status = "INACTIVE"`.
   - `codexmsgctl-swift status` now reports automation creation status and the latest automation routes.
   - State saves now merge automation route/status fields so a helper tick with stale in-memory state cannot erase a newly persisted route.
   - Automation creation status, automation route persistence, backfilled automation routes, and automation delivery cursors now pass through serialized mutation helpers. A source-level architecture regression prevents those paths from reintroducing direct automation state assignment patterns inside `BridgeService`.
