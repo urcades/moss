@@ -25,6 +25,7 @@ struct CodexMsgCtlSwift {
           codexmsgctl-swift gates [--strict]
           codexmsgctl-swift trusted-gates [--runbook] [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift smoke text|attachment|bridge-attach|generated-image|edit-image-check|automation|app-server|app-server-callback|mcp-elicitation-callback|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
+          codexmsgctl-swift smoke automation --deactivate-active [--dry-run]
           codexmsgctl-swift broker start|stop|status|doctor|events|dry-run-scan
           codexmsgctl-swift reset
         """)
@@ -217,7 +218,12 @@ struct CodexMsgCtlSwift {
         case "edit-image-check":
             try await runEditImageCheckSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
         case "automation":
-            try runAutomationSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
+            if args.contains("--deactivate-active") {
+                let result = try deactivateActiveBridgeSmokeAutomations(in: paths.codexAutomationsDir, dryRun: args.contains("--dry-run"))
+                print(bridgeSmokeAutomationCleanupStatusText(result))
+            } else {
+                try runAutomationSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
+            }
         case "app-server":
             try await runAppServerFinalAnswerSmoke(config: config, paths: paths, stores: stores)
         case "app-server-callback":

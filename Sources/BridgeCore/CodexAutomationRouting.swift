@@ -54,6 +54,18 @@ public struct CodexAutomationFileSummary: Equatable, Sendable {
     }
 }
 
+public struct BridgeSmokeAutomationCleanupResult: Equatable, Sendable {
+    public var dryRun: Bool
+    public var targets: [CodexAutomationFileSummary]
+    public var changedPaths: [String]
+
+    public init(dryRun: Bool, targets: [CodexAutomationFileSummary], changedPaths: [String]) {
+        self.dryRun = dryRun
+        self.targets = targets
+        self.changedPaths = changedPaths
+    }
+}
+
 public func upsertCodexAutomationRoute(_ route: CodexAutomationRoute, into routes: [CodexAutomationRoute]) -> [CodexAutomationRoute] {
     var updated = routes
     if let index = updated.firstIndex(where: { $0.automationId == route.automationId }) {
@@ -193,6 +205,35 @@ public func bridgeSmokeAutomationStatusText(_ summaries: [CodexAutomationFileSum
     return "warning: \(summaries.count) active bridge smoke automation(s): \(detail)\(suffix)"
 }
 
+public func deactivateActiveBridgeSmokeAutomations(in automationsDir: URL, dryRun: Bool) throws -> BridgeSmokeAutomationCleanupResult {
+    let targets = activeBridgeSmokeAutomations(in: automationsDir)
+    guard !dryRun else {
+        return BridgeSmokeAutomationCleanupResult(dryRun: true, targets: targets, changedPaths: [])
+    }
+    var changedPaths: [String] = []
+    for target in targets {
+        let file = URL(fileURLWithPath: target.path)
+        let text = try String(contentsOf: file, encoding: .utf8)
+        let updated = automationTomlSettingStatusInactive(text)
+        if updated != text {
+            try updated.data(using: .utf8)?.write(to: file, options: .atomic)
+            changedPaths.append(target.path)
+        }
+    }
+    return BridgeSmokeAutomationCleanupResult(dryRun: false, targets: targets, changedPaths: changedPaths)
+}
+
+public func bridgeSmokeAutomationCleanupStatusText(_ result: BridgeSmokeAutomationCleanupResult) -> String {
+    guard !result.targets.isEmpty else {
+        return "No active bridge smoke automations found."
+    }
+    let ids = result.targets.map(\.id).joined(separator: ", ")
+    if result.dryRun {
+        return "Dry run: would mark \(result.targets.count) active bridge smoke automation(s) inactive: \(ids)"
+    }
+    return "Marked \(result.changedPaths.count)/\(result.targets.count) active bridge smoke automation(s) inactive: \(ids)"
+}
+
 private func codexSessionFiles(in sessionsDir: URL) -> [URL] {
     guard let enumerator = FileManager.default.enumerator(
         at: sessionsDir,
@@ -231,6 +272,28 @@ private func automationFileSummaries(in automationsDir: URL) -> [CodexAutomation
 private func isBridgeSmokeAutomation(_ summary: CodexAutomationFileSummary) -> Bool {
     summary.id.hasPrefix("bridge-smoke-test") ||
         summary.name.localizedCaseInsensitiveContains("Bridge Smoke Test")
+}
+
+private func automationTomlSettingStatusInactive(_ text: String) -> String {
+    var replaced = false
+    var lines = text.components(separatedBy: .newlines).map { line -> String in
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("status"), let equals = line.firstIndex(of: "=") else {
+            return line
+        }
+        replaced = true
+        let prefix = line[..<equals].trimmingCharacters(in: .whitespaces)
+        let leading = line.prefix { $0 == " " || $0 == "\t" }
+        return "\(leading)\(prefix) = \"INACTIVE\""
+    }
+    if !replaced {
+        if lines.last == "" {
+            lines.insert(#"status = "INACTIVE""#, at: max(0, lines.count - 1))
+        } else {
+            lines.append(#"status = "INACTIVE""#)
+        }
+    }
+    return lines.joined(separator: "\n")
 }
 
 private func sessionIdLowerBound(from routes: [CodexAutomationRoute]) -> String? {

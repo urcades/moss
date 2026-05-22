@@ -84,6 +84,10 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
     - swift run codexmsgctl-swift smoke computer-use
     - swift run codexmsgctl-swift smoke automation\(liveSuffix)
 
+    Cleanup commands:
+    - swift run codexmsgctl-swift smoke automation --deactivate-active --dry-run
+    - swift run codexmsgctl-swift smoke automation --deactivate-active
+
     Trusted Messages gates:
     - /codex status
     - /codex gates
@@ -135,6 +139,7 @@ public func bridgeGateStrictReport(context: BridgeGateChecklistContext, trustedG
     }
     if !context.activeBridgeSmokeAutomations.isEmpty {
         failures.append("Bridge smoke automations: \(bridgeSmokeAutomationStatusText(context.activeBridgeSmokeAutomations))")
+        failures.append("Bridge smoke automation cleanup: swift run codexmsgctl-swift smoke automation --deactivate-active --dry-run")
     }
     if !liveBlockers.isEmpty {
         let detail = liveBlockers.map { "\($0.name) \($0.status) \($0.marker)" }.joined(separator: "; ")

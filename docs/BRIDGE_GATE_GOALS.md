@@ -94,6 +94,7 @@ Success means Messages-triggered automation creation is bridge-owned, synchronou
 - Current status:
   - `/codex automations` now keeps the latest confirmed creation evidence visible too, including created file path, route status, and confirmation-send evidence before listing routes.
   - `swift run codexmsgctl-swift smoke automation` creates a real inactive `automation.toml`, persists its route, and records `automationCreationStatus`.
+  - `swift run codexmsgctl-swift smoke automation --deactivate-active --dry-run` lists legacy active `bridge-smoke-test*` automations without changing them; the same command without `--dry-run` is the explicit cleanup path to mark them inactive.
   - Live smoke passed for `bridge-smoke-test-7431ce30` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_B219F241-59D2-449C-BF80-244C7431CE30`.
   - Current live smoke passed for `bridge-smoke-test-8fd10e85` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_2B366AD1-1F91-45B3-99C9-6B728FD10E85`.
   - Current post-app-server-smoke automation smoke passed for `bridge-smoke-test-0a76716f` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_162A28FB-86ED-4E98-B083-5A6F0A76716F`; status showed `Automation creation status: confirmed` and route persisted with active job `none`.

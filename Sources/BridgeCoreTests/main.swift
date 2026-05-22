@@ -1305,6 +1305,19 @@ struct BridgeCoreFocusedTests {
         try expect(check.ok, "active bridge smoke automation diagnostic is informational")
         try expect(check.detail.contains("bridge-smoke-test-active"), "active bridge smoke automation diagnostic names active artifact")
         try expect(!check.detail.contains("bridge-smoke-test-inactive"), "active bridge smoke automation diagnostic ignores inactive artifact")
+
+        let dryRun = try deactivateActiveBridgeSmokeAutomations(in: paths.codexAutomationsDir, dryRun: true)
+        try expect(dryRun.targets.map(\.id) == ["bridge-smoke-test-active"], "dry run targets active bridge smoke automations")
+        try expect(dryRun.changedPaths.isEmpty, "dry run does not change files")
+        var activeToml = try String(contentsOf: paths.codexAutomationsDir.appendingPathComponent("bridge-smoke-test-active/automation.toml"), encoding: .utf8)
+        try expect(activeToml.contains(#"status = "ACTIVE""#), "dry run preserves active automation status")
+
+        let cleanup = try deactivateActiveBridgeSmokeAutomations(in: paths.codexAutomationsDir, dryRun: false)
+        try expect(cleanup.targets.map(\.id) == ["bridge-smoke-test-active"], "cleanup targets active bridge smoke automations")
+        try expect(cleanup.changedPaths.count == 1, "cleanup changes active smoke automation file")
+        activeToml = try String(contentsOf: paths.codexAutomationsDir.appendingPathComponent("bridge-smoke-test-active/automation.toml"), encoding: .utf8)
+        try expect(activeToml.contains(#"status = "INACTIVE""#), "cleanup marks active smoke automation inactive")
+        try expect(activeBridgeSmokeAutomations(in: paths.codexAutomationsDir).isEmpty, "cleanup clears active smoke automation diagnostics")
     }
 
     private static func testBridgeStateSavePreservesConcurrentAutomationFields() throws {
@@ -3261,6 +3274,7 @@ struct BridgeCoreFocusedTests {
         try expect(text.contains("swift run codexmsgctl-swift smoke edit-image-check --recipient +1 --service iMessage"), "gate checklist includes CLI edit image smoke")
         try expect(text.contains("swift run codexmsgctl-swift smoke app-server-callback"), "gate checklist includes CLI app-server callback smoke")
         try expect(text.contains("swift run codexmsgctl-swift smoke mcp-elicitation-callback"), "gate checklist includes CLI MCP elicitation callback smoke")
+        try expect(text.contains("swift run codexmsgctl-swift smoke automation --deactivate-active --dry-run"), "gate checklist includes active smoke automation cleanup dry-run")
         try expect(text.contains("/codex smoke generated-image"), "gate checklist includes generated image smoke")
         try expect(text.contains("/codex smoke edit-image-check"), "gate checklist includes trusted edit image smoke")
         try expect(text.contains("Trusted evidence observer:"), "gate checklist separates trusted evidence observer")
@@ -3313,6 +3327,7 @@ struct BridgeCoreFocusedTests {
         try expect(report.text.contains("Trusted Messages gates: 1/2 observed; 1 missing inbound; next /codex status (missing-inbound)"), "strict gate report includes trusted gate summary")
         try expect(report.text.contains("Live smoke blockers: computer-use blocked MARKER"), "strict gate report includes live smoke blocker")
         try expect(report.text.contains("Bridge smoke automations: warning: 1 active bridge smoke automation(s): bridge-smoke-test-active"), "strict gate report includes active smoke automation warning")
+        try expect(report.text.contains("Bridge smoke automation cleanup: swift run codexmsgctl-swift smoke automation --deactivate-active --dry-run"), "strict gate report includes smoke automation cleanup command")
     }
 
     private static func testAutomationRequestCreatesCodexAutomationFromInterpretedSpec() async throws {
