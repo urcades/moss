@@ -52,6 +52,7 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
     Live CLI gates:
     - swift run codexmsgctl-swift smoke text\(liveSuffix)
     - swift run codexmsgctl-swift smoke attachment\(liveSuffix)
+    - swift run codexmsgctl-swift smoke bridge-attach\(liveSuffix)
     - swift run codexmsgctl-swift smoke app-server
     - swift run codexmsgctl-swift smoke inbound-image-check\(liveSuffix)
     - swift run codexmsgctl-swift smoke outbound-image-check\(liveSuffix)
@@ -64,6 +65,7 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
     - /codex status
     - /codex smoke text
     - /codex smoke attachment
+    - /codex smoke bridge-attach
     - /codex smoke app-server
     - /codex smoke inbound-image-check
     - /codex smoke outbound-image-check
@@ -75,7 +77,7 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
 
     Open proof gaps:
     - Real installed-helper app-server callback smoke from an actual app-server callback.
-    - Live generated-image BRIDGE_ATTACH delivery and follow-up edit probe.
+    - Live generated-image/edit probe beyond synthetic BRIDGE_ATTACH smoke.
     - Full BridgeState actor/reducer migration beyond store-level write serialization.
     """
 }

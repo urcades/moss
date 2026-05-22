@@ -24,6 +24,7 @@ struct BridgeCoreFocusedTests {
         try testPreviousImageReferenceSkipsUnsupportedRecentImage()
         try await testMissingPreviousImageReferenceAsksForSource()
         try await testCodexSmokeAttachmentCommandSendsProbeAndSummary()
+        try await testCodexSmokeBridgeAttachCommandUsesDirectiveHandoff()
         try await testCodexSmokeAppServerCommandRunsFinalAnswerProbe()
         try await testCodexSmokeCapabilityCommandRunsAppServerProbe()
         try await testCodexGatesCommandRepliesWithChecklist()
@@ -109,6 +110,7 @@ struct BridgeCoreFocusedTests {
         try expect(bridgeLocalCommandName("/codex retry-last-send") == "/codex", "exact codex retry command")
         try expect(bridgeLocalCommandName("/codex smoke text") == "/codex", "codex text smoke command")
         try expect(bridgeLocalCommandName("/codex smoke attachment") == "/codex", "codex attachment smoke command")
+        try expect(bridgeLocalCommandName("/codex smoke bridge-attach") == "/codex", "codex bridge-attach smoke command")
         try expect(bridgeLocalCommandName("/codex smoke browser") == "/codex", "codex browser smoke command")
         try expect(bridgeLocalCommandName("/codex smoke chrome") == "/codex", "codex chrome smoke command")
         try expect(bridgeLocalCommandName("/codex smoke computer-use") == "/codex", "codex computer-use smoke command")
@@ -399,6 +401,40 @@ struct BridgeCoreFocusedTests {
         try expect(replies.first?.text.contains("Evidence: attachment dbObserved") == true, "codex smoke attachment reports delivery evidence")
         let state = try stores.state.load()
         try expect(state.lastOutboundSend?.kind == "attachment", "codex smoke attachment preserves probe as last outbound send")
+    }
+
+    private static func testCodexSmokeBridgeAttachCommandUsesDirectiveHandoff() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        try stores.config.save(config)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 1, guid: "guid-smoke-bridge-attach", text: "/codex smoke bridge-attach", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in FakeProgressCodexBackend(events: [], response: "should not run") },
+            now: { Date(timeIntervalSince1970: 1_777_777_777) }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        let attachments = await sink.attachmentsSnapshot()
+        let replies = await sink.repliesSnapshot()
+        let events = await sink.eventsSnapshot()
+
+        try expect(attachments.count == 1, "codex smoke bridge-attach sends one directive image")
+        try expect(replies.count == 2, "codex smoke bridge-attach sends generated text plus summary")
+        try expect(replies.first?.text.contains("CODEX_BRIDGE_SMOKE_BRIDGE-ATTACH_") == true, "codex smoke bridge-attach sends generated success text")
+        try expect(replies.last?.text.contains("Smoke bridge-attach passed: CODEX_BRIDGE_SMOKE_BRIDGE-ATTACH_") == true, "codex smoke bridge-attach reports summary")
+        try expect(events.first == "attachment:\(attachments.first!.filePath)", "codex smoke bridge-attach sends attachment first")
+        try expect(!replies.contains { $0.text.contains("BRIDGE_ATTACH:") }, "codex smoke bridge-attach strips directive from Messages text")
     }
 
     private static func testCodexSmokeCapabilityCommandRunsAppServerProbe() async throws {
@@ -2356,6 +2392,7 @@ struct BridgeCoreFocusedTests {
         try expect(text.contains("swift run codexmsgctl-swift doctor --probe-computer-use"), "gate checklist includes doctor probe")
         try expect(text.contains("swift run codexmsgctl-swift trusted-gates"), "gate checklist includes trusted gate observer")
         try expect(text.contains("swift run codexmsgctl-swift smoke outbound-image-check --recipient +1 --service iMessage"), "gate checklist includes outbound image smoke")
+        try expect(text.contains("swift run codexmsgctl-swift smoke bridge-attach --recipient +1 --service iMessage"), "gate checklist includes bridge attach smoke")
         try expect(text.contains("/codex smoke callback, then reply with any short text"), "gate checklist includes two-step trusted callback smoke")
         try expect(text.contains("needs trusted inbound image first"), "gate checklist reports inbound image readiness")
         try expect(text.contains("will create a marked outbound image"), "gate checklist reports outbound image readiness")

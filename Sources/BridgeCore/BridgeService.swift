@@ -481,6 +481,31 @@ public final class BridgeService: @unchecked Sendable {
                 Evidence: \(lastOutboundSendStatusText())
                 """
             }
+        case "bridge-attach":
+            do {
+                try FileManager.default.createDirectory(at: paths.tmpDir, withIntermediateDirectories: true)
+                let attachment = paths.tmpDir.appendingPathComponent("codex-bridge-smoke-\(marker).png")
+                try bridgeSmokePNGData().write(to: attachment)
+                try await sendOutgoingReply(
+                    "\(marker) generated image ready.\nBRIDGE_ATTACH: \(attachment.path)",
+                    replySink: sink,
+                    recipient: message.handleId,
+                    service: message.service,
+                    config: config,
+                    request: PromptRequest(promptText: command, attachments: [])
+                )
+                summary = """
+                Smoke bridge-attach passed: \(marker)
+                Attachment: \(attachment.path)
+                Evidence: \(lastOutboundSendStatusText())
+                """
+            } catch {
+                summary = """
+                Smoke bridge-attach failed: \(marker)
+                Error: \(error)
+                Evidence: \(lastOutboundSendStatusText())
+                """
+            }
         case "automation":
             do {
                 let result = try createCodexAutomationSmoke(
@@ -596,7 +621,7 @@ public final class BridgeService: @unchecked Sendable {
                 summary = await runBridgeAppServerSmoke(label: subcommand, marker: marker, request: request, config: smokeConfig)
             }
         default:
-            summary = "Use /codex smoke text, attachment, automation, callback, app-server, inbound-image-check, outbound-image-check, chrome, browser, or computer-use."
+            summary = "Use /codex smoke text, attachment, bridge-attach, automation, callback, app-server, inbound-image-check, outbound-image-check, chrome, browser, or computer-use."
         }
         _ = try await sink.sendReply(recipient: message.handleId, service: message.service, text: summary)
     }
@@ -878,6 +903,7 @@ public final class BridgeService: @unchecked Sendable {
             /codex retry-last-send - retry the last retryable outbound text or attachment
             /codex smoke text - send a marked text probe and report delivery evidence
             /codex smoke attachment - send a marked image probe and report delivery evidence
+            /codex smoke bridge-attach - verify BRIDGE_ATTACH sends media before success text
             /codex smoke automation - create a paused marked automation and route
             /codex smoke callback - create a pending callback and verify the next reply is routed to it
             /codex smoke app-server - verify a normal app-server turn returns a final marked reply
@@ -1692,6 +1718,7 @@ private func codexSmokeSubcommand(_ text: String) -> String {
 private let supportedBridgeCodexSmokeSubcommands: Set<String> = [
     "text",
     "attachment",
+    "bridge-attach",
     "automation",
     "callback",
     "app-server",

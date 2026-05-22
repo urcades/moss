@@ -42,6 +42,7 @@ Success means follow-up prompts like "modify that image" use a real previous cha
   - A previous-image follow-up attaches the latest usable image for that chat.
   - A previous-image follow-up with no usable image asks for the source and does not start Codex.
   - Final replies containing `BRIDGE_ATTACH:` send the attachment before any success text, and failed attachment delivery prevents the success text from being sent.
+  - `/codex smoke bridge-attach` and `codexmsgctl-swift smoke bridge-attach` exercise a final-reply-style `BRIDGE_ATTACH:` directive rather than direct attachment sending.
   - Messages DB ingress covers attachment-only rows, multiple attachments, `~/` path expansion, image/PDF/unsupported classification, and existence flags.
 - Live gates:
   - Send an inbound image, then ask for a marked modification; app-server receives a `localImage`.
@@ -61,6 +62,7 @@ Success means follow-up prompts like "modify that image" use a real previous cha
   - `/codex smoke outbound-image-check` and `codexmsgctl-swift smoke outbound-image-check` now send a marked image, persist it as a recent outbound media ref, build a "that image" app-server request, and require marker plus `SUCCESS`.
   - Live `swift run codexmsgctl-swift smoke outbound-image-check` passed with marker `CODEXMSGCTL_SMOKE_OUTBOUND_IMAGE_D0F56FCE-D2CE-4953-9B01-C1022ADE34F0`: Messages DB row 753 (`message.error=0`, `transfer_state=5`, renamed to `IMG_7646.jpeg`), app-server thread `019e4f2f-3cf5-7b20-813b-d6c4598f6b0e`, and turn `019e4f2f-3f08-7961-a78c-490f507e8073`.
   - Media final replies now send validated attachments before success text. Deterministic coverage verifies `Done.` is not sent when the attachment delivery path fails.
+  - Live `swift run codexmsgctl-swift smoke bridge-attach` passed with marker `CODEXMSGCTL_SMOKE_BRIDGE_ATTACH_136C4E7D-091D-4DA8-8AD3-03877F392FF2`: Messages DB attachment row 756 (`message.error=0`, `transfer_state=5`, renamed to `IMG_8173.jpeg`) was observed before success text row 757 (`message.error=0`).
 
 ## Goal 3: Automation Truth
 
@@ -181,6 +183,7 @@ Before this workstream is complete, the installed helper must satisfy:
 - `swift run codexmsgctl-swift trusted-gates`
 - `swift run codexmsgctl-swift smoke text`
 - `swift run codexmsgctl-swift smoke attachment`
+- `swift run codexmsgctl-swift smoke bridge-attach`
 - `swift run codexmsgctl-swift smoke app-server`
 - `swift run codexmsgctl-swift smoke inbound-image-check`
 - `swift run codexmsgctl-swift smoke outbound-image-check`

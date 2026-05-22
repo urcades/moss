@@ -46,6 +46,7 @@ public let defaultTrustedGateCommands: [String] = [
     "/codex gates",
     "/codex smoke text",
     "/codex smoke attachment",
+    "/codex smoke bridge-attach",
     "/codex smoke app-server",
     "/codex smoke inbound-image-check",
     "/codex smoke outbound-image-check",

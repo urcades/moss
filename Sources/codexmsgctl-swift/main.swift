@@ -24,7 +24,7 @@ struct CodexMsgCtlSwift {
           codexmsgctl-swift doctor [--probe-computer-use]
           codexmsgctl-swift gates
           codexmsgctl-swift trusted-gates [--recipient HANDLE] [--service iMessage|SMS]
-          codexmsgctl-swift smoke text|attachment|automation|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
+          codexmsgctl-swift smoke text|attachment|bridge-attach|automation|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift broker start|stop|status|doctor|events|dry-run-scan
           codexmsgctl-swift reset
         """)
@@ -175,7 +175,7 @@ struct CodexMsgCtlSwift {
     private static func runSmokeCommand(_ args: [String], paths: RuntimePaths, stores: RuntimeStores) async throws {
         let subcommand = args.first ?? "help"
         if subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
-            print("Usage: codexmsgctl-swift smoke text|attachment|automation|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]")
+            print("Usage: codexmsgctl-swift smoke text|attachment|bridge-attach|automation|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]")
             return
         }
         let config = try stores.config.load()
@@ -189,6 +189,8 @@ struct CodexMsgCtlSwift {
             try await runTextSmoke(recipient: recipient, service: service, config: config)
         case "attachment":
             try await runAttachmentSmoke(recipient: recipient, service: service, config: config, paths: paths)
+        case "bridge-attach":
+            try await runBridgeAttachSmoke(recipient: recipient, service: service, config: config, paths: paths)
         case "automation":
             try runAutomationSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
         case "app-server":
@@ -279,6 +281,41 @@ struct CodexMsgCtlSwift {
             throw StoreError.validation("Smoke attachment failed: marker was not found in a successful outgoing attachment DB row.")
         }
         print("Smoke attachment passed.")
+    }
+
+    private static func runBridgeAttachSmoke(recipient: String, service: String, config: BridgeConfig, paths: RuntimePaths) async throws {
+        let marker = "CODEXMSGCTL_SMOKE_BRIDGE_ATTACH_\(UUID().uuidString)"
+        try FileManager.default.createDirectory(at: paths.tmpDir, withIntermediateDirectories: true)
+        let attachment = paths.tmpDir.appendingPathComponent("codexmsgctl-smoke-\(marker).png")
+        try smokePNGData().write(to: attachment)
+        let finalReply = "\(marker) generated image ready.\nBRIDGE_ATTACH: \(attachment.path)"
+        let outgoing = prepareOutgoingReply(finalReply, config: config)
+        guard outgoing.attachments == [attachment.path] else {
+            throw StoreError.validation("Smoke bridge-attach failed: BRIDGE_ATTACH directive was not parsed into the expected attachment.")
+        }
+        let beforeRowId = try await latestOutgoingMessageRowId(config: config)
+        print("Smoke bridge-attach marker: \(marker)")
+        print("Attachment path: \(attachment.path)")
+        print("Recipient: \(recipient) via \(service)")
+        print("Messages DB baseline row: \(beforeRowId)")
+        let sink = AppleMessagesReplySink(osascriptCommand: config.osascriptCommand, chunkSize: config.chunkSize, messagesDbPath: config.messagesDbPath)
+        let attachmentEvidence = try await sink.sendAttachment(recipient: recipient, service: service, filePath: attachment.path)
+        print("Attachment send result: \(outboundDeliveryEvidenceText(attachmentEvidence))")
+        guard attachmentEvidence.dbError ?? 0 == 0, attachmentEvidence.transferState != 6 else {
+            throw StoreError.validation("Smoke bridge-attach failed: attachment delivery did not validate, so success text was not sent.")
+        }
+        if !outgoing.text.isEmpty {
+            let textEvidence = try await sink.sendReply(recipient: recipient, service: service, text: outgoing.text)
+            print("Success text send result: \(outboundDeliveryEvidenceText(textEvidence))")
+        }
+        let matched = try await waitForSmokeEvidence {
+            try await outboundSmokeAttachmentEvidence(marker: marker, afterRowId: beforeRowId, config: config)
+        }
+        printSmokeEvidence(matched)
+        guard let matched, matched.dbError == 0, matched.transferState != 6 else {
+            throw StoreError.validation("Smoke bridge-attach failed: marker was not found in a successful outgoing attachment DB row.")
+        }
+        print("Smoke bridge-attach passed.")
     }
 
     private static func runAutomationSmoke(recipient: String, service: String, config: BridgeConfig, paths: RuntimePaths, stores: RuntimeStores) throws {
