@@ -670,10 +670,26 @@ private func dynamicToolContentItems(fromMcpContent content: [Any]) -> [[String:
             if let text = object["text"] as? String {
                 return ["type": "inputText", "text": text]
             }
-            return ["type": "inputText", "text": searchableText(object)]
+            return ["type": "inputText", "text": dynamicToolSearchableText(object)]
         }
         return ["type": "inputText", "text": searchableText(item)]
     }
+}
+
+private func dynamicToolSearchableText(_ value: Any) -> String {
+    if let string = value as? String { return string }
+    if let array = value as? [Any] { return array.map(dynamicToolSearchableText).joined(separator: "\n") }
+    if let dict = value as? [String: Any] {
+        return dict
+            .keys
+            .sorted()
+            .map { key in
+                let text = dynamicToolSearchableText(dict[key] ?? "")
+                return text.isEmpty ? key : "\(key): \(text)"
+            }
+            .joined(separator: "\n")
+    }
+    return "\(value)"
 }
 
 private func serverRequestNotification(method: String, response: [String: Any]) -> [String: Any] {

@@ -57,6 +57,9 @@ struct BridgeCoreFocusedTests {
         try await testAppServerBackendUsesReadOnlySandboxForAutomationRequests()
         try await testAppServerBackendRejectsNonFinalAgentMessageAsReply()
         try await testAppServerBackendForwardsDynamicToolRequests()
+        try await testAppServerBackendRejectsUnsupportedDynamicToolNamespace()
+        try await testAppServerBackendHandlesMalformedDynamicToolRequest()
+        try await testAppServerBackendNormalizesOddDynamicToolResponses()
         try await testAppServerBackendResolvesInteractiveCallbacksWithResponder()
         try await testAppServerBackendBlocksUserInputAndElicitationRequests()
         try await testBridgeDefaultBackendInteractiveCallbackEndToEnd()
@@ -1159,6 +1162,80 @@ struct BridgeCoreFocusedTests {
         try expect(result?["success"] as? Bool == true, "dynamic tool response reports success")
         let contentItems = result?["contentItems"] as? [[String: Any]] ?? []
         try expect(contentItems.contains { $0["type"] as? String == "inputText" && $0["text"] as? String == "ok from node" }, "dynamic tool response converts MCP text content")
+    }
+
+    private static func testAppServerBackendRejectsUnsupportedDynamicToolNamespace() async throws {
+        let fake = FakeCodexAppServerConnection(lines: [
+            #"{"id":1,"result":{"ok":true}}"#,
+            #"{"id":2,"result":{"thread":{"id":"thread-tool","path":"/tmp/thread.jsonl"}}}"#,
+            #"{"id":3,"result":{"turn":{"id":"turn-tool"}}}"#,
+            #"{"id":90,"method":"item/tool/call","params":{"threadId":"thread-tool","turnId":"turn-tool","callId":"call-unsupported","namespace":"plugin://chrome","tool":"current_tab","arguments":{}}}"#,
+            #"{"method":"item/completed","params":{"threadId":"thread-tool","turnId":"turn-tool","item":{"type":"agentMessage","id":"item-1","phase":"final_answer","text":"unsupported namespace handled"}}}"#,
+            #"{"method":"turn/completed","params":{"threadId":"thread-tool","turn":{"id":"turn-tool","status":"completed","error":null}}}"#
+        ])
+        var config = defaultBridgeConfig(paths: testPaths(), codexCommand: "/bin/echo")
+        config.timeoutMs = 1_000
+        let backend = CodexAppServerBackend(config: config, paths: testPaths()) { fake }
+
+        let response = try await backend.invoke(PromptRequest(promptText: "Use a non-MCP dynamic tool.", attachments: []), sessionId: nil, onEvent: nil)
+
+        try expect(response.text == "unsupported namespace handled", "unsupported dynamic namespace still allows final answer")
+        try expect(!fake.sentMethods.contains("mcpServer/tool/call"), "unsupported dynamic namespace is not forwarded to MCP")
+        let toolReply = fake.sentMessages.first { ($0["id"] as? Int) == 90 }
+        let result = toolReply?["result"] as? [String: Any]
+        let contentItems = result?["contentItems"] as? [[String: Any]] ?? []
+        try expect(result?["success"] as? Bool == false, "unsupported dynamic namespace reports failure")
+        try expect(contentItems.contains { ($0["text"] as? String)?.contains("only execute MCP-backed dynamic tools") == true }, "unsupported dynamic namespace explains bridge boundary")
+    }
+
+    private static func testAppServerBackendHandlesMalformedDynamicToolRequest() async throws {
+        let fake = FakeCodexAppServerConnection(lines: [
+            #"{"id":1,"result":{"ok":true}}"#,
+            #"{"id":2,"result":{"thread":{"id":"thread-tool","path":"/tmp/thread.jsonl"}}}"#,
+            #"{"id":3,"result":{"turn":{"id":"turn-tool"}}}"#,
+            #"{"id":91,"method":"item/tool/call","params":{"threadId":"thread-tool","namespace":"mcp__node_repl__","arguments":{}}}"#,
+            #"{"method":"item/completed","params":{"threadId":"thread-tool","turnId":"turn-tool","item":{"type":"agentMessage","id":"item-1","phase":"final_answer","text":"malformed tool handled"}}}"#,
+            #"{"method":"turn/completed","params":{"threadId":"thread-tool","turn":{"id":"turn-tool","status":"completed","error":null}}}"#
+        ])
+        var config = defaultBridgeConfig(paths: testPaths(), codexCommand: "/bin/echo")
+        config.timeoutMs = 1_000
+        let backend = CodexAppServerBackend(config: config, paths: testPaths()) { fake }
+
+        let response = try await backend.invoke(PromptRequest(promptText: "Use a malformed dynamic tool.", attachments: []), sessionId: nil, onEvent: nil)
+
+        try expect(response.text == "malformed tool handled", "malformed dynamic tool still allows final answer")
+        try expect(!fake.sentMethods.contains("mcpServer/tool/call"), "malformed dynamic tool is not forwarded to MCP")
+        let toolReply = fake.sentMessages.first { ($0["id"] as? Int) == 91 }
+        let result = toolReply?["result"] as? [String: Any]
+        let contentItems = result?["contentItems"] as? [[String: Any]] ?? []
+        try expect(result?["success"] as? Bool == false, "malformed dynamic tool reports failure")
+        try expect(contentItems.contains { ($0["text"] as? String)?.contains("missing required thread/tool fields") == true }, "malformed dynamic tool explains missing fields")
+    }
+
+    private static func testAppServerBackendNormalizesOddDynamicToolResponses() async throws {
+        let fake = FakeCodexAppServerConnection(lines: [
+            #"{"id":1,"result":{"ok":true}}"#,
+            #"{"id":2,"result":{"thread":{"id":"thread-tool","path":"/tmp/thread.jsonl"}}}"#,
+            #"{"id":3,"result":{"turn":{"id":"turn-tool"}}}"#,
+            #"{"id":92,"method":"item/tool/call","params":{"threadId":"thread-tool","turnId":"turn-tool","callId":"call-odd","namespace":"mcp__node_repl__","tool":"js","arguments":{"code":"odd()"}}}"#,
+            #"{"id":4,"result":{"content":[{"type":"image","url":"file:///tmp/tool.png"},{"type":"json","payload":{"ok":true}},17],"isError":true}}"#,
+            #"{"method":"item/completed","params":{"threadId":"thread-tool","turnId":"turn-tool","item":{"type":"agentMessage","id":"item-1","phase":"final_answer","text":"odd tool handled"}}}"#,
+            #"{"method":"turn/completed","params":{"threadId":"thread-tool","turn":{"id":"turn-tool","status":"completed","error":null}}}"#
+        ])
+        var config = defaultBridgeConfig(paths: testPaths(), codexCommand: "/bin/echo")
+        config.timeoutMs = 1_000
+        let backend = CodexAppServerBackend(config: config, paths: testPaths()) { fake }
+
+        let response = try await backend.invoke(PromptRequest(promptText: "Use an odd dynamic tool.", attachments: []), sessionId: nil, onEvent: nil)
+
+        try expect(response.text == "odd tool handled", "odd dynamic tool response still allows final answer")
+        let toolReply = fake.sentMessages.first { ($0["id"] as? Int) == 92 }
+        let result = toolReply?["result"] as? [String: Any]
+        let contentItems = result?["contentItems"] as? [[String: Any]] ?? []
+        try expect(result?["success"] as? Bool == false, "MCP isError maps to unsuccessful dynamic response")
+        try expect(contentItems.contains { $0["type"] as? String == "inputImage" && $0["imageUrl"] as? String == "file:///tmp/tool.png" }, "dynamic tool response preserves image content")
+        try expect(contentItems.contains { ($0["text"] as? String)?.contains("payload") == true }, "dynamic tool response stringifies unknown object content")
+        try expect(contentItems.contains { $0["type"] as? String == "inputText" && $0["text"] as? String == "17" }, "dynamic tool response stringifies primitive content")
     }
 
     private static func testAppServerBackendResolvesInteractiveCallbacksWithResponder() async throws {

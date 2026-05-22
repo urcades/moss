@@ -114,6 +114,7 @@ Success means the bridge continuously reports what Codex can really do from Mess
 - Deterministic gates:
   - Capability cache separates discovered, callable, blocked, and unsupported.
   - Browser, Chrome, Computer Use, and app connector probes report exact blockers.
+  - Dynamic app-server tool forwarding has contract coverage for MCP success, MCP error content, unsupported non-MCP namespaces, malformed request fields, images, primitives, and unknown JSON object content with searchable keys.
 - Live gates:
   - `doctor --probe-computer-use` returns within its timeout and prints exact blocker text.
   - `/codex status` agrees with `codexmsgctl-swift status` about callable tools.
@@ -127,6 +128,7 @@ Success means the bridge continuously reports what Codex can really do from Mess
   - `swift run codexmsgctl-swift smoke chrome` invoked the Chrome skill path and returned the exact blocker `privileged native pipe bridge is not available; browser-client is not trusted` with marker `CODEXMSGCTL_SMOKE_CHROME_9E2AAA1F-51AE-44D3-9B60-6A63DBEED695`.
   - Current `swift run codexmsgctl-swift smoke chrome` still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_CHROME_BF716326-E9E4-40FF-A47A-173DB6A40F3A`.
   - Current smoke chrome still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_CHROME_AFFEEED9-3DCA-469B-AC95-CF261D565C74`.
+  - Post-dynamic-tool-contract smoke chrome passed with marker `CODEXMSGCTL_SMOKE_CHROME_576B25C3-DDA5-47B2-9221-ACEC6F3EDAC9` and exact blocker `privileged native pipe bridge is not available; browser-client is not trusted`.
   - `swift run codexmsgctl-swift smoke browser` invoked the Browser skill path and returned the exact blocker `Browser is not available: iab` with marker `CODEXMSGCTL_SMOKE_BROWSER_9BC2108C-E062-4CA4-8F74-CD305E23A487`.
   - Current `swift run codexmsgctl-swift smoke browser` still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_BROWSER_8A9C61EA-F7B0-451F-8BC4-E261E15DAFAD`.
   - Current smoke browser still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_BROWSER_F03F2AD3-962F-4A33-8C8E-09CCE3734F69`.

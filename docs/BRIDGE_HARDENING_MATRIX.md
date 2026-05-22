@@ -11,7 +11,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 | Codex app-server turns | Final answer never arrives | App-server tests reject non-final agent messages and surface no-final failures | Add live marked smoke test for a Messages-launched long turn |
 | Codex app-server callbacks | Tool/user-input callback silently returns empty or cancel | The default backend can persist a pending callback, send a Messages prompt, route the next trusted reply back to JSON-RPC, and clear terminal state | Add a live installed-helper callback smoke with a real app-server callback |
 | Capability delegation | User says "use Computer Use/Chrome/Browser" without `@` mention | Natural-language aliases now become structured plugin mentions; CLI and Messages smoke commands can launch marked Chrome, Browser, and Computer Use probes | Add trusted-chat live Messages runs for each blocker-or-success probe |
-| Dynamic tools | MCP tool succeeds/fails with odd content | Tests cover forwarding and image/text result normalization | Expand contract matrix for missing fields, stalled calls, and non-MCP namespaces |
+| Dynamic tools | MCP tool succeeds/fails with odd content | Tests cover forwarding, unsupported non-MCP namespaces, malformed request fields, MCP `isError`, image/text/primitive/unknown object normalization, and searchable object keys | Add stalled-call simulation with a clock-controllable app-server connection |
 | Outbound text | AppleScript accepts send but delivery is unknown | Bridge verifies outgoing rows in `message.text` and `message.attributedBody`, records DB row/error/delivery evidence, and exposes retry eligibility | Add live smoke coverage in the installed helper path |
 | Outbound attachments | Valid `BRIDGE_ATTACH` stripped or ignored by prompt heuristics | Valid bridge directives are now explicit transport handoffs | Add live marked image-attachment smoke test |
 | Outbound attachments | Messages delivery row delayed or failed | Attachment sink returns DB evidence when available, preserves failed DB rows such as `error=25`, and records retry eligibility | Broaden fake sqlite coverage for delayed rows and SMS/iMessage differences |
@@ -26,6 +26,7 @@ This document is the durable baseline for bridge reliability work. It maps known
 ## Tests Added Or Strengthened
 
 - App-server callbacks: `item/tool/requestUserInput` and `mcpServer/elicitation/request` have deterministic Messages-backed responder coverage.
+- Dynamic app-server tools: MCP forwarding now has contract coverage for unsupported namespaces, malformed requests, error responses, images, primitives, and unknown JSON object content.
 - Natural-language capability mentions: `use Computer Use`, `use Chrome`, and `use Browser` become structured plugin mentions.
 - Explicit attachment handoff: a valid `BRIDGE_ATTACH:` line sends the file even when the original prompt did not match attachment-request heuristics.
 - Last outbound send evidence: bridge state and `/status` expose the latest text/attachment attempt, DB row, delivery state, and retry eligibility.
