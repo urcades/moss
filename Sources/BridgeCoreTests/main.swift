@@ -45,6 +45,7 @@ struct BridgeCoreFocusedTests {
         try testBridgeStateUpdateSerializesSeparateStoreInstances()
         try testBridgeStateBoxSerializesConcurrentMutations()
         try testBridgeServiceSessionAndJobStartMutationsUseStateOwner()
+        try testBridgeServiceAutomationMutationsUseStateOwner()
         try testCapabilityFormattingAndCacheSnapshot()
         try await testCapabilityBestEffortPrefersCache()
         try await testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb()
@@ -1219,6 +1220,24 @@ struct BridgeCoreFocusedTests {
         ]
         for pattern in forbidden {
             try expect(!source.contains(pattern), "BridgeService session/job-start mutation should use state owner instead of direct pattern \(pattern)")
+        }
+    }
+
+    private static func testBridgeServiceAutomationMutationsUseStateOwner() throws {
+        let sourcePath = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("BridgeCore/BridgeService.swift")
+        let source = try String(contentsOf: sourcePath, encoding: .utf8)
+        let forbidden = [
+            "state.automationCreationStatus =",
+            "state.automationRoutes =",
+            "state.automationRoutes?[index].lastSeenSessionId =",
+            "state.automationRoutes?[index].lastDeliveredSessionId =",
+            "state.automationRoutes?[index].lastDeliveredAt ="
+        ]
+        for pattern in forbidden {
+            try expect(!source.contains(pattern), "BridgeService automation mutation should use state owner instead of direct pattern \(pattern)")
         }
     }
 

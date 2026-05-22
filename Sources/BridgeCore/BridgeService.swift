@@ -1156,7 +1156,6 @@ public final class BridgeService: @unchecked Sendable {
             setAutomationCreationStatus(batch: batch, phase: "created", automationId: automation.id, name: automation.name, createdFilePath: automation.path)
             persistAutomationRoute(automation: automation, batch: batch)
             setAutomationCreationStatus(batch: batch, phase: "routed", automationId: automation.id, name: automation.name, createdFilePath: automation.path, routeStatus: "route persisted")
-            try stores.state.save(state)
             try await sendReplyRecording(
                 replySink,
                 recipient: batch.handleId,
@@ -1172,19 +1171,20 @@ public final class BridgeService: @unchecked Sendable {
 
     private func setAutomationCreationStatus(batch: PendingBatch, phase: String, automationId: String? = nil, name: String? = nil, createdFilePath: String? = nil, routeStatus: String? = nil, confirmationSendStatus: String? = nil, failureText: String? = nil) {
         let origin = batch.items.last
-        state.automationCreationStatus = AutomationCreationStatus(
-            automationId: automationId ?? state.automationCreationStatus?.automationId,
-            name: name ?? state.automationCreationStatus?.name,
-            sourceRowId: origin?.rowId,
-            sourceGuid: origin?.guid,
-            phase: phase,
-            createdFilePath: createdFilePath ?? state.automationCreationStatus?.createdFilePath,
-            routeStatus: routeStatus ?? state.automationCreationStatus?.routeStatus,
-            confirmationSendStatus: confirmationSendStatus ?? state.automationCreationStatus?.confirmationSendStatus,
-            failureText: failureText,
-            updatedAt: DateCodec.iso(now())
-        )
-        try? stores.state.save(state)
+        let updatedAt = DateCodec.iso(now())
+        try? mutateStateAndSave { state in
+            state.applyAutomationCreationStatus(
+                origin: origin,
+                phase: phase,
+                automationId: automationId,
+                name: name,
+                createdFilePath: createdFilePath,
+                routeStatus: routeStatus,
+                confirmationSendStatus: confirmationSendStatus,
+                failureText: failureText,
+                updatedAt: updatedAt
+            )
+        }
     }
 
     private func persistAutomationRoute(automation: CreatedCodexAutomation, batch: PendingBatch) {
@@ -1198,7 +1198,9 @@ public final class BridgeService: @unchecked Sendable {
             createdFromRowId: origin?.rowId,
             createdAt: DateCodec.iso(now())
         )
-        state.automationRoutes = upsertCodexAutomationRoute(route, into: state.automationRoutes ?? [])
+        try? mutateStateAndSave { state in
+            state.upsertAutomationRoute(route)
+        }
     }
 
     private func backfillExistingAutomationRoutes(config: BridgeConfig) {
@@ -1216,7 +1218,9 @@ public final class BridgeService: @unchecked Sendable {
             createdFromRowId: nil,
             createdAt: metadata.createdAt ?? DateCodec.iso(now())
         )
-        state.automationRoutes = upsertCodexAutomationRoute(route, into: state.automationRoutes ?? [])
+        try? mutateStateAndSave { state in
+            state.upsertAutomationRoute(route)
+        }
     }
 
     private func deliverCompletedAutomationRuns(config: BridgeConfig) async throws {
@@ -1226,19 +1230,14 @@ public final class BridgeService: @unchecked Sendable {
         guard !runs.isEmpty else { return }
         let replySink = makeReplySink(config)
         let latestRuns = Dictionary(runs.map { ($0.automationId, $0) }, uniquingKeysWith: { _, latest in latest })
-        var changed = false
         for run in latestRuns.values.sorted(by: { $0.automationId < $1.automationId }) {
-            guard let index = state.automationRoutes?.firstIndex(where: { $0.automationId == run.automationId }) else { continue }
-            guard state.automationRoutes?[index].lastDeliveredSessionId != run.sessionId else { continue }
-            guard let route = state.automationRoutes?[index] else { continue }
-            state.automationRoutes?[index].lastSeenSessionId = run.sessionId
+            guard let route = state.automationRoutes?.first(where: { $0.automationId == run.automationId }) else { continue }
+            guard route.lastDeliveredSessionId != run.sessionId else { continue }
             try await sendReplyRecording(replySink, recipient: route.recipient, service: route.service, text: run.message)
-            state.automationRoutes?[index].lastDeliveredSessionId = run.sessionId
-            state.automationRoutes?[index].lastDeliveredAt = run.completedAt ?? DateCodec.iso(now())
-            changed = true
-        }
-        if changed {
-            try stores.state.save(state)
+            let deliveredAt = run.completedAt ?? DateCodec.iso(now())
+            try mutateStateAndSave { state in
+                state.markAutomationRouteDelivered(automationId: run.automationId, sessionId: run.sessionId, deliveredAt: deliveredAt)
+            }
         }
     }
 

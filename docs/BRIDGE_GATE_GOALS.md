@@ -85,6 +85,7 @@ Success means Messages-triggered automation creation is bridge-owned, synchronou
   - Current post-app-server-smoke automation smoke passed for `bridge-smoke-test-0a76716f` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_162A28FB-86ED-4E98-B083-5A6F0A76716F`; status showed `Automation creation status: confirmed` and route persisted with active job `none`.
   - `codexmsgctl-swift status` now reports automation creation status and the latest automation routes.
   - State saves now merge automation route/status fields so a helper tick with stale in-memory state cannot erase a newly persisted route.
+  - Automation creation status, automation route persistence, backfilled automation routes, and automation delivery cursors now pass through serialized mutation helpers. A source-level architecture regression prevents those paths from reintroducing direct automation state assignment patterns inside `BridgeService`.
   - Automation creation classification now has a phrase matrix covering creation/reminder/monitor/follow-up positives plus management/debug/list/status and ordinary schedule false positives.
 
 ## Goal 4: Interactive Callback Parity
@@ -124,6 +125,7 @@ Success means bridge state writes cannot clobber each other and cancellation lea
   - `BridgeService` now keeps in-memory state in a serialized `BridgeStateBox` instead of an unlocked struct plus scattered ad hoc locks. Deterministic coverage verifies concurrent in-memory mutations cannot drop media refs while updating the cursor.
   - Cursor updates, outbound delivery evidence, recent media refs, active-job updates, callback completion, and `/cancel` state transitions now pass through serialized mutation helpers. Cancel still saves the terminal callback state before clearing it so the merge layer cannot resurrect a pending callback.
   - Prompt job-start, `/reset`, Codex session start/resume/expiry, session id capture, and session completion/error timestamps now pass through serialized mutation helpers. A source-level architecture regression prevents those paths from reintroducing direct session/job-start assignment patterns.
+  - Automation creation status, automation route persistence, and automation delivery cursor updates now pass through serialized mutation helpers.
   - App-server connection close now terminates the process tree before closing stdin, preventing timeout cleanup from orphaning app-server child processes.
   - Deterministic coverage now runs a fake app-server that spawns a child process and verifies timeout cleanup removes the child.
   - Doctor now parses app-server process snapshots by pid, parent pid, process group, elapsed time, and transport, and flags orphaned `stdio://` app-server processes separately from long-lived `unix://` or desktop app-server processes.
