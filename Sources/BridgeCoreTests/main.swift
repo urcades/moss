@@ -1533,6 +1533,8 @@ struct BridgeCoreFocusedTests {
         try runSQLite(db, """
         INSERT INTO handle (ROWID, id, service)
         VALUES (1, '+1 (520) 609-9095', 'iMessage');
+        INSERT INTO handle (ROWID, id, service)
+        VALUES (2, '+1 (999) 000-0000', 'iMessage');
         INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
         VALUES (70, 'inbound-status', '/codex status', 0, 0, 0, 1000000000, 'iMessage', 1);
         INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
@@ -1541,24 +1543,35 @@ struct BridgeCoreFocusedTests {
         VALUES (72, 'inbound-smoke', '/codex smoke chrome', 0, 0, 0, 1000000002, 'iMessage', 1);
         INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
         VALUES (73, 'outbound-smoke', 'Smoke chrome failed: exact blocker', 1, 25, 0, 1000000003, 'iMessage', NULL);
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (80, 'inbound-gates', '/codex gates', 0, 0, 0, 1000000004, 'iMessage', 1);
+        INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (81, 'wrong-chat-outbound', 'Wrong chat reply', 1, 0, 0, 1000000005, 'iMessage', 2);
+        INSERT INTO message (ROWID, guid, text, attributedBody, is_from_me, error, date_delivered, date, service, handle_id)
+        VALUES (82, 'trusted-attributed-outbound', NULL, CAST('Trusted attributed reply' AS BLOB), 1, 0, 0, 1000000006, 'iMessage', 1);
         """)
 
         let evidence = try await trustedGateEvidence(
             config: config,
             recipient: "+1-520-609-9095",
             service: "iMessage",
-            commands: ["/codex status", "/codex smoke chrome", "/codex smoke attachment"]
+            commands: ["/codex status", "/codex smoke chrome", "/codex smoke attachment", "/codex gates"]
         )
 
-        try expect(evidence.map(\.command) == ["/codex status", "/codex smoke chrome", "/codex smoke attachment"], "trusted gate evidence preserves command order")
+        try expect(evidence.map(\.command) == ["/codex status", "/codex smoke chrome", "/codex smoke attachment", "/codex gates"], "trusted gate evidence preserves command order")
         try expect(evidence[0].status == "observed", "trusted gate evidence observes status command")
         try expect(evidence[0].inboundRowId == 70, "trusted gate evidence records inbound row")
         try expect(evidence[0].outboundRowId == 71, "trusted gate evidence records outbound row")
         try expect(evidence[1].status == "outbound-error-25", "trusted gate evidence surfaces outbound error")
         try expect(evidence[2].status == "missing-inbound", "trusted gate evidence marks missing command")
+        try expect(evidence[3].status == "observed", "trusted gate evidence observes gates command")
+        try expect(evidence[3].outboundRowId == 82, "trusted gate evidence skips outgoing rows for other chats")
+        try expect(evidence[3].outboundSnippet == "Trusted attributed reply", "trusted gate evidence reads attributed body snippets")
         let formatted = formatTrustedGateEvidence(evidence)
         try expect(formatted.contains("/codex smoke chrome: outbound-error-25"), "trusted gate formatter includes failed command")
         try expect(formatted.contains("reply \"Smoke chrome failed: exact blocker\""), "trusted gate formatter includes reply snippet")
+        try expect(formatted.contains("Missing trusted inbound commands: 1"), "trusted gate formatter summarizes missing inbound commands")
+        try expect(formatted.contains("Next trusted command to send from Apple Messages: /codex smoke attachment"), "trusted gate formatter names the next missing command")
     }
 
     private static func testClipboardAttachmentSendRetriesWhenNoDbRowAppears() async throws {

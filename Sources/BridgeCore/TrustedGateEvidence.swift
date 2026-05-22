@@ -72,6 +72,7 @@ public func trustedGateEvidence(
         return commands.map { TrustedGateEvidence(command: $0) }
     }
     let senderClause = trustedSenderSQLClause(column: "h.id", values: values)
+    let outboundSenderClause = trustedSenderSQLClause(column: "oh.id", values: values)
     let commandList = commands.map { sqliteStringLiteral($0.lowercased()) }.joined(separator: ", ")
     let serviceLiteral = sqliteStringLiteral(service)
     let sql = """
@@ -106,13 +107,16 @@ public func trustedGateEvidence(
       o.guid AS outboundGuid,
       COALESCE(o.error, 0) AS outboundError,
       COALESCE(o.date_delivered, 0) AS outboundDateDelivered,
-      substr(COALESCE(o.text, ''), 1, 160) AS outboundSnippet
+      substr(COALESCE(NULLIF(o.text, ''), CAST(o.attributedBody AS TEXT), ''), 1, 160) AS outboundSnippet
     FROM latest_inbound li
     LEFT JOIN message o ON o.ROWID = (
       SELECT MIN(m2.ROWID)
       FROM message m2
+      LEFT JOIN handle oh ON oh.ROWID = m2.handle_id
       WHERE m2.is_from_me = 1
         AND m2.ROWID > li.inboundRowId
+        AND COALESCE(m2.service, oh.service, \(serviceLiteral)) = \(serviceLiteral)
+        AND (m2.handle_id IS NULL OR \(outboundSenderClause))
     )
     ORDER BY li.inboundRowId DESC;
     """
@@ -159,6 +163,12 @@ public func formatTrustedGateEvidence(_ evidence: [TrustedGateEvidence]) -> Stri
             parts.append("reply \"\(snippet)\"")
         }
         lines.append(parts.joined(separator: "; "))
+    }
+    let missingInbound = evidence.filter { $0.status == "missing-inbound" }
+    if let next = missingInbound.first {
+        lines.append("")
+        lines.append("Missing trusted inbound commands: \(missingInbound.count)")
+        lines.append("Next trusted command to send from Apple Messages: \(next.command)")
     }
     return lines.joined(separator: "\n")
 }
