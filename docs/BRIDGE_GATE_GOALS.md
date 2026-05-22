@@ -20,12 +20,14 @@ Success means outbound text and media can never look successful when Messages re
   - Current text smoke passed on row 745 with marker `CODEXMSGCTL_SMOKE_TEXT_4900E017-5AB5-482C-A02E-47099DB5664A`.
   - Post-restart text smoke passed on row 747 with marker `CODEXMSGCTL_SMOKE_TEXT_6FCFBD88-EDB4-479C-B949-B9B1B12ACAA0`.
   - Post-classifier/media-restart text smoke passed on row 749 with marker `CODEXMSGCTL_SMOKE_TEXT_3F39B797-5016-4F66-9F57-03DDAD7E2F1A`; `message.error=0`, `date_delivered=0`, and the DB row was observed.
+  - Current post-app-server-smoke text smoke passed on row 751 with marker `CODEXMSGCTL_SMOKE_TEXT_2F902340-AC0A-4729-A146-EF739E051209`; `message.error=0`, `date_delivered=0`, and the DB row was observed.
   - Old file-attachment smoke exposed row 732 with `error=25`, `transfer_state=6`; this was useful evidence but not the final image-media gate.
   - Image attachment smoke passed on row 737 after normalizing the configured phone handle before opening the `sms:` URL; Messages renamed the pasted image to `IMG_5972.jpeg`, so verification uses the DB baseline row instead of requiring the marker in `transfer_name`.
   - A later image attachment smoke hit a no-row AppleScript/clipboard failure after baseline row 743. Attachment verification now polls longer and retries once only when no Messages DB row appears; the hardened smoke then passed on row 744 with `transfer_state=5`.
   - Current attachment smoke passed on row 746 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_B28DE88E-10AF-44FA-8043-A8FE4EAE37AE` after clipboard retry 2; Messages renamed the image to `IMG_1669.jpeg`.
   - Post-restart attachment smoke passed on row 748 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_0B03A564-0DDA-4429-93DC-97C65995A72E`; Messages renamed the image to `IMG_3577.jpeg`, `message.error=0`, `transfer_state=5`.
   - Post-classifier/media-restart attachment smoke passed on row 750 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_F8524182-A855-4B0C-854B-E1B061FF1E2B`; Messages renamed the image to `IMG_2008.jpeg`, `message.error=0`, `transfer_state=5`, after clipboard retry 2.
+  - Current post-app-server-smoke attachment smoke passed on row 752 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_97C66EAF-75BE-4839-9F51-1A31484A7791`; Messages renamed the image to `IMG_1774.jpeg`, `message.error=0`, `transfer_state=5`, after clipboard retry 2.
   - `/codex smoke attachment` now sends a marked image probe from the Messages command surface and keeps the probe as `lastOutboundSend` while sending an unrecorded summary reply.
   - Fake-runtime coverage now verifies delayed attachment rows are observed after AppleScript returns, and SMS attachment sends pass the SMS service type while surfacing `error=25`/`transfer_state=6` evidence.
 
@@ -51,6 +53,7 @@ Success means follow-up prompts like "modify that image" use a real previous cha
   - Previous-image follow-up selection now skips unsupported recent image refs such as HEIC when choosing a source for app-server image input, and status marks those refs as `app-server-unsupported`.
   - Live `swift run codexmsgctl-swift smoke inbound-image-check` passed with marker `CODEXMSGCTL_SMOKE_INBOUND_IMAGE_3A6D9799-EE48-453C-8220-AA8C2F255A3B`: it recovered trusted inbound row 721 (`IMG_5685.HEIC`), converted it to a temp JPEG, and app-server replied `SUCCESS`.
   - A second live inbound-image smoke passed from the persisted converted media ref with marker `CODEXMSGCTL_SMOKE_INBOUND_IMAGE_5BF48A3C-C0CA-4A82-BAC3-52019F6E86F6`, proving the registry path works after recovery.
+  - Current inbound-image smoke passed from persisted converted row 721 with marker `CODEXMSGCTL_SMOKE_INBOUND_IMAGE_5B6E7633-55B2-4AC4-84FC-CDF4BA033A67`, thread `019e4f1c-56de-7741-9a0f-34894af6d9c3`, and turn `019e4f1c-58e7-7122-a970-152c225300ba`.
 
 ## Goal 3: Automation Truth
 
@@ -134,6 +137,7 @@ Success means the bridge continuously reports what Codex can really do from Mess
   - Current `swift run codexmsgctl-swift smoke computer-use` passed with real `list_apps` and `get_app_state` calls and marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_D076BC6E-2948-4C7B-94A3-E7AFFC703587`.
   - Current smoke computer-use passed again with marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_C809B0CA-D913-4040-9B3A-5A5DB1CF9D2E`.
   - A later `doctor --probe-computer-use` run returned without hanging and failed visibly with exact blocker `BLOCKED Computer Use server error -10005: cgWindowNotFound`.
+  - Current `swift run codexmsgctl-swift doctor --probe-computer-use` returned without hanging and failed visibly with exact blocker `BLOCKED Computer Use server error -10005: cgWindowNotFound`.
   - `swift run codexmsgctl-swift smoke chrome` invoked the Chrome skill path and returned the exact blocker `privileged native pipe bridge is not available; browser-client is not trusted` with marker `CODEXMSGCTL_SMOKE_CHROME_9E2AAA1F-51AE-44D3-9B60-6A63DBEED695`.
   - Current `swift run codexmsgctl-swift smoke chrome` still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_CHROME_BF716326-E9E4-40FF-A47A-173DB6A40F3A`.
   - Current smoke chrome still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_CHROME_AFFEEED9-3DCA-469B-AC95-CF261D565C74`.
