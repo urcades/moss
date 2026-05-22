@@ -41,6 +41,7 @@ struct BridgeCoreFocusedTests {
         try await testAppServerClientThreadReadSuccessAndCleanup()
         try await testAppServerClientRpcErrorAndCleanup()
         try await testAppServerClientInvalidResultAndTimeout()
+        try await testAppServerTimeoutTerminatesChildProcesses()
         try await testAppServerBackendStartsThreadAndReturnsFinalAnswer()
         try await testAppServerBackendAddsCapabilityInventoryToDeveloperInstructions()
         try await testAppServerBackendAddsStructuredMentionsToTurnInput()
@@ -620,6 +621,45 @@ struct BridgeCoreFocusedTests {
         } catch let error as CodexAppServerError {
             try expect(error == .timedOut("Timed out waiting for Codex app-server response 2: stderr detail"), "app-server timeout")
         }
+    }
+
+    private static func testAppServerTimeoutTerminatesChildProcesses() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let script = paths.tmpDir.appendingPathComponent("fake-app-server-with-child.sh")
+        let childPidFile = paths.tmpDir.appendingPathComponent("child.pid")
+        let scriptText = """
+        #!/bin/sh
+        /bin/sleep 60 &
+        echo "$!" > "\(childPidFile.path)"
+        while IFS= read -r line; do
+          case "$line" in
+            *'"id":1'*)
+              printf '%s\\n' '{"id":1,"result":{"ok":true}}'
+              ;;
+            *'"thread/start"'*)
+              /bin/sleep 60
+              ;;
+          esac
+        done
+        """
+        try scriptText.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: script.path)
+        config.timeoutMs = 500
+        do {
+            _ = try await CodexAppServerBackend(config: config, paths: paths).invoke(
+                PromptRequest(promptText: "timeout", attachments: []),
+                sessionId: nil,
+                onEvent: nil
+            )
+            throw TestFailure(description: "Expected app-server timeout")
+        } catch let error as CodexBackendFailure {
+            try expect(error.timedOut, "app-server timeout is reported")
+        }
+        let childPidText = try String(contentsOf: childPidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        let childPid = try expectInt32(childPidText)
+        try expectEventuallyProcessExits(pid: childPid, timeoutSeconds: 3, "app-server timeout closes process tree")
     }
 
     private static func testAppServerBackendStartsThreadAndReturnsFinalAnswer() async throws {
@@ -1339,6 +1379,37 @@ struct BridgeCoreFocusedTests {
             throw TestFailure(description: "Expected path")
         }
         return path
+    }
+
+    private static func expectInt32(_ value: String) throws -> Int32 {
+        guard let parsed = Int32(value) else {
+            throw TestFailure(description: "Expected Int32 value, got \(value)")
+        }
+        return parsed
+    }
+
+    private static func expectEventuallyProcessExits(pid: Int32, timeoutSeconds: Double, _ message: String) throws {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            if !processIsRunningForTest(pid) { return }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        throw TestFailure(description: message)
+    }
+
+    private static func processIsRunningForTest(_ pid: Int32) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/kill")
+        process.arguments = ["-0", "\(pid)"]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
     }
 
     private static func expectRoute(_ route: CodexAutomationRoute?) throws -> CodexAutomationRoute {

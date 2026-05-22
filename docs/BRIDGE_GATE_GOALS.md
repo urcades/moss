@@ -77,6 +77,8 @@ Success means bridge state writes cannot clobber each other and cancellation lea
 - Current status:
   - Deterministic coverage now verifies stale state saves preserve concurrently added automation route/status fields and recent media refs while still accepting incoming cursor updates.
   - The same stale-save coverage now includes non-terminal pending interactive callbacks.
+  - App-server connection close now terminates the process tree before closing stdin, preventing timeout cleanup from orphaning app-server child processes.
+  - Deterministic coverage now runs a fake app-server that spawns a child process and verifies timeout cleanup removes the child.
 - Live gates:
   - Doctor reports app-server process snapshots without hanging.
   - Cancel/timeout leaves no bridge-owned orphan `codex app-server` or Computer Use child process.

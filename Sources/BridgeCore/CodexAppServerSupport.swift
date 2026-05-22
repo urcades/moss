@@ -1147,10 +1147,10 @@ private final class ProcessCodexAppServerConnection: CodexAppServerConnection, @
 
     func close() {
         stderr.fileHandleForReading.readabilityHandler = nil
-        try? stdin.fileHandleForWriting.close()
         if process.isRunning {
-            process.terminate()
+            terminateProcessTree(rootPid: process.processIdentifier)
         }
+        try? stdin.fileHandleForWriting.close()
     }
 }
 
