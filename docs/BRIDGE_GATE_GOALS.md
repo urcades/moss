@@ -11,6 +11,7 @@ Success means outbound text and media can never look successful when Messages re
   - Attachment evidence records row id, `message.error`, `attachment.transfer_state`, and `date_delivered`.
   - Failed sends are retryable and visible in `/status`, `/codex status`, and `codexmsgctl-swift status`.
   - `/codex smoke text` and `/codex smoke attachment` run the same delivery path from Messages and report the recorded evidence.
+  - Attachment verification waits for delayed Messages DB rows and preserves SMS failed-row evidence.
 - Live gates:
   - `swift run codexmsgctl-swift smoke text` passes with an outgoing Messages row.
   - `swift run codexmsgctl-swift smoke attachment` passes for an image attachment row, or fails with exact DB evidence.
@@ -26,6 +27,7 @@ Success means outbound text and media can never look successful when Messages re
   - Post-restart attachment smoke passed on row 748 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_0B03A564-0DDA-4429-93DC-97C65995A72E`; Messages renamed the image to `IMG_3577.jpeg`, `message.error=0`, `transfer_state=5`.
   - Post-classifier/media-restart attachment smoke passed on row 750 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_F8524182-A855-4B0C-854B-E1B061FF1E2B`; Messages renamed the image to `IMG_2008.jpeg`, `message.error=0`, `transfer_state=5`, after clipboard retry 2.
   - `/codex smoke attachment` now sends a marked image probe from the Messages command surface and keeps the probe as `lastOutboundSend` while sending an unrecorded summary reply.
+  - Fake-runtime coverage now verifies delayed attachment rows are observed after AppleScript returns, and SMS attachment sends pass the SMS service type while surfacing `error=25`/`transfer_state=6` evidence.
 
 ## Goal 2: Media Continuity
 

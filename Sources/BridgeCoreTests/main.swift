@@ -40,6 +40,8 @@ struct BridgeCoreFocusedTests {
         try await testOutboundSmokeAttachmentEvidenceFindsMarkerInTransferName()
         try await testOutboundSmokeAttachmentEvidenceFallsBackToLatestAttachment()
         try await testClipboardAttachmentSendRetriesWhenNoDbRowAppears()
+        try await testAttachmentSendWaitsForDelayedMessagesDbRow()
+        try await testSmsAttachmentSendUsesSmsServiceAndReportsFailedRow()
         try await testRecentFailedOutboundEvidenceFindsFailedTextAndAttachmentRows()
         try testCodexAppServerProcessSnapshotParsesTransportsAndOrphans()
         try testCodexMentionExtraction()
@@ -895,6 +897,81 @@ struct BridgeCoreFocusedTests {
         try expect(evidence.detail?.contains("Succeeded after clipboard retry 2") == true, "clipboard attachment retry records retry detail")
         let attempts = try String(contentsOf: countFile, encoding: .utf8)
         try expect(attempts == "2", "clipboard attachment send retries exactly once after no-row failure")
+    }
+
+    private static func testAttachmentSendWaitsForDelayedMessagesDbRow() async throws {
+        let paths = testPaths()
+        let db = try makeSmokeMessagesDb(paths: paths)
+        let file = paths.tmpDir.appendingPathComponent("delayed-probe.txt")
+        try Data("probe".utf8).write(to: file)
+        let script = paths.tmpDir.appendingPathComponent("fake-delayed-osascript.sh")
+        try Data("""
+        #!/bin/sh
+        db=\(shellQuoted(db.path))
+        (
+          sleep 0.2
+          /usr/bin/sqlite3 "$db" "INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered) VALUES (60, 'delayed-attachment-guid', '', 1, 0, 0); INSERT INTO attachment (ROWID, transfer_name, transfer_state) VALUES (13, 'delayed-probe.txt', 5); INSERT INTO message_attachment_join (message_id, attachment_id) VALUES (60, 13);"
+        ) &
+        exit 0
+        """.utf8).write(to: script)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let sink = AppleMessagesReplySink(
+            osascriptCommand: script.path,
+            messagesDbPath: db.path,
+            attachmentVerificationTimeoutMs: 1_000
+        )
+
+        let evidence = try await sink.sendAttachment(recipient: "+1", service: "iMessage", filePath: file.path)
+
+        try expect(evidence.dbRowId == 60, "attachment verification waits for delayed Messages row")
+        try expect(evidence.transferState == 5, "delayed attachment evidence includes transfer state")
+        try expect(evidence.detail == "Messages created an outgoing attachment row that is not yet delivered.", "delayed attachment evidence reports undelivered row")
+    }
+
+    private static func testSmsAttachmentSendUsesSmsServiceAndReportsFailedRow() async throws {
+        let paths = testPaths()
+        let db = try makeSmokeMessagesDb(paths: paths)
+        let serviceFile = paths.tmpDir.appendingPathComponent("fake-osascript-service")
+        let file = paths.tmpDir.appendingPathComponent("sms-probe.txt")
+        try Data("probe".utf8).write(to: file)
+        let script = paths.tmpDir.appendingPathComponent("fake-sms-osascript.sh")
+        try Data("""
+        #!/bin/sh
+        db=\(shellQuoted(db.path))
+        service_file=\(shellQuoted(serviceFile.path))
+        service=""
+        previous=""
+        for arg in "$@"; do
+          if [ "$previous" = "--" ]; then
+            previous="recipient"
+          elif [ "$previous" = "recipient" ]; then
+            service="$arg"
+            break
+          else
+            previous="$arg"
+          fi
+        done
+        printf "%s" "$service" > "$service_file"
+        /usr/bin/sqlite3 "$db" "INSERT INTO message (ROWID, guid, text, is_from_me, error, date_delivered) VALUES (61, 'sms-failed-attachment-guid', '', 1, 25, 0); INSERT INTO attachment (ROWID, transfer_name, transfer_state) VALUES (14, 'sms-probe.txt', 6); INSERT INTO message_attachment_join (message_id, attachment_id) VALUES (61, 14);"
+        exit 0
+        """.utf8).write(to: script)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let sink = AppleMessagesReplySink(
+            osascriptCommand: script.path,
+            messagesDbPath: db.path,
+            attachmentVerificationTimeoutMs: 500
+        )
+
+        do {
+            _ = try await sink.sendAttachment(recipient: "+1-520-609-9095", service: "SMS", filePath: file.path)
+            throw TestFailure(description: "Expected failed SMS attachment row")
+        } catch let failure as OutboundDeliveryFailure {
+            let service = try String(contentsOf: serviceFile, encoding: .utf8)
+            try expect(service == "SMS", "attachment send passes SMS service type to AppleScript")
+            try expect(failure.evidence?.dbRowId == 61, "failed SMS attachment evidence row")
+            try expect(failure.evidence?.dbError == 25, "failed SMS attachment evidence error")
+            try expect(failure.evidence?.transferState == 6, "failed SMS attachment evidence transfer state")
+        }
     }
 
     private static func testCodexMentionExtraction() throws {
