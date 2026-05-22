@@ -118,6 +118,7 @@ struct BridgeCoreFocusedTests {
         try testLaunchAgentProgramDiagnostics()
         try testRuntimeExecutableIdentityDiagnostics()
         try testBridgeGateChecklistEnumeratesLocalAndTrustedGates()
+        try testBridgeGateStrictReportFailsOnTrustedAndLiveBlockers()
         try await testAutomationRequestCreatesCodexAutomationFromInterpretedSpec()
         try await testCodexAutomationsReportsCreationInProgress()
         try await testCompletedAutomationSessionIsForwardedOnce()
@@ -3245,6 +3246,7 @@ struct BridgeCoreFocusedTests {
         try expect(text.contains("swift run BridgeCoreTests"), "gate checklist includes focused tests")
         try expect(text.contains("swift run codexmsgctl-swift doctor --probe-computer-use"), "gate checklist includes doctor probe")
         try expect(text.contains("swift run codexmsgctl-swift trusted-gates"), "gate checklist includes trusted gate observer")
+        try expect(text.contains("swift run codexmsgctl-swift gates --strict"), "gate checklist includes strict gate command")
         try expect(text.contains("swift run codexmsgctl-swift smoke outbound-image-check --recipient +1 --service iMessage"), "gate checklist includes outbound image smoke")
         try expect(text.contains("swift run codexmsgctl-swift smoke bridge-attach --recipient +1 --service iMessage"), "gate checklist includes bridge attach smoke")
         try expect(text.contains("swift run codexmsgctl-swift smoke generated-image --recipient +1 --service iMessage"), "gate checklist includes CLI generated image smoke")
@@ -3254,12 +3256,45 @@ struct BridgeCoreFocusedTests {
         try expect(text.contains("/codex smoke generated-image"), "gate checklist includes generated image smoke")
         try expect(text.contains("/codex smoke edit-image-check"), "gate checklist includes trusted edit image smoke")
         try expect(text.contains("Trusted evidence observer:"), "gate checklist separates trusted evidence observer")
+        try expect(text.contains("swift run codexmsgctl-swift trusted-gates --runbook"), "gate checklist includes trusted gate runbook")
         try expect(text.contains("/codex smoke callback, then reply with any short text"), "gate checklist includes two-step trusted callback smoke")
         try expect(text.contains("/codex smoke app-server-callback, then reply to the app-server prompt"), "gate checklist includes real app-server callback smoke")
         try expect(text.contains("/codex smoke mcp-elicitation-callback, then reply to the MCP elicitation prompt"), "gate checklist includes real MCP elicitation callback smoke")
         try expect(text.contains("Live smoke evidence: 1 result(s); latest: mcp-elicitation-callback blocked"), "gate checklist includes live smoke blocker evidence")
         try expect(text.contains("needs trusted inbound image first"), "gate checklist reports inbound image readiness")
         try expect(text.contains("will create a marked outbound image"), "gate checklist reports outbound image readiness")
+    }
+
+    private static func testBridgeGateStrictReportFailsOnTrustedAndLiveBlockers() throws {
+        let context = BridgeGateChecklistContext(
+            allowedSender: "+1",
+            service: "iMessage",
+            hasActiveJob: false,
+            hasPendingInteractiveCallback: false,
+            hasRecentInboundImage: true,
+            hasRecentOutboundImage: true,
+            liveSmokeResults: [
+                LiveSmokeResult(
+                    name: "computer-use",
+                    marker: "MARKER",
+                    status: "blocked",
+                    detail: "cgWindowNotFound",
+                    updatedAt: "2026-05-22T13:00:00.000Z"
+                )
+            ]
+        )
+        let report = bridgeGateStrictReport(
+            context: context,
+            trustedGateEvidence: [
+                TrustedGateEvidence(command: "/codex status"),
+                TrustedGateEvidence(command: "/codex gates", inboundRowId: 1, outboundRowId: 2, outboundError: 0)
+            ]
+        )
+
+        try expect(!report.ok, "strict gate report fails while trusted gates or live smokes are open")
+        try expect(report.text.contains("Strict gate check failed."), "strict gate report has failure header")
+        try expect(report.text.contains("Trusted Messages gates: 1/2 observed; 1 missing inbound; next /codex status (missing-inbound)"), "strict gate report includes trusted gate summary")
+        try expect(report.text.contains("Live smoke blockers: computer-use blocked MARKER"), "strict gate report includes live smoke blocker")
     }
 
     private static func testAutomationRequestCreatesCodexAutomationFromInterpretedSpec() async throws {

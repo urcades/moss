@@ -22,7 +22,7 @@ struct CodexMsgCtlSwift {
           codexmsgctl-swift configure --safety standard|permissive|preserve
           codexmsgctl-swift configure --preserve-safety
           codexmsgctl-swift doctor [--probe-computer-use]
-          codexmsgctl-swift gates
+          codexmsgctl-swift gates [--strict]
           codexmsgctl-swift trusted-gates [--runbook] [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift smoke text|attachment|bridge-attach|generated-image|edit-image-check|automation|app-server|app-server-callback|mcp-elicitation-callback|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift broker start|stop|status|doctor|events|dry-run-scan
@@ -157,6 +157,13 @@ struct CodexMsgCtlSwift {
                 hasRecentOutboundImage: hasUsableRecentMedia(direction: "outbound", recipient: config.allowedSender, service: smokeOption("--service", in: rest) ?? "iMessage", state: state),
                 liveSmokeResults: state.liveSmokeResults ?? []
             )
+            if rest.contains("--strict") {
+                let evidence = try await trustedGateEvidence(config: config, service: smokeOption("--service", in: rest) ?? "iMessage")
+                let report = bridgeGateStrictReport(context: context, trustedGateEvidence: evidence)
+                print(report.text)
+                if !report.ok { Foundation.exit(1) }
+                return
+            }
             print(bridgeGateChecklistText(context: context))
         case "trusted-gates":
             if rest.contains("--runbook") {

@@ -2,7 +2,7 @@
 
 This file is the working gate list for continuous bridge hardening. A gate is complete only when fake-runtime tests, live smoke evidence, status/doctor visibility, and installed-helper behavior agree.
 
-The continuous-goals contract for this workstream lives in `docs/BRIDGE_CONTINUOUS_GOALS.md`. Use `swift run codexmsgctl-swift gates` or `/codex gates` for the current non-destructive checklist of deterministic gates, live CLI smoke commands, trusted Messages commands, and latest live smoke blocker evidence. Use `swift run codexmsgctl-swift trusted-gates` to inspect real trusted-chat inbound/outbound row evidence, and `swift run codexmsgctl-swift trusted-gates --runbook` or `/codex trusted-gates runbook` for the exact Apple Messages command sequence.
+The continuous-goals contract for this workstream lives in `docs/BRIDGE_CONTINUOUS_GOALS.md`. Use `swift run codexmsgctl-swift gates` or `/codex gates` for the current non-destructive checklist of deterministic gates, live CLI smoke commands, trusted Messages commands, and latest live smoke blocker evidence. Use `swift run codexmsgctl-swift gates --strict` when a shell gate should fail until trusted Messages evidence and live smoke blockers are clear. Use `swift run codexmsgctl-swift trusted-gates` to inspect real trusted-chat inbound/outbound row evidence, and `swift run codexmsgctl-swift trusted-gates --runbook` or `/codex trusted-gates runbook` for the exact Apple Messages command sequence.
 
 ## Goal 1: Outbound Delivery Truth
 
@@ -222,6 +222,7 @@ Before this workstream is complete, the installed helper must satisfy:
 - `swift test`
 - `swift run codexmsgctl-swift doctor --probe-computer-use`
 - `swift run codexmsgctl-swift gates`
+- `swift run codexmsgctl-swift gates --strict`
 - `swift run codexmsgctl-swift trusted-gates`
 - `swift run codexmsgctl-swift smoke text`
 - `swift run codexmsgctl-swift smoke attachment`

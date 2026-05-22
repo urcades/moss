@@ -28,6 +28,16 @@ public struct BridgeGateChecklistContext: Equatable, Sendable {
     }
 }
 
+public struct BridgeGateStrictReport: Equatable, Sendable {
+    public var ok: Bool
+    public var text: String
+
+    public init(ok: Bool, text: String) {
+        self.ok = ok
+        self.text = text
+    }
+}
+
 public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> String {
     let recipientSuffix = context.allowedSender.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : " --recipient \(context.allowedSender)"
     let serviceSuffix = " --service \(context.service)"
@@ -52,6 +62,7 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
     - swift test
     - swift run codexmsgctl-swift doctor --probe-computer-use
     - swift run codexmsgctl-swift trusted-gates
+    - swift run codexmsgctl-swift gates --strict
 
     Live CLI gates:
     - swift run codexmsgctl-swift smoke text\(liveSuffix)
@@ -90,10 +101,40 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
 
     Trusted evidence observer:
     - /codex trusted-gates
+    - swift run codexmsgctl-swift trusted-gates --runbook
 
     Open proof gaps:
     - Live trusted-chat evidence for `/codex smoke app-server-callback`.
     - Live CLI and trusted-chat evidence for `/codex smoke mcp-elicitation-callback`.
     - Live trusted-chat evidence for `/codex smoke generated-image` and `/codex smoke edit-image-check`.
     """
+}
+
+public func bridgeGateStrictReport(context: BridgeGateChecklistContext, trustedGateEvidence: [TrustedGateEvidence]) -> BridgeGateStrictReport {
+    let trustedSummary = trustedGateSummaryText(trustedGateEvidence)
+    let trustedOpen = trustedGateEvidence.contains { $0.status != "observed" }
+    let liveBlockers = context.liveSmokeResults
+        .filter { $0.status.lowercased() != "passed" }
+        .sorted { lhs, rhs in
+            if lhs.name == rhs.name { return lhs.marker < rhs.marker }
+            return lhs.name < rhs.name
+        }
+    var failures: [String] = []
+    if context.hasActiveJob {
+        failures.append("Active job is still running.")
+    }
+    if context.hasPendingInteractiveCallback {
+        failures.append("Pending interactive callback is waiting.")
+    }
+    if trustedOpen {
+        failures.append("Trusted Messages gates: \(trustedSummary)")
+    }
+    if !liveBlockers.isEmpty {
+        let detail = liveBlockers.map { "\($0.name) \($0.status) \($0.marker)" }.joined(separator: "; ")
+        failures.append("Live smoke blockers: \(detail)")
+    }
+    guard failures.isEmpty else {
+        return BridgeGateStrictReport(ok: false, text: (["Strict gate check failed."] + failures).joined(separator: "\n"))
+    }
+    return BridgeGateStrictReport(ok: true, text: "Strict gate check passed.\nTrusted Messages gates: \(trustedSummary)")
 }
