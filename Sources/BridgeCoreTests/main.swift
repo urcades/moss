@@ -18,6 +18,7 @@ struct BridgeCoreFocusedTests {
         try testBridgeInstructionsRouteAutomationAndPluginRequests()
         try testAutomationRequestsGetRoutingGuard()
         try testPromptBatchPreservesPluginIntentAndOrder()
+        try await testRecentMissingAttachmentDefersCursorUntilFileExists()
         try testPreviousImageReferenceAddsRecentImage()
         try await testMissingPreviousImageReferenceAsksForSource()
         try await testCodexSmokeAttachmentCommandSendsProbeAndSummary()
@@ -158,6 +159,69 @@ struct BridgeCoreFocusedTests {
         try expect(request.promptText.contains("page.png (image/png) at \(attachmentPath)"), "attachment path is preserved")
         try expect(request.attachments.first?.absolutePath == attachmentPath, "image attachment is passed through")
         try expect(extractCodexMentionRefs(from: request.promptText).contains(CodexMentionRef(name: "Chrome", path: "plugin://chrome@openai-bundled")), "batch preamble does not hide Chrome intent")
+    }
+
+    private static func testRecentMissingAttachmentDefersCursorUntilFileExists() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        try stores.config.save(config)
+        let attachmentPath = paths.tmpDir.appendingPathComponent("delayed-image.png")
+        let receivedAt = Date(timeIntervalSince1970: 99)
+        let message = MessageItem(
+            rowId: 1,
+            guid: "guid-delayed-attachment",
+            text: "Please describe this image.",
+            handleId: "+1",
+            service: "iMessage",
+            receivedAt: DateCodec.iso(receivedAt),
+            attachments: [
+                AttachmentRef(
+                    attachmentId: 44,
+                    transferName: "delayed-image.png",
+                    mimeType: "image/png",
+                    uti: nil,
+                    absolutePath: attachmentPath.path,
+                    kind: "image",
+                    exists: false
+                )
+            ]
+        )
+        let source = PersistentMessageSource(messages: [message])
+        let sink = CapturingReplySink()
+        let backend = CapturingCodexBackend(response: "processed delayed attachment")
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in backend },
+            now: { Date(timeIntervalSince1970: 100) }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        var state = try stores.state.load()
+        var replies = await sink.repliesSnapshot()
+        try expect(state.lastProcessedRowId == 0, "recent missing attachment does not advance cursor")
+        try expect(state.pendingBatch == nil, "recent missing attachment does not enter prompt batch")
+        try expect(replies.isEmpty, "recent missing attachment does not start Codex")
+        var staleMessage = message
+        staleMessage.receivedAt = DateCodec.iso(Date(timeIntervalSince1970: 60))
+        try expect(!shouldDeferMessageForMissingAttachments(staleMessage, now: Date(timeIntervalSince1970: 100)), "stale missing attachment does not defer forever")
+
+        try Data("image".utf8).write(to: attachmentPath)
+        try await service.tick()
+        replies = try await waitForReplies(sink, count: 1)
+        state = try await waitForState(stores, timeout: 3) { $0.lastProcessedRowId == 1 && $0.activeJob == nil }
+        let request = await backend.requestSnapshot()
+
+        try expect(state.lastProcessedRowId == 1, "ready delayed attachment advances cursor")
+        try expect(replies.contains { $0.text.contains("processed delayed attachment") }, "ready delayed attachment starts Codex")
+        try expect(request?.attachments.first?.absolutePath == attachmentPath.path, "ready delayed attachment reaches Codex request")
+        try expect(request?.attachments.first?.exists == true, "ready delayed attachment is refreshed as existing")
     }
 
     private static func testPreviousImageReferenceAddsRecentImage() throws {
@@ -2026,6 +2090,20 @@ private final class QueueMessageSource: MessageSource {
         let result = messages.filter { $0.rowId > afterRowId }
         messages.removeAll()
         return result
+    }
+}
+
+private final class PersistentMessageSource: MessageSource {
+    private var messages: [MessageItem]
+
+    init(messages: [MessageItem]) {
+        self.messages = messages
+    }
+
+    func initializeCursor(state: inout BridgeState) async throws {}
+
+    func fetchNewMessages(afterRowId: Int64) async throws -> [MessageItem] {
+        messages.filter { $0.rowId > afterRowId }
     }
 }
 

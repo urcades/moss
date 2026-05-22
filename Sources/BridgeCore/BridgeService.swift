@@ -85,6 +85,9 @@ public final class BridgeService: @unchecked Sendable {
         try await deliverCompletedAutomationRuns(config: config)
         let messages = try await makeSource(config).fetchNewMessages(afterRowId: state.lastProcessedRowId)
         for message in messages {
+            if shouldDeferForMissingAttachments(message, now: now()) {
+                break
+            }
             state.lastProcessedGuid = message.guid
             state.lastProcessedRowId = message.rowId
             recordInboundMediaRefs(message)
@@ -114,6 +117,10 @@ public final class BridgeService: @unchecked Sendable {
             return
         }
         appendToPendingBatch(config: config, message: message)
+    }
+
+    private func shouldDeferForMissingAttachments(_ message: MessageItem, now: Date) -> Bool {
+        shouldDeferMessageForMissingAttachments(message, now: now)
     }
 
     private func appendToPendingBatch(config: BridgeConfig, message: MessageItem) {
@@ -1722,6 +1729,24 @@ public func usesLongTaskTimeout(_ promptText: String) -> Bool {
         "after you"
     ]
     return longTaskHints.contains { text.contains($0) }
+}
+
+public let missingInboundAttachmentDeferWindowSeconds: TimeInterval = 30
+
+public func shouldDeferMessageForMissingAttachments(
+    _ message: MessageItem,
+    now: Date,
+    deferWindowSeconds: TimeInterval = missingInboundAttachmentDeferWindowSeconds
+) -> Bool {
+    guard !message.attachments.isEmpty,
+          let receivedAt = message.receivedAt.flatMap(DateCodec.parse),
+          now.timeIntervalSince(receivedAt) <= deferWindowSeconds else {
+        return false
+    }
+    return message.attachments.contains { attachment in
+        guard let path = attachment.absolutePath else { return false }
+        return !FileManager.default.fileExists(atPath: path)
+    }
 }
 
 public func outgoingAttachmentsWereRequested(in promptText: String) -> Bool {

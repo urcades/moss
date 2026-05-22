@@ -39,6 +39,7 @@ Success means follow-up prompts like "modify that image" use a real previous cha
 - Current status:
   - `codexmsgctl-swift status` and `/codex status` now expose the recent media registry.
   - State saves now merge `recentMediaRefs` so unrelated helper/CLI saves cannot erase the image registry used by "that image" follow-ups.
+  - Very recent inbound rows with attachment paths that are not readable yet are now deferred without advancing the Messages cursor. The bridge retries the same row on later ticks, processes it once the file appears, and stops deferring after the short missing-attachment window so permanently missing files cannot wedge the helper.
   - `swift run codexmsgctl-swift smoke inbound-image-check` now validates the current recent inbound image registry, builds a "that image" follow-up, verifies the local image is attached to the app-server request, and then runs a marked app-server probe.
   - If the registry is empty or contains only app-server-incompatible images, inbound-image smoke can recover the latest trusted inbound image from Messages DB and persist it back into `state.json`.
   - HEIC/HEIF/TIFF/WebP/BMP inbound images recovered from Messages DB are converted to JPEG before app-server invocation, so the smoke verifies an attachable local image rather than accepting an unsupported-image blocker.
