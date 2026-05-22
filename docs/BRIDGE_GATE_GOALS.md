@@ -102,8 +102,12 @@ Success means the bridge continuously reports what Codex can really do from Mess
 - Current status:
   - `swift run codexmsgctl-swift smoke computer-use` passed with real `list_apps` and `get_app_state` calls and marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_2AFB06AB-BA16-4C44-B947-5543EEBB8654`.
   - Later `swift run codexmsgctl-swift doctor --probe-computer-use` runs failed twice with exact live blocker `Computer Use server error -10005: cgWindowNotFound`; this is now recorded as a live runtime condition rather than a silent fallback.
+  - Current `swift run codexmsgctl-swift doctor --probe-computer-use` passed with `Computer Use probe: SUCCESS Start Page`.
+  - Current `swift run codexmsgctl-swift smoke computer-use` passed with real `list_apps` and `get_app_state` calls and marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_D076BC6E-2948-4C7B-94A3-E7AFFC703587`.
   - `swift run codexmsgctl-swift smoke chrome` invoked the Chrome skill path and returned the exact blocker `privileged native pipe bridge is not available; browser-client is not trusted` with marker `CODEXMSGCTL_SMOKE_CHROME_9E2AAA1F-51AE-44D3-9B60-6A63DBEED695`.
+  - Current `swift run codexmsgctl-swift smoke chrome` still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_CHROME_BF716326-E9E4-40FF-A47A-173DB6A40F3A`.
   - `swift run codexmsgctl-swift smoke browser` invoked the Browser skill path and returned the exact blocker `Browser is not available: iab` with marker `CODEXMSGCTL_SMOKE_BROWSER_9BC2108C-E062-4CA4-8F74-CD305E23A487`.
+  - Current `swift run codexmsgctl-swift smoke browser` still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_BROWSER_8A9C61EA-F7B0-451F-8BC4-E261E15DAFAD`.
   - `codexmsgctl-swift smoke` now has standalone `chrome`, `browser`, and `computer-use` subcommands that print app-server pid, thread id, turn id, progress, final response, and blocker text.
 
 ## Required Green Gate Set
