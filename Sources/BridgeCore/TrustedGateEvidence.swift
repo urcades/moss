@@ -88,7 +88,8 @@ public let defaultTrustedGateCommands: [String] = [
     "/codex smoke computer-use",
     "/codex smoke automation",
     "/codex smoke callback",
-    "/codex smoke app-server-callback"
+    "/codex smoke app-server-callback",
+    "/codex smoke mcp-elicitation-callback"
 ]
 
 public func trustedGateEvidence(
@@ -165,7 +166,7 @@ public func trustedGateEvidence(
       SELECT MIN(m3.ROWID)
       FROM message m3
       LEFT JOIN handle fh ON fh.ROWID = m3.handle_id
-      WHERE li.command IN ('/codex smoke callback', '/codex smoke app-server-callback')
+      WHERE li.command IN ('/codex smoke callback', '/codex smoke app-server-callback', '/codex smoke mcp-elicitation-callback')
         AND m3.is_from_me = 0
         AND m3.ROWID > o.ROWID
         AND COALESCE(m3.service, fh.service, \(serviceLiteral)) = \(serviceLiteral)
@@ -187,7 +188,7 @@ public func trustedGateEvidence(
       SELECT MIN(m4.ROWID)
       FROM message m4
       LEFT JOIN handle coh ON coh.ROWID = m4.handle_id
-      WHERE li.command IN ('/codex smoke callback', '/codex smoke app-server-callback')
+      WHERE li.command IN ('/codex smoke callback', '/codex smoke app-server-callback', '/codex smoke mcp-elicitation-callback')
         AND f.ROWID IS NOT NULL
         AND m4.is_from_me = 1
         AND m4.ROWID > f.ROWID
@@ -202,6 +203,9 @@ public func trustedGateEvidence(
               lower(COALESCE(NULLIF(m4.text, ''), CAST(m4.attributedBody AS TEXT), '')) LIKE '%success callback reply:%'
               OR lower(COALESCE(NULLIF(m4.text, ''), CAST(m4.attributedBody AS TEXT), '')) LIKE '%callback completed with%'
             ))
+          OR
+          (li.command = '/codex smoke mcp-elicitation-callback'
+            AND lower(COALESCE(NULLIF(m4.text, ''), CAST(m4.attributedBody AS TEXT), '')) LIKE '%success elicitation reply:%')
         )
     )
     ORDER BY li.inboundRowId DESC;
@@ -288,7 +292,7 @@ public func formatTrustedGateEvidence(_ evidence: [TrustedGateEvidence]) -> Stri
 
 private func commandRequiresTrustedFollowUp(_ command: String) -> Bool {
     let normalized = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    return normalized == "/codex smoke callback" || normalized == "/codex smoke app-server-callback"
+    return normalized == "/codex smoke callback" || normalized == "/codex smoke app-server-callback" || normalized == "/codex smoke mcp-elicitation-callback"
 }
 
 private func trustedSenderSQLClause(column: String, values: [String]) -> String {

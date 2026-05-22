@@ -24,7 +24,7 @@ struct CodexMsgCtlSwift {
           codexmsgctl-swift doctor [--probe-computer-use]
           codexmsgctl-swift gates
           codexmsgctl-swift trusted-gates [--recipient HANDLE] [--service iMessage|SMS]
-          codexmsgctl-swift smoke text|attachment|bridge-attach|generated-image|edit-image-check|automation|app-server|app-server-callback|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
+          codexmsgctl-swift smoke text|attachment|bridge-attach|generated-image|edit-image-check|automation|app-server|app-server-callback|mcp-elicitation-callback|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift broker start|stop|status|doctor|events|dry-run-scan
           codexmsgctl-swift reset
         """)
@@ -176,7 +176,7 @@ struct CodexMsgCtlSwift {
     private static func runSmokeCommand(_ args: [String], paths: RuntimePaths, stores: RuntimeStores) async throws {
         let subcommand = args.first ?? "help"
         if subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
-            print("Usage: codexmsgctl-swift smoke text|attachment|bridge-attach|generated-image|edit-image-check|automation|app-server|app-server-callback|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]")
+            print("Usage: codexmsgctl-swift smoke text|attachment|bridge-attach|generated-image|edit-image-check|automation|app-server|app-server-callback|mcp-elicitation-callback|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]")
             return
         }
         let config = try stores.config.load()
@@ -201,7 +201,9 @@ struct CodexMsgCtlSwift {
         case "app-server":
             try await runAppServerFinalAnswerSmoke(config: config, paths: paths, stores: stores)
         case "app-server-callback":
-            try await runAppServerCallbackSmoke(config: config, paths: paths, stores: stores)
+            try await runAppServerCallbackSmoke(config: config, paths: paths, stores: stores, elicitation: false)
+        case "mcp-elicitation-callback":
+            try await runAppServerCallbackSmoke(config: config, paths: paths, stores: stores, elicitation: true)
         case "inbound-image-check":
             try await runInboundImageCheckSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
         case "outbound-image-check":
@@ -502,8 +504,10 @@ struct CodexMsgCtlSwift {
         }
     }
 
-    private static func runAppServerCallbackSmoke(config: BridgeConfig, paths: RuntimePaths, stores: RuntimeStores) async throws {
-        let marker = "CODEXMSGCTL_SMOKE_APP_SERVER_CALLBACK_\(UUID().uuidString)"
+    private static func runAppServerCallbackSmoke(config: BridgeConfig, paths: RuntimePaths, stores: RuntimeStores, elicitation: Bool) async throws {
+        let label = elicitation ? "mcp-elicitation-callback" : "app-server-callback"
+        let markerPrefix = elicitation ? "CODEXMSGCTL_SMOKE_MCP_ELICITATION_CALLBACK" : "CODEXMSGCTL_SMOKE_APP_SERVER_CALLBACK"
+        let marker = "\(markerPrefix)_\(UUID().uuidString)"
         let answer = "cli-callback-answer-\(UUID().uuidString.prefix(8))"
         var smokeConfig = config
         smokeConfig.timeoutMs = min(config.timeoutMs, 60_000)
@@ -513,13 +517,13 @@ struct CodexMsgCtlSwift {
             return appServerCallbackSmokeResponse(method: method, params: params, answer: answer)
         }
         let request = PromptRequest(
-            promptText: bridgeAppServerCallbackSmokePrompt(marker: marker),
+            promptText: elicitation ? bridgeAppServerMcpElicitationSmokePrompt(marker: marker) : bridgeAppServerCallbackSmokePrompt(marker: marker),
             attachments: []
         )
-        print("Smoke app-server-callback marker: \(marker)")
+        print("Smoke \(label) marker: \(marker)")
         print("Callback answer: \(answer)")
         let response = try await invokeAppServerSmoke(
-            label: "app-server-callback",
+            label: label,
             marker: marker,
             request: request,
             config: smokeConfig,
@@ -533,21 +537,21 @@ struct CodexMsgCtlSwift {
         }
         guard !records.isEmpty else {
             let detail = computerUseProbeDetailWithWindowDiagnostics(response.text)
-            try recordLiveSmokeResult(stores: stores, name: "app-server-callback", marker: marker, status: "blocked", detail: detail, threadId: response.sessionId, turnId: nil)
-            throw StoreError.validation("Smoke app-server-callback failed: app-server completed without invoking an interactive callback. Response: \(detail)")
+            try recordLiveSmokeResult(stores: stores, name: label, marker: marker, status: "blocked", detail: detail, threadId: response.sessionId, turnId: nil)
+            throw StoreError.validation("Smoke \(label) failed: app-server completed without invoking an interactive callback. Response: \(detail)")
         }
         guard response.text.localizedCaseInsensitiveContains("SUCCESS") else {
             let detail = computerUseProbeDetailWithWindowDiagnostics(response.text)
-            try recordLiveSmokeResult(stores: stores, name: "app-server-callback", marker: marker, status: "failed", detail: detail, threadId: response.sessionId, turnId: nil)
-            throw StoreError.validation("Smoke app-server-callback failed: callback was handled but final answer did not report SUCCESS. Response: \(detail)")
+            try recordLiveSmokeResult(stores: stores, name: label, marker: marker, status: "failed", detail: detail, threadId: response.sessionId, turnId: nil)
+            throw StoreError.validation("Smoke \(label) failed: callback was handled but final answer did not report SUCCESS. Response: \(detail)")
         }
         guard response.text.contains(answer) else {
             let detail = "Final answer did not echo callback answer \(answer). Response: \(computerUseProbeDetailWithWindowDiagnostics(response.text))"
-            try recordLiveSmokeResult(stores: stores, name: "app-server-callback", marker: marker, status: "failed", detail: detail, threadId: response.sessionId, turnId: nil)
-            throw StoreError.validation("Smoke app-server-callback failed: final answer did not echo callback answer \(answer).")
+            try recordLiveSmokeResult(stores: stores, name: label, marker: marker, status: "failed", detail: detail, threadId: response.sessionId, turnId: nil)
+            throw StoreError.validation("Smoke \(label) failed: final answer did not echo callback answer \(answer).")
         }
-        try recordLiveSmokeResult(stores: stores, name: "app-server-callback", marker: marker, status: "passed", detail: response.text, threadId: response.sessionId, turnId: nil)
-        print("Smoke app-server-callback passed.")
+        try recordLiveSmokeResult(stores: stores, name: label, marker: marker, status: "passed", detail: response.text, threadId: response.sessionId, turnId: nil)
+        print("Smoke \(label) passed.")
     }
 
     private static func runInboundImageCheckSmoke(recipient: String, service: String, config: BridgeConfig, paths: RuntimePaths, stores: RuntimeStores) async throws {

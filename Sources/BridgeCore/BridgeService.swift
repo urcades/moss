@@ -430,7 +430,7 @@ public final class BridgeService: @unchecked Sendable {
             let evidence = try await trustedGateEvidence(config: config, recipient: recipient, service: service)
             return formatTrustedGateEvidence(evidence)
         default:
-            return "Use /codex status, /codex open, /codex history, /codex automations, /codex gates, /codex trusted-gates, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|bridge-attach|generated-image|edit-image-check|app-server-callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
+            return "Use /codex status, /codex open, /codex history, /codex automations, /codex gates, /codex trusted-gates, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|bridge-attach|generated-image|edit-image-check|app-server-callback|mcp-elicitation-callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
         }
     }
 
@@ -551,10 +551,19 @@ public final class BridgeService: @unchecked Sendable {
             }
         case "app-server-callback":
             do {
-                summary = try await startAppServerCallbackSmoke(marker: marker, message: message)
+                summary = try await startAppServerCallbackSmoke(marker: marker, message: message, elicitation: false)
             } catch {
                 summary = """
                 Smoke app-server-callback failed: \(marker)
+                Error: \(error)
+                """
+            }
+        case "mcp-elicitation-callback":
+            do {
+                summary = try await startAppServerCallbackSmoke(marker: marker, message: message, elicitation: true)
+            } catch {
+                summary = """
+                Smoke mcp-elicitation-callback failed: \(marker)
                 Error: \(error)
                 """
             }
@@ -641,7 +650,7 @@ public final class BridgeService: @unchecked Sendable {
                 summary = await runBridgeAppServerSmoke(label: subcommand, marker: marker, request: request, config: smokeConfig)
             }
         default:
-            summary = "Use /codex smoke text, attachment, bridge-attach, generated-image, edit-image-check, automation, callback, app-server-callback, app-server, inbound-image-check, outbound-image-check, chrome, browser, or computer-use."
+            summary = "Use /codex smoke text, attachment, bridge-attach, generated-image, edit-image-check, automation, callback, app-server-callback, mcp-elicitation-callback, app-server, inbound-image-check, outbound-image-check, chrome, browser, or computer-use."
         }
         recordMessagesSmokeResult(name: subcommand, marker: marker, summary: summary)
         _ = try await sink.sendReply(recipient: message.handleId, service: message.service, text: summary)
@@ -751,16 +760,17 @@ public final class BridgeService: @unchecked Sendable {
         """
     }
 
-    private func startAppServerCallbackSmoke(marker: String, message: MessageItem) async throws -> String {
+    private func startAppServerCallbackSmoke(marker: String, message: MessageItem, elicitation: Bool) async throws -> String {
+        let label = elicitation ? "mcp-elicitation-callback" : "app-server-callback"
         if let callback = state.pendingInteractiveCallback, callback.status == "pending" {
             return """
-            Smoke app-server-callback skipped: \(marker)
+            Smoke \(label) skipped: \(marker)
             Pending callback: \(callback.callbackId)
             Send a reply for the existing callback or /cancel first.
             """
         }
         guard state.activeJob == nil else {
-            return "Smoke app-server-callback skipped: \(marker)\nA Codex job is already active. Send /codex status or /cancel first."
+            return "Smoke \(label) skipped: \(marker)\nA Codex job is already active. Send /codex status or /cancel first."
         }
         let startedAt = now()
         let batch = PendingBatch(
@@ -771,8 +781,8 @@ public final class BridgeService: @unchecked Sendable {
             items: [
                 MessageItem(
                     rowId: message.rowId,
-                    guid: "\(message.guid)-app-server-callback-smoke",
-                    text: bridgeAppServerCallbackSmokePrompt(marker: marker),
+                    guid: "\(message.guid)-\(label)-smoke",
+                    text: elicitation ? bridgeAppServerMcpElicitationSmokePrompt(marker: marker) : bridgeAppServerCallbackSmokePrompt(marker: marker),
                     handleId: message.handleId,
                     service: message.service,
                     receivedAt: message.receivedAt,
@@ -782,7 +792,7 @@ public final class BridgeService: @unchecked Sendable {
         )
         try await startPromptBatch(batch)
         return """
-        Smoke app-server-callback started: \(marker)
+        Smoke \(label) started: \(marker)
         Wait for Codex to ask for input, then reply here with any short text. Success requires the original app-server turn to complete after that reply.
         """
     }
@@ -1083,7 +1093,8 @@ public final class BridgeService: @unchecked Sendable {
             /codex smoke edit-image-check - ask Codex to edit the latest chat image and BRIDGE_ATTACH the result
             /codex smoke automation - create a paused marked automation and route
             /codex smoke callback - create a pending callback and verify the next reply is routed to it
-            /codex smoke app-server-callback - start a real app-server callback turn and reply to finish it
+            /codex smoke app-server-callback - start a real app-server requestUserInput callback turn and reply to finish it
+            /codex smoke mcp-elicitation-callback - start a real app-server MCP elicitation callback turn and reply to finish it
             /codex smoke app-server - verify a normal app-server turn returns a final marked reply
             /codex smoke inbound-image-check - verify the latest trusted inbound image reaches app-server
             /codex smoke outbound-image-check - send an image, then verify "that image" reaches app-server
@@ -2050,6 +2061,7 @@ private let supportedBridgeCodexSmokeSubcommands: Set<String> = [
     "automation",
     "callback",
     "app-server-callback",
+    "mcp-elicitation-callback",
     "app-server",
     "inbound-image-check",
     "outbound-image-check",
@@ -2070,6 +2082,15 @@ public func bridgeAppServerCallbackSmokePrompt(marker: String) -> String {
     Before giving a final answer, call the app-server interactive user input/requestUserInput facility and ask the user to reply with any short text for marker \(marker).
     After the user responds through that callback, reply only with \(marker) SUCCESS callback reply: <the user's reply>.
     If you cannot call the interactive user input/requestUserInput facility, reply only with \(marker) BLOCKED <exact blocker text>.
+    """
+}
+
+public func bridgeAppServerMcpElicitationSmokePrompt(marker: String) -> String {
+    """
+    This is an Apple Messages bridge MCP elicitation smoke test.
+    Before giving a final answer, call an MCP elicitation/request facility and ask the user to reply with any short text for marker \(marker).
+    After the user responds through that elicitation callback, reply only with \(marker) SUCCESS elicitation reply: <the user's reply>.
+    If you cannot call an MCP elicitation/request facility, reply only with \(marker) BLOCKED <exact blocker text>.
     """
 }
 

@@ -18,7 +18,7 @@ Success: trusted-chat commands can prove `/codex status` and every `/codex smoke
 
 Evidence:
 - `/codex status` from the trusted chat agrees with `codexmsgctl-swift status`.
-- Trusted-chat `/codex smoke app-server`, `app-server-callback`, `generated-image`, `edit-image-check`, `text`, `attachment`, `automation`, `callback`, `inbound-image-check`, `outbound-image-check`, `chrome`, `browser`, and `computer-use` have observed inbound rows and outgoing reply evidence.
+- Trusted-chat `/codex smoke app-server`, `app-server-callback`, `mcp-elicitation-callback`, `generated-image`, `edit-image-check`, `text`, `attachment`, `automation`, `callback`, `inbound-image-check`, `outbound-image-check`, `chrome`, `browser`, and `computer-use` have observed inbound rows and outgoing reply evidence.
 - `codexmsgctl-swift trusted-gates` reports each trusted command as `observed`, `missing-inbound`, `missing-outbound`, `outbound-error-*`, `awaiting-followup`, or `awaiting-completion` from Messages DB evidence.
 
 Current status: in progress and partly externally gated, because true trusted inbound rows must come from Apple Messages rather than this process sending `is_from_me=1` rows. `codexmsgctl-swift trusted-gates` and `/codex trusted-gates` now observe real inbound/outbound row evidence without sending messages, and two-step callback gates remain pending until the trusted follow-up reply and final completion reply are both visible.
@@ -30,7 +30,9 @@ Success: a real app-server-generated `item/tool/requestUserInput` or `mcpServer/
 Evidence:
 - Fake-runtime callback tests pass.
 - `/codex smoke app-server-callback` starts a real app-server callback turn from Messages and expects the next trusted reply to complete that original turn.
+- `/codex smoke mcp-elicitation-callback` starts a real app-server MCP elicitation turn from Messages and expects the next trusted reply to complete that original turn.
 - `codexmsgctl-swift smoke app-server-callback` starts a real app-server callback turn locally with an automatic responder; on 2026-05-22 it failed before bridge callback handling because Codex returned `BLOCKED request_user_input is unavailable in Default mode` without emitting a callback request.
+- `codexmsgctl-swift smoke mcp-elicitation-callback` starts a separate real app-server MCP elicitation prompt locally with the same automatic responder and records its live blocker independently.
 - A live installed-helper smoke records callback id, inbound prompt row, trusted reply row/guid, app-server thread/turn id, and final answer.
 
 Current status: deterministic support exists and the CLI/trusted-chat commands exist; live real-callback proof is blocked by Codex runtime mode/callback availability, not by the bridge responder seam.

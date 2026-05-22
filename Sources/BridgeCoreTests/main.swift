@@ -37,6 +37,7 @@ struct BridgeCoreFocusedTests {
         try await testCodexTrustedGatesCommandRepliesWithEvidence()
         try await testCodexSmokeCallbackCapturesNextReplyAndClearsState()
         try await testCodexSmokeAppServerCallbackStartsDefaultBackendTurn()
+        try await testCodexSmokeMcpElicitationCallbackStartsDefaultBackendTurn()
         try testInboundImageSmokeBuildsLocalImageRequest()
         try testOutboundImageSmokeBuildsLocalImageRequest()
         try testImageEditSmokeBuildsPreviousImageRequest()
@@ -143,6 +144,7 @@ struct BridgeCoreFocusedTests {
         try expect(bridgeLocalCommandName("/codex smoke automation") == "/codex", "codex automation smoke command")
         try expect(bridgeLocalCommandName("/codex smoke callback") == "/codex", "codex callback smoke command")
         try expect(bridgeLocalCommandName("/codex smoke app-server-callback") == "/codex", "codex app-server callback smoke command")
+        try expect(bridgeLocalCommandName("/codex smoke mcp-elicitation-callback") == "/codex", "codex MCP elicitation callback smoke command")
         try expect(bridgeLocalCommandName("/codex smoke app-server") == "/codex", "codex app-server smoke command")
         try expect(bridgeLocalCommandName("/codex smoke inbound-image-check") == "/codex", "codex inbound image smoke command")
         try expect(bridgeLocalCommandName("/codex smoke outbound-image-check") == "/codex", "codex outbound image smoke command")
@@ -952,6 +954,53 @@ struct BridgeCoreFocusedTests {
         try expect(smokeResult?.detail.contains("SUCCESS callback reply: violet") == true, "app-server callback smoke persists final callback reply")
     }
 
+    private static func testCodexSmokeMcpElicitationCallbackStartsDefaultBackendTurn() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        config.timeoutMs = 5_000
+        try stores.config.save(config)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 1, guid: "guid-smoke-mcp-elicitation", text: "/codex smoke mcp-elicitation-callback", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in FakeProgressCodexBackend(events: [], response: "should not run") },
+            makeDefaultCodex: { _, responder in ResponderCodexBackend(responder: responder) },
+            useDefaultCodexBackend: true,
+            now: Date.init
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        var replies = try await waitForReplies(sink, count: 2)
+        try expect(replies.contains { $0.text.contains("Smoke mcp-elicitation-callback started: CODEX_BRIDGE_SMOKE_MCP-ELICITATION-CALLBACK_") }, "MCP elicitation smoke reports started marker")
+        try expect(replies.contains { $0.text.contains("Codex needs your input to continue:") }, "MCP elicitation smoke sends real callback prompt")
+        var state = try stores.state.load()
+        try expect(state.pendingInteractiveCallback?.method == "mcpServer/elicitation/request", "MCP elicitation smoke persists elicitation callback")
+        try expect(state.activeJob?.status == "waitingForUser", "MCP elicitation smoke leaves active job waiting for user")
+
+        source.append(MessageItem(rowId: 2, guid: "guid-smoke-mcp-elicitation-answer", text: "orange", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:01.000Z", attachments: []))
+        try await service.tick()
+        replies = try await waitForReplies(sink, count: 4)
+        try expect(replies.contains { $0.text == "Got it. I captured that reply for the pending Codex prompt." }, "MCP elicitation answer is acknowledged")
+        try expect(replies.contains { $0.text.contains("SUCCESS elicitation reply: orange") }, "MCP elicitation smoke completes original turn")
+        state = try await waitForState(stores, timeout: 3) { state in
+            state.pendingInteractiveCallback == nil && state.activeJob == nil
+        }
+        let smokeResult = state.liveSmokeResults?.first { $0.name == "messages-mcp-elicitation-callback" }
+        try expect(smokeResult?.status == "passed", "MCP elicitation smoke persists final pass status")
+        try expect(smokeResult?.threadId == "thread-callback", "MCP elicitation smoke persists thread id")
+        try expect(smokeResult?.turnId == "turn-callback", "MCP elicitation smoke persists turn id")
+        try expect(smokeResult?.detail.contains("SUCCESS elicitation reply: orange") == true, "MCP elicitation smoke persists final reply")
+    }
+
     private static func testInboundImageSmokeBuildsLocalImageRequest() throws {
         let imagePath = NSTemporaryDirectory() + "/bridge-inbound-smoke-source.png"
         FileManager.default.createFile(atPath: imagePath, contents: Data("image".utf8), attributes: nil)
@@ -1048,6 +1097,9 @@ struct BridgeCoreFocusedTests {
         let prompt = bridgeAppServerCallbackSmokePrompt(marker: "CALLBACK_MARKER")
         try expect(prompt.contains("CALLBACK_MARKER"), "app-server callback smoke prompt includes marker")
         try expect(prompt.contains("requestUserInput"), "app-server callback smoke prompt asks for requestUserInput")
+        let mcpPrompt = bridgeAppServerMcpElicitationSmokePrompt(marker: "MCP_MARKER")
+        try expect(mcpPrompt.contains("MCP_MARKER"), "MCP elicitation smoke prompt includes marker")
+        try expect(mcpPrompt.contains("MCP elicitation"), "MCP elicitation smoke prompt asks for MCP elicitation")
     }
 
     private static func testInboundImageSmokeRequiresTrustedInboundImage() throws {
@@ -3141,11 +3193,13 @@ struct BridgeCoreFocusedTests {
         try expect(text.contains("swift run codexmsgctl-swift smoke generated-image --recipient +1 --service iMessage"), "gate checklist includes CLI generated image smoke")
         try expect(text.contains("swift run codexmsgctl-swift smoke edit-image-check --recipient +1 --service iMessage"), "gate checklist includes CLI edit image smoke")
         try expect(text.contains("swift run codexmsgctl-swift smoke app-server-callback"), "gate checklist includes CLI app-server callback smoke")
+        try expect(text.contains("swift run codexmsgctl-swift smoke mcp-elicitation-callback"), "gate checklist includes CLI MCP elicitation callback smoke")
         try expect(text.contains("/codex smoke generated-image"), "gate checklist includes generated image smoke")
         try expect(text.contains("/codex smoke edit-image-check"), "gate checklist includes trusted edit image smoke")
         try expect(text.contains("Trusted evidence observer:"), "gate checklist separates trusted evidence observer")
         try expect(text.contains("/codex smoke callback, then reply with any short text"), "gate checklist includes two-step trusted callback smoke")
         try expect(text.contains("/codex smoke app-server-callback, then reply to the app-server prompt"), "gate checklist includes real app-server callback smoke")
+        try expect(text.contains("/codex smoke mcp-elicitation-callback, then reply to the MCP elicitation prompt"), "gate checklist includes real MCP elicitation callback smoke")
         try expect(text.contains("needs trusted inbound image first"), "gate checklist reports inbound image readiness")
         try expect(text.contains("will create a marked outbound image"), "gate checklist reports outbound image readiness")
     }
@@ -3707,10 +3761,11 @@ private final class ResponderCodexBackend: CodexBackend, @unchecked Sendable {
         }
         onEvent?(.sessionStarted("thread-callback"))
         onEvent?(.turnStarted("turn-callback"))
-        let reply = try responder(
-            "item/tool/requestUserInput",
-            80,
-            [
+        let isElicitationSmoke = request.promptText.contains("MCP elicitation smoke test")
+        let method = isElicitationSmoke ? "mcpServer/elicitation/request" : "item/tool/requestUserInput"
+        let params: [String: Any] = isElicitationSmoke
+            ? ["message": "Confirm MCP elicitation answer"]
+            : [
                 "questions": [
                     [
                         "id": "choice",
@@ -3719,16 +3774,28 @@ private final class ResponderCodexBackend: CodexBackend, @unchecked Sendable {
                     ]
                 ]
             ]
-        )
-        let result = reply["result"] as? [String: Any]
-        let answers = result?["answers"] as? [String: Any]
-        let choice = answers?["choice"] as? [String: Any]
-        let values = choice?["answers"] as? [String]
-        let answer = values?.first ?? ""
-        let marker = request.promptText.components(separatedBy: .whitespacesAndNewlines)
+        let reply = try responder(method, 80, params)
+        let answer: String
+        if isElicitationSmoke {
+            let result = reply["result"] as? [String: Any]
+            let content = result?["content"] as? [String: Any]
+            answer = content?["response"] as? String ?? ""
+        } else {
+            let result = reply["result"] as? [String: Any]
+            let answers = result?["answers"] as? [String: Any]
+            let choice = answers?["choice"] as? [String: Any]
+            let values = choice?["answers"] as? [String]
+            answer = values?.first ?? ""
+        }
+        let appServerMarker = request.promptText.components(separatedBy: .whitespacesAndNewlines)
             .first { $0.hasPrefix("CODEX_BRIDGE_SMOKE_APP-SERVER-CALLBACK_") }?
             .trimmingCharacters(in: CharacterSet(charactersIn: ".,:;"))
-        let text = marker.map { "\($0) SUCCESS callback reply: \(answer)" } ?? "Callback completed with \(answer)."
+        let mcpMarker = request.promptText.components(separatedBy: .whitespacesAndNewlines)
+            .first { $0.hasPrefix("CODEX_BRIDGE_SMOKE_MCP-ELICITATION-CALLBACK_") }?
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".,:;"))
+        let text = mcpMarker.map { "\($0) SUCCESS elicitation reply: \(answer)" }
+            ?? appServerMarker.map { "\($0) SUCCESS callback reply: \(answer)" }
+            ?? "Callback completed with \(answer)."
         return CodexResponse(
             text: text,
             sessionId: "thread-callback",
