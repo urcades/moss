@@ -429,8 +429,17 @@ public final class BridgeService: @unchecked Sendable {
             }
         case "/codex automations":
             return codexAutomationRoutesText()
+        case "/codex gates":
+            return bridgeGateChecklistText(context: BridgeGateChecklistContext(
+                allowedSender: config.allowedSender,
+                service: "iMessage",
+                hasActiveJob: state.activeJob != nil,
+                hasPendingInteractiveCallback: state.pendingInteractiveCallback != nil,
+                hasRecentInboundImage: hasUsableRecentMedia(direction: "inbound", recipient: config.allowedSender, service: "iMessage"),
+                hasRecentOutboundImage: hasUsableRecentMedia(direction: "outbound", recipient: config.allowedSender, service: "iMessage")
+            ))
         default:
-            return "Use /codex status, /codex open, /codex history, /codex automations, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
+            return "Use /codex status, /codex open, /codex history, /codex automations, /codex gates, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
         }
     }
 
@@ -865,6 +874,7 @@ public final class BridgeService: @unchecked Sendable {
             /codex open - open the active Codex thread in Codex.app
             /codex history - summarize recent app-server thread history
             /codex automations - list Codex automation result routes bridged to Messages
+            /codex gates - list remaining bridge gates and exact smoke commands
             /codex retry-last-send - retry the last retryable outbound text or attachment
             /codex smoke text - send a marked text probe and report delivery evidence
             /codex smoke attachment - send a marked image probe and report delivery evidence
@@ -1328,6 +1338,18 @@ public final class BridgeService: @unchecked Sendable {
         return imageExtensions.contains(URL(fileURLWithPath: path).pathExtension.lowercased()) ? "image" : nil
     }
 
+    private func hasUsableRecentMedia(direction: String, recipient: String, service: String) -> Bool {
+        state.recentMediaRefs?.contains(where: { ref in
+            ref.direction == direction &&
+                ref.handleId == recipient &&
+                ref.service == service &&
+                ref.kind == "image" &&
+                ref.exists &&
+                appServerSupportedLocalImagePath(ref.path) &&
+                FileManager.default.fileExists(atPath: ref.path)
+        }) == true
+    }
+
     private func shouldAttemptPermissionRecovery(_ error: CodexBackendFailure, config: BridgeConfig, attempts: Int) -> Bool {
         let broker = config.effectivePermissionBroker
         guard broker.enabled, attempts < broker.maxRecoveryAttempts else { return false }
@@ -1638,7 +1660,7 @@ private enum Job {
 
 public func bridgeLocalCommandName(_ text: String) -> String? {
     let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    if ["/codex status", "/codex open", "/codex history", "/codex automations", "/codex retry-last-send"].contains(normalized) || isCodexSmokeCommand(normalized) {
+    if ["/codex status", "/codex open", "/codex history", "/codex automations", "/codex gates", "/codex retry-last-send"].contains(normalized) || isCodexSmokeCommand(normalized) {
         return "/codex"
     }
     let command = normalized.split(separator: " ").first.map(String.init)

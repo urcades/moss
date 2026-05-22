@@ -26,6 +26,7 @@ struct BridgeCoreFocusedTests {
         try await testCodexSmokeAttachmentCommandSendsProbeAndSummary()
         try await testCodexSmokeAppServerCommandRunsFinalAnswerProbe()
         try await testCodexSmokeCapabilityCommandRunsAppServerProbe()
+        try await testCodexGatesCommandRepliesWithChecklist()
         try await testCodexSmokeCallbackCapturesNextReplyAndClearsState()
         try testInboundImageSmokeBuildsLocalImageRequest()
         try testOutboundImageSmokeBuildsLocalImageRequest()
@@ -102,6 +103,7 @@ struct BridgeCoreFocusedTests {
         try expect(bridgeLocalCommandName("  /codex open  ") == "/codex", "exact codex open command")
         try expect(bridgeLocalCommandName("/codex history") == "/codex", "exact codex history command")
         try expect(bridgeLocalCommandName("/codex automations") == "/codex", "exact codex automations command")
+        try expect(bridgeLocalCommandName("/codex gates") == "/codex", "exact codex gates command")
         try expect(bridgeLocalCommandName("/codex retry-last-send") == "/codex", "exact codex retry command")
         try expect(bridgeLocalCommandName("/codex smoke text") == "/codex", "codex text smoke command")
         try expect(bridgeLocalCommandName("/codex smoke attachment") == "/codex", "codex attachment smoke command")
@@ -459,6 +461,37 @@ struct BridgeCoreFocusedTests {
         try expect(replies.first?.text.contains("Smoke app-server passed: CODEX_BRIDGE_SMOKE_APP-SERVER_") == true, "codex smoke app-server reports marker")
         try expect(replies.first?.text.contains("Thread id: thread-smoke") == true, "codex smoke app-server reports thread id")
         try expect(request?.promptText.contains("Do not call tools") == true, "codex smoke app-server asks for a no-tool final answer")
+    }
+
+    private static func testCodexGatesCommandRepliesWithChecklist() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.allowedSender = "+1"
+        config.batchWindowMs = 1
+        try stores.config.save(config)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 1, guid: "guid-codex-gates", text: "/codex gates", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in FakeProgressCodexBackend(events: [], response: "should not run") },
+            now: { Date(timeIntervalSince1970: 1_777_777_777) }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        let replies = await sink.repliesSnapshot()
+
+        try expect(replies.count == 1, "codex gates sends one checklist reply")
+        try expect(replies.first?.text.contains("Apple Messages Bridge gate checklist") == true, "codex gates reply has checklist header")
+        try expect(replies.first?.text.contains("/codex smoke callback, then reply with any short text") == true, "codex gates reply includes trusted callback instructions")
+        try expect(replies.first?.text.contains("swift run codexmsgctl-swift smoke outbound-image-check --recipient +1 --service iMessage") == true, "codex gates reply includes CLI outbound image command")
     }
 
     private static func testCodexSmokeOutboundImageCheckSendsProbeAndBuildsFollowUp() async throws {

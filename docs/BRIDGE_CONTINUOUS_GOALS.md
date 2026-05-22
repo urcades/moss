@@ -10,7 +10,7 @@ Evidence:
 - Command output shows pass/fail for each local gate with marker ids, row ids, thread ids, turn ids, or blocker text where applicable.
 - Gate docs record the latest live evidence.
 
-Current status: in progress. Individual commands exist, and `codexmsgctl-swift gates` now prints the complete deterministic, live CLI, and trusted Messages gate checklist with current readiness hints.
+Current status: in progress. Individual commands exist, `codexmsgctl-swift gates` prints the complete deterministic, live CLI, and trusted Messages gate checklist with current readiness hints, and `/codex gates` exposes the same checklist from Apple Messages.
 
 ## Goal B: Trusted Messages Gate Harness
 
