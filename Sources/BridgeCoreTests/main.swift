@@ -30,6 +30,7 @@ struct BridgeCoreFocusedTests {
         try await testCodexSmokeBridgeAttachCommandUsesDirectiveHandoff()
         try await testCodexSmokeGeneratedImageStartsAppServerAndAttachesResult()
         try await testCodexSmokeEditImageCheckUsesPreviousImageAndAttachesResult()
+        try await testPreviousImageFollowUpConvertsUnsupportedLatestImage()
         try await testCodexSmokeAppServerCommandRunsFinalAnswerProbe()
         try await testCodexSmokeCapabilityCommandRunsAppServerProbe()
         try await testCodexGatesCommandRepliesWithChecklist()
@@ -620,6 +621,59 @@ struct BridgeCoreFocusedTests {
         }
         try expect(attachmentIndex < textIndex, "edit-image smoke sends attachment before summary text")
         try expect(reloaded.recentMediaRefs?.contains(where: { $0.direction == "outbound" && $0.path == attachments.first?.filePath }) == true, "edit-image smoke records edited outbound media ref")
+    }
+
+    private static func testPreviousImageFollowUpConvertsUnsupportedLatestImage() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        let olderPng = paths.tmpDir.appendingPathComponent("older-source.png")
+        let latestBmp = paths.tmpDir.appendingPathComponent("latest-source.bmp")
+        try bridgeSmokePNGData().write(to: olderPng)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sips")
+        process.arguments = ["-s", "format", "bmp", olderPng.path, "--out", latestBmp.path]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+        try expect(process.terminationStatus == 0, "sips creates unsupported BMP fixture")
+
+        var state = defaultBridgeState()
+        state.recentMediaRefs = [
+            RecentMediaRef(direction: "inbound", rowId: 10, handleId: "+1", service: "iMessage", path: olderPng.path, transferName: "older-source.png", kind: "image", createdAt: "2026-01-01T00:00:00.000Z", exists: true),
+            RecentMediaRef(direction: "inbound", rowId: 11, handleId: "+1", service: "iMessage", path: latestBmp.path, transferName: "latest-source.bmp", kind: "image", createdAt: "2026-01-01T00:00:01.000Z", exists: true)
+        ]
+        try stores.state.save(state)
+
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        try stores.config.save(config)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 12, guid: "guid-edit-latest-bmp", text: "Modify that image to add a label.", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:02.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let backend = CapturingCodexBackend(response: "converted latest image")
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in backend },
+            now: { Date(timeIntervalSince1970: 1_777_777_777) }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        _ = try await waitForState(stores, timeout: 3) { $0.activeJob == nil }
+        let request = await backend.requestSnapshot()
+        let reloaded = try stores.state.load()
+        let attached = request?.attachments.first?.absolutePath
+
+        try expect(attached != nil, "converted previous-image follow-up attaches an image")
+        try expect(attached != olderPng.path, "converted previous-image follow-up does not fall back to older supported image")
+        try expect(attached?.hasSuffix(".jpg") == true, "converted previous-image follow-up attaches JPEG conversion")
+        try expect(reloaded.recentMediaRefs?.contains(where: { $0.rowId == 11 && $0.path == attached }) == true, "converted previous-image follow-up records converted media ref")
     }
 
     private static func testCodexSmokeCapabilityCommandRunsAppServerProbe() async throws {

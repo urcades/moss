@@ -1105,6 +1105,7 @@ public final class BridgeService: @unchecked Sendable {
     private func startPromptBatch(_ batch: PendingBatch) async throws {
         let config = try stores.config.load()
         let replySink = makeReplySink(config)
+        try await recoverPreviousImageReferenceIfNeeded(for: batch)
         if shouldAskForMissingSourceImage(batch) {
             try await sendReplyRecording(
                 replySink,
@@ -1535,6 +1536,39 @@ public final class BridgeService: @unchecked Sendable {
         let text = batch.items.map(\.text).joined(separator: "\n")
         guard promptReferencesPreviousImage(text) else { return false }
         return latestUsableImageRef(for: batch.handleId, service: batch.service, recentMediaRefs: state.recentMediaRefs ?? []) == nil
+    }
+
+    private func recoverPreviousImageReferenceIfNeeded(for batch: PendingBatch) async throws {
+        guard batch.items.allSatisfy({ $0.attachments.isEmpty }) else { return }
+        let text = batch.items.map(\.text).joined(separator: "\n")
+        guard promptReferencesPreviousImage(text) else { return }
+        guard let latest = latestExistingImageRef(for: batch.handleId, service: batch.service) else { return }
+        if appServerSupportedLocalImagePath(latest.path) {
+            return
+        }
+        guard let convertedPath = try await appServerCompatibleImagePath(latest.path) else { return }
+        appendRecentMediaRef(RecentMediaRef(
+            direction: latest.direction,
+            rowId: latest.rowId,
+            handleId: latest.handleId,
+            service: latest.service,
+            path: convertedPath,
+            transferName: URL(fileURLWithPath: convertedPath).lastPathComponent,
+            kind: latest.kind,
+            createdAt: DateCodec.iso(now()),
+            exists: FileManager.default.fileExists(atPath: convertedPath)
+        ))
+        state = try stores.state.load()
+    }
+
+    private func latestExistingImageRef(for handleId: String, service: String) -> RecentMediaRef? {
+        state.recentMediaRefs?.reversed().first { ref in
+            ref.handleId == handleId &&
+                ref.service == service &&
+                ref.kind == "image" &&
+                ref.exists &&
+                FileManager.default.fileExists(atPath: ref.path)
+        }
     }
 
     private func imageKindForPath(_ path: String) -> String? {
