@@ -32,6 +32,8 @@ Success means follow-up prompts like "modify that image" use a real previous cha
 - Current status:
   - `codexmsgctl-swift status` and `/codex status` now expose the recent media registry.
   - State saves now merge `recentMediaRefs` so unrelated helper/CLI saves cannot erase the image registry used by "that image" follow-ups.
+  - `swift run codexmsgctl-swift smoke inbound-image-check` now validates the current recent inbound image registry, builds a "that image" follow-up, verifies the local image is attached to the app-server request, and then runs a marked app-server probe.
+  - Current live precondition result: no usable recent inbound image is registered yet for the trusted chat, so the smoke fails visibly and tells the operator to send a trusted image first.
 
 ## Goal 3: Automation Truth
 
@@ -102,6 +104,7 @@ Before this workstream is complete, the installed helper must satisfy:
 - `swift run codexmsgctl-swift doctor --probe-computer-use`
 - `swift run codexmsgctl-swift smoke text`
 - `swift run codexmsgctl-swift smoke attachment`
+- `swift run codexmsgctl-swift smoke inbound-image-check`
 - `/codex status` from the trusted Messages chat
 - A live inbound-image follow-up edit probe
 - A live automation creation/list/delivery probe

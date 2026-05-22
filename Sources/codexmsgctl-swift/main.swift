@@ -22,7 +22,7 @@ struct CodexMsgCtlSwift {
           codexmsgctl-swift configure --safety standard|permissive|preserve
           codexmsgctl-swift configure --preserve-safety
           codexmsgctl-swift doctor [--probe-computer-use]
-          codexmsgctl-swift smoke text|attachment|automation|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
+          codexmsgctl-swift smoke text|attachment|automation|inbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift broker start|stop|status|doctor|events|dry-run-scan
           codexmsgctl-swift reset
         """)
@@ -152,7 +152,7 @@ struct CodexMsgCtlSwift {
     private static func runSmokeCommand(_ args: [String], paths: RuntimePaths, stores: RuntimeStores) async throws {
         let subcommand = args.first ?? "help"
         if subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
-            print("Usage: codexmsgctl-swift smoke text|attachment|automation|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]")
+            print("Usage: codexmsgctl-swift smoke text|attachment|automation|inbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]")
             return
         }
         let config = try stores.config.load()
@@ -168,6 +168,8 @@ struct CodexMsgCtlSwift {
             try await runAttachmentSmoke(recipient: recipient, service: service, config: config, paths: paths)
         case "automation":
             try runAutomationSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
+        case "inbound-image-check":
+            try await runInboundImageCheckSmoke(recipient: recipient, service: service, config: config, paths: paths, stores: stores)
         case "chrome", "browser", "computer-use":
             try await runCapabilitySmoke(subcommand, config: config, paths: paths)
         default:
@@ -257,15 +259,35 @@ struct CodexMsgCtlSwift {
         print("Smoke automation passed.")
     }
 
+    private static func runInboundImageCheckSmoke(recipient: String, service: String, config: BridgeConfig, paths: RuntimePaths, stores: RuntimeStores) async throws {
+        let state = try stores.state.load()
+        let smoke = try buildInboundImageSmokeRequest(recipient: recipient, service: service, recentMediaRefs: state.recentMediaRefs ?? [])
+        print("Smoke inbound-image-check marker: \(smoke.marker)")
+        print("Inbound image row: \(smoke.mediaRef.rowId.map(String.init) ?? "none")")
+        print("Inbound image path: \(smoke.mediaRef.path)")
+        print("Inbound image transfer name: \(smoke.mediaRef.transferName ?? "unknown")")
+        try await runAppServerMarkerSmoke(
+            label: "inbound-image-check",
+            marker: smoke.marker,
+            request: smoke.request,
+            config: config,
+            paths: paths
+        )
+    }
+
     private static func runCapabilitySmoke(_ capability: String, config: BridgeConfig, paths: RuntimePaths) async throws {
         let marker = "CODEXMSGCTL_SMOKE_\(capability.replacingOccurrences(of: "-", with: "_").uppercased())_\(UUID().uuidString)"
         var smokeConfig = config
         smokeConfig.timeoutMs = min(config.timeoutMs, 60_000)
         let request = PromptRequest(promptText: capabilitySmokePrompt(capability: capability, marker: marker), attachments: [])
-        let events = CapabilitySmokeEvents()
         print("Smoke \(capability) marker: \(marker)")
+        try await runAppServerMarkerSmoke(label: capability, marker: marker, request: request, config: smokeConfig, paths: paths)
+    }
+
+    private static func runAppServerMarkerSmoke(label: String, marker: String, request: PromptRequest, config: BridgeConfig, paths: RuntimePaths) async throws {
+        let events = CapabilitySmokeEvents()
         do {
-            let response = try await CodexAppServerBackend(config: smokeConfig, paths: paths).invoke(request, sessionId: nil) { event in
+            let response = try await CodexAppServerBackend(config: config, paths: paths).invoke(request, sessionId: nil) { event in
                 switch event {
                 case .processStarted(let pid):
                     events.setProcessPid(pid)
@@ -291,16 +313,16 @@ struct CodexMsgCtlSwift {
             print("Thread id: \(response.sessionId ?? events.threadId() ?? "none")")
             print("Turn id: \(events.turnId() ?? "none")")
             guard response.text.contains(marker) else {
-                throw StoreError.validation("Smoke \(capability) failed: response did not contain marker \(marker).")
+                throw StoreError.validation("Smoke \(label) failed: response did not contain marker \(marker).")
             }
-            print("Smoke \(capability) passed.")
+            print("Smoke \(label) passed.")
         } catch let error as CodexBackendFailure {
             if let processPid = events.processPid() {
                 _ = terminateProcessTree(rootPid: processPid)
             }
             let detail = error.blockedText ?? error.message
-            print("Smoke \(capability) blocker/failure: \(detail)")
-            throw StoreError.validation("Smoke \(capability) failed: \(detail)")
+            print("Smoke \(label) blocker/failure: \(detail)")
+            throw StoreError.validation("Smoke \(label) failed: \(detail)")
         } catch {
             if let processPid = events.processPid() {
                 _ = terminateProcessTree(rootPid: processPid)

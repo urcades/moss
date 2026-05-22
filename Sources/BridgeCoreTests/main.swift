@@ -20,6 +20,8 @@ struct BridgeCoreFocusedTests {
         try testPromptBatchPreservesPluginIntentAndOrder()
         try testPreviousImageReferenceAddsRecentImage()
         try await testMissingPreviousImageReferenceAsksForSource()
+        try testInboundImageSmokeBuildsLocalImageRequest()
+        try testInboundImageSmokeRequiresTrustedInboundImage()
         try testDiagnosticMentionOfDailyBriefingDoesNotCreateAutomation()
         try testCodexAutomationCreationWritesAppAutomationToml()
         try testCodexAutomationSmokeCreatesRouteAndStatus()
@@ -180,6 +182,42 @@ struct BridgeCoreFocusedTests {
         try await service.tick()
         let replies = await sink.repliesSnapshot()
         try expect(replies.map(\.text) == ["Please send the image you want me to modify, then tell me the edit you want."], "missing image follow-up asks for source")
+    }
+
+    private static func testInboundImageSmokeBuildsLocalImageRequest() throws {
+        let imagePath = NSTemporaryDirectory() + "/bridge-inbound-smoke-source.png"
+        FileManager.default.createFile(atPath: imagePath, contents: Data("image".utf8), attributes: nil)
+        let olderOutbound = RecentMediaRef(direction: "outbound", rowId: 20, handleId: "+1", service: "iMessage", path: imagePath, transferName: "outbound.png", kind: "image", createdAt: "2026-05-20T09:00:00.000Z", exists: true)
+        let inbound = RecentMediaRef(direction: "inbound", rowId: 21, handleId: "+1", service: "iMessage", path: imagePath, transferName: "source.png", kind: "image", createdAt: "2026-05-20T10:00:00.000Z", exists: true)
+
+        let smoke = try buildInboundImageSmokeRequest(
+            recipient: "+1",
+            service: "iMessage",
+            recentMediaRefs: [olderOutbound, inbound],
+            now: Date(timeIntervalSince1970: 1_778_640_000),
+            marker: "CODEXMSGCTL_SMOKE_INBOUND_IMAGE_TEST"
+        )
+
+        try expect(smoke.mediaRef == inbound, "inbound image smoke chooses recent trusted inbound image")
+        try expect(smoke.request.attachments.count == 1, "inbound image smoke attaches exactly one image")
+        try expect(smoke.request.attachments.first?.absolutePath == imagePath, "inbound image smoke passes local image path")
+        try expect(smoke.request.promptText.contains("Bridge media context:"), "inbound image smoke uses previous-image bridge context")
+    }
+
+    private static func testInboundImageSmokeRequiresTrustedInboundImage() throws {
+        do {
+            _ = try buildInboundImageSmokeRequest(
+                recipient: "+1",
+                service: "iMessage",
+                recentMediaRefs: [
+                    RecentMediaRef(direction: "outbound", rowId: 20, handleId: "+1", service: "iMessage", path: "/tmp/missing.png", transferName: "missing.png", kind: "image", createdAt: "2026-05-20T09:00:00.000Z", exists: true)
+                ],
+                marker: "CODEXMSGCTL_SMOKE_INBOUND_IMAGE_TEST"
+            )
+            throw TestFailure(description: "Expected inbound image smoke precondition failure")
+        } catch StoreError.validation(let message) {
+            try expect(message.contains("no usable recent inbound image"), "inbound image smoke explains missing inbound image")
+        }
     }
 
     private static func testDiagnosticMentionOfDailyBriefingDoesNotCreateAutomation() throws {
