@@ -3215,7 +3215,18 @@ struct BridgeCoreFocusedTests {
             hasActiveJob: false,
             hasPendingInteractiveCallback: false,
             hasRecentInboundImage: false,
-            hasRecentOutboundImage: false
+            hasRecentOutboundImage: false,
+            liveSmokeResults: [
+                LiveSmokeResult(
+                    name: "mcp-elicitation-callback",
+                    marker: "CODEXMSGCTL_SMOKE_MCP_ELICITATION_CALLBACK_TEST",
+                    status: "blocked",
+                    detail: "BLOCKED request_user_input is unavailable in Default mode",
+                    threadId: "thread-1",
+                    turnId: "turn-1",
+                    updatedAt: "2026-05-22T13:00:00.000Z"
+                )
+            ]
         ))
         try expect(text.contains("swift run BridgeCoreTests"), "gate checklist includes focused tests")
         try expect(text.contains("swift run codexmsgctl-swift doctor --probe-computer-use"), "gate checklist includes doctor probe")
@@ -3232,6 +3243,7 @@ struct BridgeCoreFocusedTests {
         try expect(text.contains("/codex smoke callback, then reply with any short text"), "gate checklist includes two-step trusted callback smoke")
         try expect(text.contains("/codex smoke app-server-callback, then reply to the app-server prompt"), "gate checklist includes real app-server callback smoke")
         try expect(text.contains("/codex smoke mcp-elicitation-callback, then reply to the MCP elicitation prompt"), "gate checklist includes real MCP elicitation callback smoke")
+        try expect(text.contains("Live smoke evidence: 1 result(s); latest: mcp-elicitation-callback blocked"), "gate checklist includes live smoke blocker evidence")
         try expect(text.contains("needs trusted inbound image first"), "gate checklist reports inbound image readiness")
         try expect(text.contains("will create a marked outbound image"), "gate checklist reports outbound image readiness")
     }

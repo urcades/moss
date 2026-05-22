@@ -424,7 +424,8 @@ public final class BridgeService: @unchecked Sendable {
                 hasActiveJob: state.activeJob != nil,
                 hasPendingInteractiveCallback: state.pendingInteractiveCallback != nil,
                 hasRecentInboundImage: hasUsableRecentMedia(direction: "inbound", recipient: recipient, service: service),
-                hasRecentOutboundImage: hasUsableRecentMedia(direction: "outbound", recipient: recipient, service: service)
+                hasRecentOutboundImage: hasUsableRecentMedia(direction: "outbound", recipient: recipient, service: service),
+                liveSmokeResults: state.liveSmokeResults ?? []
             ))
         case "/codex trusted-gates":
             let evidence = try await trustedGateEvidence(config: config, recipient: recipient, service: service)

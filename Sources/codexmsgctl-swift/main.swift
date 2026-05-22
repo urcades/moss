@@ -148,7 +148,8 @@ struct CodexMsgCtlSwift {
                 hasActiveJob: state.activeJob != nil,
                 hasPendingInteractiveCallback: state.pendingInteractiveCallback != nil,
                 hasRecentInboundImage: hasUsableRecentMedia(direction: "inbound", recipient: config.allowedSender, service: smokeOption("--service", in: rest) ?? "iMessage", state: state),
-                hasRecentOutboundImage: hasUsableRecentMedia(direction: "outbound", recipient: config.allowedSender, service: smokeOption("--service", in: rest) ?? "iMessage", state: state)
+                hasRecentOutboundImage: hasUsableRecentMedia(direction: "outbound", recipient: config.allowedSender, service: smokeOption("--service", in: rest) ?? "iMessage", state: state),
+                liveSmokeResults: state.liveSmokeResults ?? []
             )
             print(bridgeGateChecklistText(context: context))
         case "trusted-gates":

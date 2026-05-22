@@ -7,6 +7,7 @@ public struct BridgeGateChecklistContext: Equatable, Sendable {
     public var hasPendingInteractiveCallback: Bool
     public var hasRecentInboundImage: Bool
     public var hasRecentOutboundImage: Bool
+    public var liveSmokeResults: [LiveSmokeResult]
 
     public init(
         allowedSender: String,
@@ -14,7 +15,8 @@ public struct BridgeGateChecklistContext: Equatable, Sendable {
         hasActiveJob: Bool,
         hasPendingInteractiveCallback: Bool,
         hasRecentInboundImage: Bool,
-        hasRecentOutboundImage: Bool
+        hasRecentOutboundImage: Bool,
+        liveSmokeResults: [LiveSmokeResult] = []
     ) {
         self.allowedSender = allowedSender
         self.service = service
@@ -22,6 +24,7 @@ public struct BridgeGateChecklistContext: Equatable, Sendable {
         self.hasPendingInteractiveCallback = hasPendingInteractiveCallback
         self.hasRecentInboundImage = hasRecentInboundImage
         self.hasRecentOutboundImage = hasRecentOutboundImage
+        self.liveSmokeResults = liveSmokeResults
     }
 }
 
@@ -41,6 +44,7 @@ public func bridgeGateChecklistText(context: BridgeGateChecklistContext) -> Stri
     - Pending callback: \(callbackStatus)
     - Inbound-image smoke: \(inboundStatus)
     - Outbound-image smoke: \(outboundStatus)
+    - Live smoke evidence: \(liveSmokeResultsStatusText(context.liveSmokeResults))
 
     Deterministic local gates:
     - swift run BridgeCoreTests

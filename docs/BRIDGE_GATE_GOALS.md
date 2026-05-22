@@ -2,7 +2,7 @@
 
 This file is the working gate list for continuous bridge hardening. A gate is complete only when fake-runtime tests, live smoke evidence, status/doctor visibility, and installed-helper behavior agree.
 
-The continuous-goals contract for this workstream lives in `docs/BRIDGE_CONTINUOUS_GOALS.md`. Use `swift run codexmsgctl-swift gates` or `/codex gates` for the current non-destructive checklist of deterministic gates, live CLI smoke commands, and trusted Messages commands. Use `swift run codexmsgctl-swift trusted-gates` to inspect real trusted-chat inbound/outbound row evidence.
+The continuous-goals contract for this workstream lives in `docs/BRIDGE_CONTINUOUS_GOALS.md`. Use `swift run codexmsgctl-swift gates` or `/codex gates` for the current non-destructive checklist of deterministic gates, live CLI smoke commands, trusted Messages commands, and latest live smoke blocker evidence. Use `swift run codexmsgctl-swift trusted-gates` to inspect real trusted-chat inbound/outbound row evidence.
 
 ## Goal 1: Outbound Delivery Truth
 
