@@ -50,6 +50,7 @@ struct BridgeCoreFocusedTests {
         try testBridgeJobQueuePrioritizesCutThroughJobs()
         try testBridgeServiceUsesJobQueueOwner()
         try testComputerUseProbeDetailIncludesWindowDiagnostics()
+        try testBridgeSmokePNGFixtureHasValidChunkCRCs()
         try testCapabilityFormattingAndCacheSnapshot()
         try await testCapabilityBestEffortPrefersCache()
         try await testOutboundSmokeTextEvidenceFindsMarkerInMessagesDb()
@@ -1322,6 +1323,55 @@ struct BridgeCoreFocusedTests {
         )
         try expect(blocked.contains("Computer Use server error -10005: cgWindowNotFound"), "blocker text is preserved")
         try expect(blocked.contains("Local accessibility windows: Safari=0; Messages=0; Finder=0"), "window preflight is appended")
+    }
+
+    private static func testBridgeSmokePNGFixtureHasValidChunkCRCs() throws {
+        let data = try bridgeSmokePNGData()
+        let bytes = [UInt8](data)
+        try expect(bytes.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]), "smoke image has PNG signature")
+        var offset = 8
+        var sawIDAT = false
+        while offset < bytes.count {
+            try expect(offset + 12 <= bytes.count, "PNG chunk header fits")
+            let length = pngUInt32(bytes, at: offset)
+            let chunkStart = offset + 8
+            let chunkEnd = chunkStart + Int(length)
+            try expect(chunkEnd + 4 <= bytes.count, "PNG chunk payload fits")
+            let kind = Array(bytes[(offset + 4)..<(offset + 8)])
+            let storedCRC = pngUInt32(bytes, at: chunkEnd)
+            let computedCRC = crc32(Array(bytes[(offset + 4)..<chunkEnd]))
+            try expect(storedCRC == computedCRC, "PNG chunk \(String(bytes: kind, encoding: .ascii) ?? "?") CRC is valid")
+            if kind == [0x49, 0x44, 0x41, 0x54] {
+                sawIDAT = true
+            }
+            offset = chunkEnd + 4
+            if kind == [0x49, 0x45, 0x4E, 0x44] {
+                break
+            }
+        }
+        try expect(sawIDAT, "smoke PNG has image data")
+    }
+
+    private static func pngUInt32(_ bytes: [UInt8], at offset: Int) -> UInt32 {
+        (UInt32(bytes[offset]) << 24)
+            | (UInt32(bytes[offset + 1]) << 16)
+            | (UInt32(bytes[offset + 2]) << 8)
+            | UInt32(bytes[offset + 3])
+    }
+
+    private static func crc32(_ bytes: [UInt8]) -> UInt32 {
+        var crc: UInt32 = 0xffff_ffff
+        for byte in bytes {
+            crc ^= UInt32(byte)
+            for _ in 0..<8 {
+                if crc & 1 == 1 {
+                    crc = (crc >> 1) ^ 0xedb8_8320
+                } else {
+                    crc >>= 1
+                }
+            }
+        }
+        return crc ^ 0xffff_ffff
     }
 
     private static func testCapabilityFormattingAndCacheSnapshot() throws {

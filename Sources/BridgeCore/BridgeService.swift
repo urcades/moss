@@ -1957,8 +1957,8 @@ private final class BridgeSmokeEventCollector: @unchecked Sendable {
     }
 }
 
-private func bridgeSmokePNGData() throws -> Data {
-    let encoded = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+public func bridgeSmokePNGData() throws -> Data {
+    let encoded = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
     guard let data = Data(base64Encoded: encoded) else {
         throw StoreError.validation("Could not decode smoke PNG fixture.")
     }

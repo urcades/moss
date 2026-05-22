@@ -256,7 +256,7 @@ struct CodexMsgCtlSwift {
         let marker = "CODEXMSGCTL_SMOKE_ATTACHMENT_\(UUID().uuidString)"
         try FileManager.default.createDirectory(at: paths.tmpDir, withIntermediateDirectories: true)
         let attachment = paths.tmpDir.appendingPathComponent("codexmsgctl-smoke-\(marker).png")
-        try smokePNGData().write(to: attachment)
+        try bridgeSmokePNGData().write(to: attachment)
         let beforeRowId = try await latestOutgoingMessageRowId(config: config)
         print("Smoke attachment marker: \(marker)")
         print("Attachment path: \(attachment.path)")
@@ -287,7 +287,7 @@ struct CodexMsgCtlSwift {
         let marker = "CODEXMSGCTL_SMOKE_BRIDGE_ATTACH_\(UUID().uuidString)"
         try FileManager.default.createDirectory(at: paths.tmpDir, withIntermediateDirectories: true)
         let attachment = paths.tmpDir.appendingPathComponent("codexmsgctl-smoke-\(marker).png")
-        try smokePNGData().write(to: attachment)
+        try bridgeSmokePNGData().write(to: attachment)
         let finalReply = "\(marker) generated image ready.\nBRIDGE_ATTACH: \(attachment.path)"
         let outgoing = prepareOutgoingReply(finalReply, config: config)
         guard outgoing.attachments == [attachment.path] else {
@@ -376,7 +376,7 @@ struct CodexMsgCtlSwift {
         let marker = "CODEXMSGCTL_SMOKE_OUTBOUND_IMAGE_\(UUID().uuidString)"
         try FileManager.default.createDirectory(at: paths.tmpDir, withIntermediateDirectories: true)
         let attachment = paths.tmpDir.appendingPathComponent("codexmsgctl-smoke-\(marker).png")
-        try smokePNGData().write(to: attachment)
+        try bridgeSmokePNGData().write(to: attachment)
         let beforeRowId = try await latestOutgoingMessageRowId(config: config)
         print("Smoke outbound-image-check marker: \(marker)")
         print("Attachment path: \(attachment.path)")
@@ -482,14 +482,6 @@ struct CodexMsgCtlSwift {
 
     private static func appServerFinalAnswerSmokePrompt(marker: String) -> String {
         "Reply only with \(marker) SUCCESS. Do not call tools, plugins, apps, browser, or Computer Use."
-    }
-
-    private static func smokePNGData() throws -> Data {
-        let encoded = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
-        guard let data = Data(base64Encoded: encoded) else {
-            throw StoreError.validation("Could not decode smoke PNG fixture.")
-        }
-        return data
     }
 
     private static func smokeSendError(_ send: () async throws -> Void) async -> Error? {
