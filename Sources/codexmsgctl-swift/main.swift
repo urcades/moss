@@ -305,7 +305,7 @@ struct CodexMsgCtlSwift {
         let marker = "CODEXMSGCTL_SMOKE_\(capability.replacingOccurrences(of: "-", with: "_").uppercased())_\(UUID().uuidString)"
         var smokeConfig = config
         smokeConfig.timeoutMs = min(config.timeoutMs, 60_000)
-        let request = PromptRequest(promptText: capabilitySmokePrompt(capability: capability, marker: marker), attachments: [])
+        let request = PromptRequest(promptText: bridgeCapabilitySmokePrompt(capability: capability, marker: marker), attachments: [])
         print("Smoke \(capability) marker: \(marker)")
         try await runAppServerMarkerSmoke(label: capability, marker: marker, request: request, config: smokeConfig, paths: paths)
     }
@@ -357,20 +357,6 @@ struct CodexMsgCtlSwift {
                 _ = terminateProcessTree(rootPid: processPid)
             }
             throw error
-        }
-    }
-
-    private static func capabilitySmokePrompt(capability: String, marker: String) -> String {
-        switch capability {
-        case "computer-use":
-            return "Use Computer Use to inspect Safari. First call list_apps, then get_app_state for Safari. Do not navigate, click, type, or change any app state. Reply only with \(marker) SUCCESS and the Safari window title, or \(marker) BLOCKED and the exact blocker text."
-        case "chrome":
-            return "Use @Chrome to inspect the current Chrome tabs or current Chrome page without navigating, clicking, typing, or changing browser state. Reply only with \(marker) SUCCESS and a short observed title or URL, or \(marker) BLOCKED and the exact blocker text."
-        case "browser":
-            let encodedMarker = marker.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? marker
-            return "Use @Browser to open this local data URL and read the page text: data:text/html,<title>\(encodedMarker)</title><main>\(encodedMarker)</main>. Reply only with \(marker) SUCCESS if the browser page contained the marker, or \(marker) BLOCKED and the exact blocker text."
-        default:
-            return "Use \(capability) and reply only with \(marker) SUCCESS, or \(marker) BLOCKED and the exact blocker text."
         }
     }
 

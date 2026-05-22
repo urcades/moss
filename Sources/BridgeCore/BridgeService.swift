@@ -1642,7 +1642,7 @@ private func bridgeAppServerSmokePrompt(marker: String) -> String {
     "Reply only with \(marker) SUCCESS. Do not call tools, plugins, apps, browser, or Computer Use."
 }
 
-private func bridgeCapabilitySmokePrompt(capability: String, marker: String) -> String {
+public func bridgeCapabilitySmokePrompt(capability: String, marker: String) -> String {
     switch capability {
     case "computer-use":
         return "Use Computer Use to inspect Safari. First call list_apps, then get_app_state for Safari. Do not navigate, click, type, or change any app state. Reply only with \(marker) SUCCESS and the Safari window title, or \(marker) BLOCKED and the exact blocker text."

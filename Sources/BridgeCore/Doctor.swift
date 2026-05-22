@@ -334,7 +334,8 @@ public final class Doctor: @unchecked Sendable {
     }
 
     private func computerUseProbe(_ config: BridgeConfig) async -> DoctorCheck {
-        let prompt = "Use Computer Use to inspect Safari. First call list_apps, then get_app_state for Safari. Do not navigate or click. Reply only with SUCCESS and the Safari window title, or BLOCKED and the exact blocker text."
+        let marker = "CODEX_DOCTOR_COMPUTER_USE_\(UUID().uuidString)"
+        let prompt = bridgeCapabilitySmokePrompt(capability: "computer-use", marker: marker)
         let request = PromptRequest(promptText: prompt, attachments: [])
         let pidBox = LockedPid()
         do {
@@ -367,7 +368,7 @@ public final class Doctor: @unchecked Sendable {
                     }
                 }
             }
-            let ok = response.text.localizedCaseInsensitiveContains("SUCCESS")
+            let ok = response.text.contains(marker) && response.text.localizedCaseInsensitiveContains("SUCCESS")
             return DoctorCheck(name: "Computer Use probe", ok: ok, detail: response.text)
         } catch let error as CodexBackendFailure {
             return DoctorCheck(name: "Computer Use probe", ok: false, detail: error.blockedText ?? error.message)

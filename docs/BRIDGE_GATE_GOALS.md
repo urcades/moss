@@ -139,7 +139,7 @@ Success means the bridge continuously reports what Codex can really do from Mess
   - Current `swift run codexmsgctl-swift smoke computer-use` passed with real `list_apps` and `get_app_state` calls and marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_D076BC6E-2948-4C7B-94A3-E7AFFC703587`.
   - Current smoke computer-use passed again with marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_C809B0CA-D913-4040-9B3A-5A5DB1CF9D2E`.
   - A later `doctor --probe-computer-use` run returned without hanging and failed visibly with exact blocker `BLOCKED Computer Use server error -10005: cgWindowNotFound`.
-  - Current `swift run codexmsgctl-swift doctor --probe-computer-use` returned without hanging and failed visibly with exact blocker `BLOCKED Computer Use server error -10005: cgWindowNotFound`.
+  - Current `swift run codexmsgctl-swift doctor --probe-computer-use` uses the same marker-based Computer Use prompt as smoke and passed with marker `CODEX_DOCTOR_COMPUTER_USE_D98B1A76-6117-48FC-96E0-B660287BE5B0`, response `SUCCESS Start Page`.
   - `swift run codexmsgctl-swift smoke chrome` invoked the Chrome skill path and returned the exact blocker `privileged native pipe bridge is not available; browser-client is not trusted` with marker `CODEXMSGCTL_SMOKE_CHROME_9E2AAA1F-51AE-44D3-9B60-6A63DBEED695`.
   - Current `swift run codexmsgctl-swift smoke chrome` still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_CHROME_BF716326-E9E4-40FF-A47A-173DB6A40F3A`.
   - Current smoke chrome still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_CHROME_AFFEEED9-3DCA-469B-AC95-CF261D565C74`.
@@ -150,6 +150,7 @@ Success means the bridge continuously reports what Codex can really do from Mess
   - Current `swift run codexmsgctl-swift smoke browser` still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_BROWSER_8A9C61EA-F7B0-451F-8BC4-E261E15DAFAD`.
   - Current smoke browser still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_BROWSER_F03F2AD3-962F-4A33-8C8E-09CCE3734F69`.
   - `codexmsgctl-swift smoke` now has standalone `chrome`, `browser`, and `computer-use` subcommands that print app-server pid, thread id, turn id, progress, final response, and blocker text.
+  - Doctor's Computer Use probe now shares the same hardened marker prompt as `smoke computer-use`, so health checks and capability smoke no longer drift in behavior.
   - `codexmsgctl-swift status` and `/codex status` now use the capability cache first and bound live refresh attempts, so a stuck app-server capability refresh cannot hang status. Deterministic coverage verifies the best-effort status lookup returns an existing cache even when the Codex command is unavailable.
   - Capability cache formatting now marks caches stale after 24h in status and doctor output, so version/tool drift is visible even when bounded refreshes are skipped.
   - Dynamic tool forwarding now has deterministic stalled-call coverage using a fake app-server connection that waits until the RPC deadline, then verifies the bridge sends an explicit failed tool result for the original dynamic call.
