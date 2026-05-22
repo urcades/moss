@@ -18,7 +18,7 @@ Success: trusted-chat commands can prove `/codex status` and every `/codex smoke
 
 Evidence:
 - `/codex status` from the trusted chat agrees with `codexmsgctl-swift status`.
-- Trusted-chat `/codex smoke app-server`, `app-server-callback`, `text`, `attachment`, `automation`, `callback`, `inbound-image-check`, `outbound-image-check`, `chrome`, `browser`, and `computer-use` have observed inbound rows and outgoing reply evidence.
+- Trusted-chat `/codex smoke app-server`, `app-server-callback`, `generated-image`, `text`, `attachment`, `automation`, `callback`, `inbound-image-check`, `outbound-image-check`, `chrome`, `browser`, and `computer-use` have observed inbound rows and outgoing reply evidence.
 - `codexmsgctl-swift trusted-gates` reports each trusted command as `observed`, `missing-inbound`, `missing-outbound`, or `outbound-error-*` from Messages DB evidence.
 
 Current status: in progress and partly externally gated, because true trusted inbound rows must come from Apple Messages rather than this process sending `is_from_me=1` rows. `codexmsgctl-swift trusted-gates` now observes real inbound/outbound row evidence without sending messages.
@@ -43,7 +43,7 @@ Evidence:
 - A live generated-image `BRIDGE_ATTACH:` flow records delivery row/error/transfer state.
 - A live edit follow-up uses the previous real image or asks for the source.
 
-Current status: inbound/outbound continuity smoke exists, `BRIDGE_ATTACH:` final replies now send attachments before success text, and `codexmsgctl-swift smoke bridge-attach` verifies the directive handoff with Messages DB evidence. Live edit probes remain.
+Current status: inbound/outbound continuity smoke exists, `BRIDGE_ATTACH:` final replies now send attachments before success text, `codexmsgctl-swift smoke bridge-attach` verifies the directive handoff with Messages DB evidence, and `/codex smoke generated-image` asks a real app-server turn to create and attach a marked PNG. Live trusted-chat generated-image and edit probes remain.
 
 ## Goal E: State Owner And Process Supervision
 

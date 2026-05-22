@@ -439,7 +439,7 @@ public final class BridgeService: @unchecked Sendable {
                 hasRecentOutboundImage: hasUsableRecentMedia(direction: "outbound", recipient: config.allowedSender, service: "iMessage")
             ))
         default:
-            return "Use /codex status, /codex open, /codex history, /codex automations, /codex gates, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|app-server-callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
+            return "Use /codex status, /codex open, /codex history, /codex automations, /codex gates, /codex retry-last-send, or /codex smoke text|attachment|automation|callback|bridge-attach|generated-image|app-server-callback|app-server|inbound-image-check|outbound-image-check|chrome|browser|computer-use."
         }
     }
 
@@ -502,6 +502,16 @@ public final class BridgeService: @unchecked Sendable {
             } catch {
                 summary = """
                 Smoke bridge-attach failed: \(marker)
+                Error: \(error)
+                Evidence: \(lastOutboundSendStatusText())
+                """
+            }
+        case "generated-image":
+            do {
+                summary = try await startGeneratedImageSmoke(marker: marker, message: message)
+            } catch {
+                summary = """
+                Smoke generated-image failed: \(marker)
                 Error: \(error)
                 Evidence: \(lastOutboundSendStatusText())
                 """
@@ -630,9 +640,42 @@ public final class BridgeService: @unchecked Sendable {
                 summary = await runBridgeAppServerSmoke(label: subcommand, marker: marker, request: request, config: smokeConfig)
             }
         default:
-            summary = "Use /codex smoke text, attachment, bridge-attach, automation, callback, app-server-callback, app-server, inbound-image-check, outbound-image-check, chrome, browser, or computer-use."
+            summary = "Use /codex smoke text, attachment, bridge-attach, generated-image, automation, callback, app-server-callback, app-server, inbound-image-check, outbound-image-check, chrome, browser, or computer-use."
         }
         _ = try await sink.sendReply(recipient: message.handleId, service: message.service, text: summary)
+    }
+
+    private func startGeneratedImageSmoke(marker: String, message: MessageItem) async throws -> String {
+        guard state.activeJob == nil else {
+            return "Smoke generated-image skipped: \(marker)\nA Codex job is already active. Send /codex status or /cancel first."
+        }
+        try FileManager.default.createDirectory(at: paths.tmpDir, withIntermediateDirectories: true)
+        let artifact = paths.tmpDir.appendingPathComponent("codex-generated-image-\(marker).png")
+        try? FileManager.default.removeItem(at: artifact)
+        let startedAt = now()
+        let batch = PendingBatch(
+            handleId: message.handleId,
+            service: message.service,
+            startedAt: DateCodec.iso(startedAt),
+            deadlineAt: DateCodec.iso(startedAt),
+            items: [
+                MessageItem(
+                    rowId: message.rowId,
+                    guid: "\(message.guid)-generated-image-smoke",
+                    text: bridgeGeneratedImageSmokePrompt(marker: marker, artifactPath: artifact.path),
+                    handleId: message.handleId,
+                    service: message.service,
+                    receivedAt: message.receivedAt,
+                    attachments: []
+                )
+            ]
+        )
+        try await startPromptBatch(batch)
+        return """
+        Smoke generated-image started: \(marker)
+        Expected artifact: \(artifact.path)
+        Success requires Codex to create that file and return BRIDGE_ATTACH for the bridge to deliver.
+        """
     }
 
     private func startBridgeCallbackSmoke(marker: String, message: MessageItem, config: BridgeConfig) async throws -> String {
@@ -949,6 +992,7 @@ public final class BridgeService: @unchecked Sendable {
             /codex smoke text - send a marked text probe and report delivery evidence
             /codex smoke attachment - send a marked image probe and report delivery evidence
             /codex smoke bridge-attach - verify BRIDGE_ATTACH sends media before success text
+            /codex smoke generated-image - ask Codex to create and BRIDGE_ATTACH a marked image
             /codex smoke automation - create a paused marked automation and route
             /codex smoke callback - create a pending callback and verify the next reply is routed to it
             /codex smoke app-server-callback - start a real app-server callback turn and reply to finish it
@@ -1765,6 +1809,7 @@ private let supportedBridgeCodexSmokeSubcommands: Set<String> = [
     "text",
     "attachment",
     "bridge-attach",
+    "generated-image",
     "automation",
     "callback",
     "app-server-callback",
@@ -1788,6 +1833,18 @@ private func bridgeAppServerCallbackSmokePrompt(marker: String) -> String {
     Before giving a final answer, call the app-server interactive user input/requestUserInput facility and ask the user to reply with any short text for marker \(marker).
     After the user responds through that callback, reply only with \(marker) SUCCESS callback reply: <the user's reply>.
     If you cannot call the interactive user input/requestUserInput facility, reply only with \(marker) BLOCKED <exact blocker text>.
+    """
+}
+
+private func bridgeGeneratedImageSmokePrompt(marker: String, artifactPath: String) -> String {
+    """
+    This is an Apple Messages bridge generated-image smoke test.
+    Create a small valid PNG image file at this exact path: \(artifactPath)
+    The image can be simple, but it must be a real PNG file and should visibly contain or represent the marker \(marker).
+    After creating the file, reply only with:
+    \(marker) SUCCESS generated image ready.
+    BRIDGE_ATTACH: \(artifactPath)
+    If you cannot create the file, reply only with \(marker) BLOCKED <exact blocker text>.
     """
 }
 

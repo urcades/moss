@@ -25,6 +25,7 @@ struct BridgeCoreFocusedTests {
         try await testMissingPreviousImageReferenceAsksForSource()
         try await testCodexSmokeAttachmentCommandSendsProbeAndSummary()
         try await testCodexSmokeBridgeAttachCommandUsesDirectiveHandoff()
+        try await testCodexSmokeGeneratedImageStartsAppServerAndAttachesResult()
         try await testCodexSmokeAppServerCommandRunsFinalAnswerProbe()
         try await testCodexSmokeCapabilityCommandRunsAppServerProbe()
         try await testCodexGatesCommandRepliesWithChecklist()
@@ -112,6 +113,7 @@ struct BridgeCoreFocusedTests {
         try expect(bridgeLocalCommandName("/codex smoke text") == "/codex", "codex text smoke command")
         try expect(bridgeLocalCommandName("/codex smoke attachment") == "/codex", "codex attachment smoke command")
         try expect(bridgeLocalCommandName("/codex smoke bridge-attach") == "/codex", "codex bridge-attach smoke command")
+        try expect(bridgeLocalCommandName("/codex smoke generated-image") == "/codex", "codex generated-image smoke command")
         try expect(bridgeLocalCommandName("/codex smoke browser") == "/codex", "codex browser smoke command")
         try expect(bridgeLocalCommandName("/codex smoke chrome") == "/codex", "codex chrome smoke command")
         try expect(bridgeLocalCommandName("/codex smoke computer-use") == "/codex", "codex computer-use smoke command")
@@ -437,6 +439,47 @@ struct BridgeCoreFocusedTests {
         try expect(replies.last?.text.contains("Smoke bridge-attach passed: CODEX_BRIDGE_SMOKE_BRIDGE-ATTACH_") == true, "codex smoke bridge-attach reports summary")
         try expect(events.first == "attachment:\(attachments.first!.filePath)", "codex smoke bridge-attach sends attachment first")
         try expect(!replies.contains { $0.text.contains("BRIDGE_ATTACH:") }, "codex smoke bridge-attach strips directive from Messages text")
+    }
+
+    private static func testCodexSmokeGeneratedImageStartsAppServerAndAttachesResult() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        try stores.config.save(config)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 1, guid: "guid-smoke-generated-image", text: "/codex smoke generated-image", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let backend = GeneratedImageSmokeCodexBackend()
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in backend },
+            now: { Date(timeIntervalSince1970: 1_777_777_777) }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        _ = try await waitForState(stores, timeout: 3) { $0.activeJob == nil }
+        let attachments = await sink.attachmentsSnapshot()
+        let replies = try await waitForReplies(sink, count: 2)
+        let events = await sink.eventsSnapshot()
+        let promptText = await backend.promptText()
+
+        try expect(promptText?.contains("BRIDGE_ATTACH:") == true, "generated-image smoke prompt asks for bridge attachment")
+        try expect(attachments.count == 1, "generated-image smoke sends generated attachment")
+        try expect(attachments.first?.filePath.hasSuffix(".png") == true, "generated-image smoke attaches png artifact")
+        try expect(replies.contains { $0.text.contains("Smoke generated-image started: CODEX_BRIDGE_SMOKE_GENERATED-IMAGE_") }, "generated-image smoke reports start marker")
+        try expect(replies.contains { $0.text.contains("CODEX_BRIDGE_SMOKE_GENERATED-IMAGE_") && $0.text.contains("SUCCESS generated image ready") }, "generated-image smoke sends app-server final text")
+        guard let attachmentIndex = events.firstIndex(where: { $0.hasPrefix("attachment:") }),
+              let finalTextIndex = events.firstIndex(where: { $0.contains("SUCCESS generated image ready") }) else {
+            throw TestFailure(description: "Expected generated image attachment and final success text events")
+        }
+        try expect(attachmentIndex < finalTextIndex, "generated-image smoke sends attachment before success text")
     }
 
     private static func testCodexSmokeCapabilityCommandRunsAppServerProbe() async throws {
@@ -2438,6 +2481,7 @@ struct BridgeCoreFocusedTests {
         try expect(text.contains("swift run codexmsgctl-swift trusted-gates"), "gate checklist includes trusted gate observer")
         try expect(text.contains("swift run codexmsgctl-swift smoke outbound-image-check --recipient +1 --service iMessage"), "gate checklist includes outbound image smoke")
         try expect(text.contains("swift run codexmsgctl-swift smoke bridge-attach --recipient +1 --service iMessage"), "gate checklist includes bridge attach smoke")
+        try expect(text.contains("/codex smoke generated-image"), "gate checklist includes generated image smoke")
         try expect(text.contains("/codex smoke callback, then reply with any short text"), "gate checklist includes two-step trusted callback smoke")
         try expect(text.contains("/codex smoke app-server-callback, then reply to the app-server prompt"), "gate checklist includes real app-server callback smoke")
         try expect(text.contains("needs trusted inbound image first"), "gate checklist reports inbound image readiness")
@@ -2891,6 +2935,40 @@ private actor CapturingCodexBackend: CodexBackend {
             stderr: "",
             args: [],
             outputPath: ""
+        )
+    }
+}
+
+private actor GeneratedImageSmokeCodexBackend: CodexBackend {
+    private var request: PromptRequest?
+
+    func promptText() -> String? {
+        request?.promptText
+    }
+
+    func invoke(_ request: PromptRequest, sessionId: String?, onEvent: (@Sendable (CodexStreamEvent) -> Void)?) async throws -> CodexResponse {
+        self.request = request
+        onEvent?(.sessionStarted("thread-generated-image"))
+        onEvent?(.turnStarted("turn-generated-image"))
+        let marker = request.promptText.components(separatedBy: .whitespacesAndNewlines)
+            .first { $0.hasPrefix("CODEX_BRIDGE_SMOKE_") }?
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".,:;"))
+            ?? "CODEX_BRIDGE_SMOKE_UNKNOWN"
+        guard let artifactPath = request.promptText.components(separatedBy: .newlines).compactMap({ line -> String? in
+            let prefix = "Create a small valid PNG image file at this exact path: "
+            guard line.hasPrefix(prefix) else { return nil }
+            return String(line.dropFirst(prefix.count))
+        }).first else {
+            throw TestFailure(description: "Generated image smoke prompt did not include artifact path")
+        }
+        try Data("fake png".utf8).write(to: URL(fileURLWithPath: artifactPath))
+        return CodexResponse(
+            text: "\(marker) SUCCESS generated image ready.\nBRIDGE_ATTACH: \(artifactPath)",
+            sessionId: "thread-generated-image",
+            stdout: "",
+            stderr: "",
+            args: [],
+            outputPath: artifactPath
         )
     }
 }

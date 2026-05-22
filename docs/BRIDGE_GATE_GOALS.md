@@ -43,6 +43,7 @@ Success means follow-up prompts like "modify that image" use a real previous cha
   - A previous-image follow-up with no usable image asks for the source and does not start Codex.
   - Final replies containing `BRIDGE_ATTACH:` send the attachment before any success text, and failed attachment delivery prevents the success text from being sent.
   - `/codex smoke bridge-attach` and `codexmsgctl-swift smoke bridge-attach` exercise a final-reply-style `BRIDGE_ATTACH:` directive rather than direct attachment sending.
+  - `/codex smoke generated-image` asks a real app-server turn to create a marked PNG at a bridge temp path and reply with `BRIDGE_ATTACH:`; deterministic coverage verifies the generated artifact is attached before success text.
   - Messages DB ingress covers attachment-only rows, multiple attachments, `~/` path expansion, image/PDF/unsupported classification, and existence flags.
 - Live gates:
   - Send an inbound image, then ask for a marked modification; app-server receives a `localImage`.
@@ -63,6 +64,7 @@ Success means follow-up prompts like "modify that image" use a real previous cha
   - Live `swift run codexmsgctl-swift smoke outbound-image-check` passed with marker `CODEXMSGCTL_SMOKE_OUTBOUND_IMAGE_D0F56FCE-D2CE-4953-9B01-C1022ADE34F0`: Messages DB row 753 (`message.error=0`, `transfer_state=5`, renamed to `IMG_7646.jpeg`), app-server thread `019e4f2f-3cf5-7b20-813b-d6c4598f6b0e`, and turn `019e4f2f-3f08-7961-a78c-490f507e8073`.
   - Media final replies now send validated attachments before success text. Deterministic coverage verifies `Done.` is not sent when the attachment delivery path fails.
   - Live `swift run codexmsgctl-swift smoke bridge-attach` passed with marker `CODEXMSGCTL_SMOKE_BRIDGE_ATTACH_136C4E7D-091D-4DA8-8AD3-03877F392FF2`: Messages DB attachment row 756 (`message.error=0`, `transfer_state=5`, renamed to `IMG_8173.jpeg`) was observed before success text row 757 (`message.error=0`).
+  - `/codex smoke generated-image` is now available as a trusted-chat live gate for app-server-produced media; live evidence is still pending.
 
 ## Goal 3: Automation Truth
 
