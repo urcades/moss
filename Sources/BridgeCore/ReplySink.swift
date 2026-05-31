@@ -1,8 +1,68 @@
 import Foundation
 
 public protocol ReplySink: Sendable {
-    func sendReply(recipient: String, service: String, text: String) async throws
-    func sendAttachment(recipient: String, service: String, filePath: String) async throws
+    func sendReply(recipient: String, service: String, text: String) async throws -> OutboundDeliveryEvidence
+    func sendAttachment(recipient: String, service: String, filePath: String) async throws -> OutboundDeliveryEvidence
+}
+
+public struct OutboundDeliveryFailure: Error, CustomStringConvertible, Sendable {
+    public var message: String
+    public var evidence: OutboundDeliveryEvidence?
+
+    public init(message: String, evidence: OutboundDeliveryEvidence? = nil) {
+        self.message = message
+        self.evidence = evidence
+    }
+
+    public var description: String { message }
+}
+
+public func sqliteStringLiteral(_ value: String) -> String {
+    "'\(value.replacingOccurrences(of: "'", with: "''"))'"
+}
+
+public func outgoingTextEvidenceSQL(afterRowId: Int64, text: String) -> String {
+    let literal = sqliteStringLiteral(text)
+    return """
+    SELECT m.ROWID || '|' || COALESCE(m.error, 0) || '|' || COALESCE(m.date_delivered, 0)
+    FROM message m
+    WHERE m.is_from_me = 1
+      AND m.ROWID > \(afterRowId)
+      AND (
+        COALESCE(m.text, '') = \(literal)
+        OR instr(COALESCE(m.attributedBody, x''), CAST(\(literal) AS BLOB)) > 0
+      )
+    ORDER BY m.ROWID DESC
+    LIMIT 1;
+    """
+}
+
+public func messagesTextDeliveryEvidence(messagesDbPath: String, afterRowId: Int64, text: String, runner: ProcessRunner = ProcessRunner()) async throws -> OutboundDeliveryEvidence {
+    let result = try await runner.run("/usr/bin/sqlite3", ["-readonly", messagesDbPath, outgoingTextEvidenceSQL(afterRowId: afterRowId, text: text)])
+    let fields = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "|").map(String.init)
+    guard fields.count == 3 else {
+        throw OutboundDeliveryFailure(message: "Messages did not create an outgoing text row containing the sent text.")
+    }
+    let rowId = Int64(fields[0])
+    let error = Int(fields[1]) ?? 0
+    let delivered = Int64(fields[2]) ?? 0
+    let detail = delivered > 0
+        ? "Messages created and delivered an outgoing text row."
+        : "Messages created an outgoing text row that is not yet delivered."
+    let evidence = OutboundDeliveryEvidence(
+        transport: "AppleScript+MessagesDB",
+        dbRowId: rowId,
+        dbError: error,
+        dateDelivered: delivered,
+        detail: detail
+    )
+    if error != 0 {
+        throw OutboundDeliveryFailure(
+            message: "Messages created an outgoing text row \(fields[0]), but recorded error=\(error), date_delivered=\(delivered).",
+            evidence: evidence
+        )
+    }
+    return evidence
 }
 
 public final class AppleMessagesReplySink: ReplySink {
@@ -10,27 +70,46 @@ public final class AppleMessagesReplySink: ReplySink {
     private let chunkSize: Int
     private let messagesDbPath: String?
     private let runner: ProcessRunner
+    private let attachmentVerificationTimeoutMs: Int
+    private let clipboardAttachmentAttempts: Int
 
-    public init(osascriptCommand: String = "/usr/bin/osascript", chunkSize: Int = BridgeConstants.defaultChunkSize, messagesDbPath: String? = nil, runner: ProcessRunner = ProcessRunner()) {
+    public init(
+        osascriptCommand: String = "/usr/bin/osascript",
+        chunkSize: Int = BridgeConstants.defaultChunkSize,
+        messagesDbPath: String? = nil,
+        runner: ProcessRunner = ProcessRunner(),
+        attachmentVerificationTimeoutMs: Int = 8_000,
+        clipboardAttachmentAttempts: Int = 2
+    ) {
         self.osascriptCommand = osascriptCommand
         self.chunkSize = chunkSize
         self.messagesDbPath = messagesDbPath
         self.runner = runner
+        self.attachmentVerificationTimeoutMs = attachmentVerificationTimeoutMs
+        self.clipboardAttachmentAttempts = max(1, clipboardAttachmentAttempts)
     }
 
-    public func sendReply(recipient: String, service: String, text: String) async throws {
-        for chunk in chunkMessageText(text, chunkSize: chunkSize) {
+    public func sendReply(recipient: String, service: String, text: String) async throws -> OutboundDeliveryEvidence {
+        let chunks = chunkMessageText(text, chunkSize: chunkSize)
+        var lastEvidence: OutboundDeliveryEvidence?
+        for chunk in chunks {
+            let beforeRowId = try await latestOutgoingMessageRowId()
             try await sendChunk(recipient: recipient, service: service, text: chunk)
+            lastEvidence = try await verifyTextSend(afterRowId: beforeRowId, text: chunk)
         }
+        if var evidence = lastEvidence {
+            evidence.detail = [evidence.detail, "Messages accepted \(chunks.count) text chunk(s)."].compactMap { $0 }.joined(separator: " ")
+            return evidence
+        }
+        return OutboundDeliveryEvidence(transport: "AppleScript", detail: "No non-empty text chunks to send.")
     }
 
-    public func sendAttachment(recipient: String, service: String, filePath: String) async throws {
+    public func sendAttachment(recipient: String, service: String, filePath: String) async throws -> OutboundDeliveryEvidence {
         let serviceType = service.lowercased().contains("sms") ? "SMS" : "iMessage"
 
         if isClipboardSendableImage(filePath) {
             let clipboardPath = try await clipboardPreferredImagePath(from: filePath)
-            try await sendClipboardImage(recipient: recipient, serviceType: serviceType, filePath: clipboardPath)
-            return
+            return try await sendClipboardImage(recipient: recipient, serviceType: serviceType, filePath: clipboardPath)
         }
 
         let beforeRowId = try await latestOutgoingMessageRowId()
@@ -38,7 +117,7 @@ public final class AppleMessagesReplySink: ReplySink {
             let lines = appleMessagesAttachmentScriptLines()
             let args = lines.flatMap { ["-e", $0] } + ["--", recipient, serviceType, filePath]
             _ = try await runner.run(osascriptCommand, args)
-            try await verifyAttachmentSend(afterRowId: beforeRowId, originalFileName: URL(fileURLWithPath: filePath).lastPathComponent)
+            return try await verifyAttachmentSend(afterRowId: beforeRowId, originalFileName: URL(fileURLWithPath: filePath).lastPathComponent)
         } catch let fileSendError {
             throw fileSendError
         }
@@ -52,12 +131,27 @@ public final class AppleMessagesReplySink: ReplySink {
         return try await createClipboardFriendlyJPEG(from: filePath) ?? filePath
     }
 
-    private func sendClipboardImage(recipient: String, serviceType: String, filePath: String) async throws {
-        let fallbackBeforeRowId = try await latestOutgoingMessageRowId()
+    private func sendClipboardImage(recipient: String, serviceType: String, filePath: String) async throws -> OutboundDeliveryEvidence {
         let lines = appleMessagesClipboardImageScriptLines()
-        let args = lines.flatMap { ["-e", $0] } + ["--", recipient, serviceType, filePath]
-        _ = try await runner.run(osascriptCommand, args)
-        try await verifyAttachmentSend(afterRowId: fallbackBeforeRowId, originalFileName: nil)
+        let args = lines.flatMap { ["-e", $0] } + ["--", smsURLRecipient(recipient), serviceType, filePath]
+        var lastNoRowFailure: OutboundDeliveryFailure?
+        for attempt in 1...clipboardAttachmentAttempts {
+            let fallbackBeforeRowId = try await latestOutgoingMessageRowId()
+            _ = try await runner.run(osascriptCommand, args)
+            do {
+                var evidence = try await verifyAttachmentSend(afterRowId: fallbackBeforeRowId, originalFileName: nil)
+                if attempt > 1 {
+                    evidence.detail = [evidence.detail, "Succeeded after clipboard retry \(attempt)."].compactMap { $0 }.joined(separator: " ")
+                }
+                return evidence
+            } catch let failure as OutboundDeliveryFailure {
+                if failure.evidence != nil {
+                    throw failure
+                }
+                lastNoRowFailure = failure
+            }
+        }
+        throw lastNoRowFailure ?? OutboundDeliveryFailure(message: "Messages did not create an outgoing attachment row.")
     }
 
     private func createClipboardFriendlyJPEG(from filePath: String) async throws -> String? {
@@ -77,9 +171,28 @@ public final class AppleMessagesReplySink: ReplySink {
         return Int64(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
     }
 
-    private func verifyAttachmentSend(afterRowId: Int64, originalFileName: String?) async throws {
-        guard let messagesDbPath else { return }
-        try? await Task.sleep(nanoseconds: 3_000_000_000)
+    private func verifyTextSend(afterRowId: Int64, text: String) async throws -> OutboundDeliveryEvidence {
+        guard let messagesDbPath else {
+            return OutboundDeliveryEvidence(transport: "AppleScript", detail: "No Messages database configured for text verification.")
+        }
+        let deadline = Date().addingTimeInterval(3)
+        var lastFailure: OutboundDeliveryFailure?
+        repeat {
+            do {
+                return try await messagesTextDeliveryEvidence(messagesDbPath: messagesDbPath, afterRowId: afterRowId, text: text, runner: runner)
+            } catch let error as OutboundDeliveryFailure {
+                if error.evidence != nil { throw error }
+                lastFailure = error
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        } while Date() < deadline
+        throw lastFailure ?? OutboundDeliveryFailure(message: "Messages did not create an outgoing text row containing the sent text.")
+    }
+
+    private func verifyAttachmentSend(afterRowId: Int64, originalFileName: String?) async throws -> OutboundDeliveryEvidence {
+        guard let messagesDbPath else {
+            return OutboundDeliveryEvidence(transport: "AppleScript", detail: "No Messages database configured for attachment verification.")
+        }
         let nameFilter: String
         if let originalFileName {
             let fileName = originalFileName.replacingOccurrences(of: "'", with: "''")
@@ -87,29 +200,52 @@ public final class AppleMessagesReplySink: ReplySink {
         } else {
             nameFilter = ""
         }
-        let sql = """
-        SELECT m.ROWID || '|' || COALESCE(m.error, 0) || '|' || COALESCE(a.transfer_state, 0) || '|' || COALESCE(m.date_delivered, 0)
-        FROM message m
-        JOIN message_attachment_join maj ON maj.message_id = m.ROWID
-        JOIN attachment a ON a.ROWID = maj.attachment_id
-        WHERE m.is_from_me = 1
-          AND m.ROWID > \(afterRowId)
-          \(nameFilter)
-        ORDER BY m.ROWID DESC
-        LIMIT 1;
-        """
-        let result = try await runner.run("/usr/bin/sqlite3", ["-readonly", messagesDbPath, sql])
-        let fields = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "|").map(String.init)
+        let deadline = Date().addingTimeInterval(Double(attachmentVerificationTimeoutMs) / 1_000)
+        var fields: [String] = []
+        repeat {
+            let sql = """
+            SELECT m.ROWID || '|' || COALESCE(m.error, 0) || '|' || COALESCE(a.transfer_state, 0) || '|' || COALESCE(m.date_delivered, 0)
+            FROM message m
+            JOIN message_attachment_join maj ON maj.message_id = m.ROWID
+            JOIN attachment a ON a.ROWID = maj.attachment_id
+            WHERE m.is_from_me = 1
+              AND m.ROWID > \(afterRowId)
+              \(nameFilter)
+            ORDER BY m.ROWID DESC
+            LIMIT 1;
+            """
+            let result = try await runner.run("/usr/bin/sqlite3", ["-readonly", messagesDbPath, sql])
+            fields = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "|").map(String.init)
+            if fields.count == 4 { break }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        } while Date() < deadline
         guard fields.count == 4 else {
-            throw StoreError.validation("Messages did not create an outgoing attachment row.")
+            throw OutboundDeliveryFailure(message: "Messages did not create an outgoing attachment row.")
         }
         let rowId = fields[0]
+        let rowIdValue = Int64(rowId)
         let error = Int(fields[1]) ?? 0
         let transferState = Int(fields[2]) ?? 0
         let delivered = Int64(fields[3]) ?? 0
-        if error != 0 || transferState == 6 || delivered == 0 {
-            throw StoreError.validation("Messages created an outgoing attachment row \(rowId), but did not deliver it: error=\(error), transfer_state=\(transferState), date_delivered=\(delivered).")
+        let evidence = OutboundDeliveryEvidence(
+            transport: "AppleScript+MessagesDB",
+            dbRowId: rowIdValue,
+            dbError: error,
+            transferState: transferState,
+            dateDelivered: delivered,
+            detail: "Messages created an outgoing attachment row."
+        )
+        if error != 0 || transferState == 6 {
+            throw OutboundDeliveryFailure(
+                message: "Messages created an outgoing attachment row \(rowId), but did not deliver it: error=\(error), transfer_state=\(transferState), date_delivered=\(delivered).",
+                evidence: evidence
+            )
         }
+        var deliveredEvidence = evidence
+        deliveredEvidence.detail = delivered > 0
+            ? "Messages created and delivered an outgoing attachment row."
+            : "Messages created an outgoing attachment row that is not yet delivered."
+        return deliveredEvidence
     }
 
     private func sendChunk(recipient: String, service: String, text: String) async throws {
@@ -133,6 +269,14 @@ public final class AppleMessagesReplySink: ReplySink {
         let args = lines.flatMap { ["-e", $0] } + ["--", recipient, serviceType, text]
         _ = try await runner.run(osascriptCommand, args)
     }
+}
+
+public func smsURLRecipient(_ recipient: String) -> String {
+    let trimmed = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.contains("@") else { return trimmed }
+    let digits = trimmed.unicodeScalars.filter { CharacterSet.decimalDigits.contains($0) }.map(String.init).joined()
+    guard !digits.isEmpty else { return trimmed }
+    return trimmed.hasPrefix("+") ? "+\(digits)" : digits
 }
 
 public func appleMessagesAttachmentScriptLines() -> [String] {
@@ -199,13 +343,15 @@ public func appleMessagesClipboardImageScriptLines() -> [String] {
         "open location \"sms:\" & recipientHandle",
         "end if",
         "tell application \"Messages\" to activate",
-        "delay 0.8",
+        "delay 1.2",
         "tell application \"System Events\"",
         "tell process \"Messages\"",
         "set frontmost to true",
+        "delay 0.3",
         "keystroke \"v\" using command down",
-        "delay 0.8",
+        "delay 1.2",
         "key code 36",
+        "delay 0.4",
         "end tell",
         "end tell",
         "end run"

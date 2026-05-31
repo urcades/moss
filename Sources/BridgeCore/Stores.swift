@@ -195,13 +195,15 @@ public func normalizedTrustedSenderList(_ senders: [String]) -> [String] {
     return results
 }
 
-public final class JSONFileStore<Value: Codable> {
+public final class JSONFileStore<Value: Codable>: @unchecked Sendable {
     private let url: URL
     private let defaultValue: () -> Value
+    private let writeLock: NSRecursiveLock
 
     public init(url: URL, defaultValue: @escaping () -> Value) {
         self.url = url
         self.defaultValue = defaultValue
+        self.writeLock = JSONFileWriteLocks.lock(for: url)
     }
 
     public func load() throws -> Value {
@@ -209,12 +211,27 @@ public final class JSONFileStore<Value: Codable> {
             return defaultValue()
         }
         let data = try Data(contentsOf: url)
-        return try JSONDecoder().decode(Value.self, from: data)
+        do {
+            return try JSONDecoder().decode(Value.self, from: data)
+        } catch {
+            let backup = url.deletingLastPathComponent().appendingPathComponent("\(url.lastPathComponent).corrupt-\(Int(Date().timeIntervalSince1970))")
+            try? FileManager.default.copyItem(at: url, to: backup)
+            return defaultValue()
+        }
     }
 
     public func save(_ value: Value) throws {
+        writeLock.lock()
+        defer { writeLock.unlock() }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let data = try JSONEncoder.pretty.encode(value)
+        let valueToWrite: Value
+        if let incoming = value as? BridgeState,
+           let existing = try? load() as? BridgeState {
+            valueToWrite = mergeBridgeStateForConcurrentSave(incoming: incoming, existing: existing) as! Value
+        } else {
+            valueToWrite = value
+        }
+        let data = try JSONEncoder.pretty.encode(valueToWrite)
         let tmp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
         try data.write(to: tmp, options: .atomic)
         if FileManager.default.fileExists(atPath: url.path) {
@@ -224,10 +241,261 @@ public final class JSONFileStore<Value: Codable> {
         }
     }
 
+    @discardableResult
+    public func update(_ transform: (inout Value) throws -> Void) throws -> Value {
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        var value = try load()
+        try transform(&value)
+        try save(value)
+        return try load()
+    }
+
     public func ensureExists() throws -> Value {
         let value = try load()
         try save(value)
         return value
+    }
+}
+
+private final class JSONFileWriteLocks: @unchecked Sendable {
+    private static let shared = JSONFileWriteLocks()
+    private let registryLock = NSLock()
+    private var locks: [String: NSRecursiveLock] = [:]
+
+    static func lock(for url: URL) -> NSRecursiveLock {
+        shared.lockForURL(url)
+    }
+
+    private func lockForURL(_ url: URL) -> NSRecursiveLock {
+        let key = url.standardizedFileURL.path
+        registryLock.lock()
+        defer { registryLock.unlock() }
+        if let existing = locks[key] {
+            return existing
+        }
+        let lock = NSRecursiveLock()
+        lock.name = "JSONFileStore:\(key)"
+        locks[key] = lock
+        return lock
+    }
+}
+
+private func mergeBridgeStateForConcurrentSave(incoming: BridgeState, existing: BridgeState) -> BridgeState {
+    var merged = incoming
+    let routes = mergeAutomationRoutes(incoming: incoming.automationRoutes ?? [], existing: existing.automationRoutes ?? [])
+    merged.automationRoutes = routes.isEmpty ? nil : routes
+    let mediaRefs = mergeRecentMediaRefs(incoming: incoming.recentMediaRefs ?? [], existing: existing.recentMediaRefs ?? [])
+    merged.recentMediaRefs = mediaRefs.isEmpty ? nil : mediaRefs
+    let liveSmokeResults = mergeLiveSmokeResults(incoming: incoming.liveSmokeResults ?? [], existing: existing.liveSmokeResults ?? [])
+    merged.liveSmokeResults = liveSmokeResults.isEmpty ? nil : liveSmokeResults
+    let streamPublishLedger = mergeStreamPublishLedger(incoming: incoming.streamPublishLedger ?? [:], existing: existing.streamPublishLedger ?? [:])
+    merged.streamPublishLedger = streamPublishLedger.isEmpty ? nil : streamPublishLedger
+    merged.automationCreationStatus = latestAutomationCreationStatus(
+        incoming: incoming.automationCreationStatus,
+        existing: existing.automationCreationStatus
+    )
+    merged.pendingInteractiveCallback = mergePendingInteractiveCallback(
+        incoming: incoming.pendingInteractiveCallback,
+        existing: existing.pendingInteractiveCallback
+    )
+    merged.lastRecoverablePromptBatch = incoming.lastRecoverablePromptBatch
+    merged.lastOutboundSend = mergeLastOutboundSend(
+        incoming: incoming.lastOutboundSend,
+        existing: existing.lastOutboundSend
+    )
+    merged.activeJob = mergeActiveJob(
+        incoming: incoming.activeJob,
+        existing: existing.activeJob
+    )
+    return merged
+}
+
+private func mergeStreamPublishLedger(incoming: [String: StreamPublishRecord], existing: [String: StreamPublishRecord]) -> [String: StreamPublishRecord] {
+    var merged = existing
+    for (guid, record) in incoming {
+        merged[guid] = latestStreamPublishRecord(incoming: record, existing: existing[guid])
+    }
+    return merged
+}
+
+private func latestStreamPublishRecord(incoming: StreamPublishRecord, existing: StreamPublishRecord?) -> StreamPublishRecord {
+    guard let existing else { return incoming }
+    let incomingRank = streamPublishStatusRank(incoming.status)
+    let existingRank = streamPublishStatusRank(existing.status)
+    if incomingRank != existingRank {
+        return incomingRank > existingRank ? incoming : existing
+    }
+    let incomingTime = incoming.finishedAt ?? incoming.startedAt ?? incoming.receivedAt
+    let existingTime = existing.finishedAt ?? existing.startedAt ?? existing.receivedAt
+    if incomingTime == existingTime {
+        return streamPublishStatusRank(incoming.status) >= streamPublishStatusRank(existing.status) ? incoming : existing
+    }
+    return incomingTime >= existingTime ? incoming : existing
+}
+
+private func streamPublishStatusRank(_ status: String) -> Int {
+    switch status {
+    case StreamPublishStatus.failed, StreamPublishStatus.succeeded: return 4
+    case StreamPublishStatus.running: return 3
+    case StreamPublishStatus.waitingMedia: return 2
+    case StreamPublishStatus.claimed: return 1
+    default: return 0
+    }
+}
+
+private func mergeAutomationRoutes(incoming: [CodexAutomationRoute], existing: [CodexAutomationRoute]) -> [CodexAutomationRoute] {
+    var byId = Dictionary(uniqueKeysWithValues: existing.map { ($0.automationId, $0) })
+    for route in incoming {
+        if let current = byId[route.automationId] {
+            byId[route.automationId] = mergeAutomationRoute(incoming: route, existing: current)
+        } else {
+            byId[route.automationId] = route
+        }
+    }
+    return byId.values.sorted { lhs, rhs in
+        if lhs.createdAt == rhs.createdAt { return lhs.automationId < rhs.automationId }
+        return lhs.createdAt < rhs.createdAt
+    }
+}
+
+private func mergeRecentMediaRefs(incoming: [RecentMediaRef], existing: [RecentMediaRef]) -> [RecentMediaRef] {
+    var byKey = Dictionary(uniqueKeysWithValues: existing.map { (recentMediaRefKey($0), $0) })
+    for ref in incoming {
+        byKey[recentMediaRefKey(ref)] = ref
+    }
+    let merged = byKey.values.sorted { lhs, rhs in
+        if lhs.createdAt == rhs.createdAt { return lhs.path < rhs.path }
+        return lhs.createdAt < rhs.createdAt
+    }
+    return Array(merged.suffix(30))
+}
+
+private func mergeLiveSmokeResults(incoming: [LiveSmokeResult], existing: [LiveSmokeResult]) -> [LiveSmokeResult] {
+    var merged = existing
+    for result in incoming {
+        merged = updatedLiveSmokeResults(merged, with: result)
+    }
+    return merged
+}
+
+private func recentMediaRefKey(_ ref: RecentMediaRef) -> String {
+    "\(ref.direction)|\(ref.rowId.map(String.init) ?? "-")|\(ref.handleId)|\(ref.service)|\(ref.path)"
+}
+
+private func mergeAutomationRoute(incoming: CodexAutomationRoute, existing: CodexAutomationRoute) -> CodexAutomationRoute {
+    CodexAutomationRoute(
+        automationId: incoming.automationId,
+        name: incoming.name,
+        recipient: incoming.recipient,
+        service: incoming.service,
+        createdFromGuid: incoming.createdFromGuid ?? existing.createdFromGuid,
+        createdFromRowId: incoming.createdFromRowId ?? existing.createdFromRowId,
+        createdAt: min(incoming.createdAt, existing.createdAt),
+        lastSeenSessionId: incoming.lastSeenSessionId ?? existing.lastSeenSessionId,
+        lastDeliveredSessionId: incoming.lastDeliveredSessionId ?? existing.lastDeliveredSessionId,
+        lastDeliveredAt: latestNonNilTimestamp(incoming.lastDeliveredAt, existing.lastDeliveredAt)
+    )
+}
+
+private func latestAutomationCreationStatus(incoming: AutomationCreationStatus?, existing: AutomationCreationStatus?) -> AutomationCreationStatus? {
+    switch (incoming, existing) {
+    case let (incoming?, existing?):
+        return incoming.updatedAt >= existing.updatedAt ? incoming : existing
+    case let (incoming?, nil):
+        return incoming
+    case let (nil, existing?):
+        return existing
+    case (nil, nil):
+        return nil
+    }
+}
+
+private func mergePendingInteractiveCallback(incoming: PendingInteractiveCallback?, existing: PendingInteractiveCallback?) -> PendingInteractiveCallback? {
+    switch (incoming, existing) {
+    case let (incoming?, existing?):
+        return incoming.createdAt >= existing.createdAt ? incoming : existing
+    case let (incoming?, nil):
+        return incoming
+    case let (nil, existing?):
+        return pendingInteractiveCallbackIsTerminal(existing) ? nil : existing
+    case (nil, nil):
+        return nil
+    }
+}
+
+private func mergeLastOutboundSend(incoming: OutboundSendRecord?, existing: OutboundSendRecord?) -> OutboundSendRecord? {
+    switch (incoming, existing) {
+    case let (incoming?, existing?):
+        if incoming.attemptId == existing.attemptId {
+            return outboundSendRecordRank(incoming) >= outboundSendRecordRank(existing) ? incoming : existing
+        }
+        return incoming.startedAt >= existing.startedAt ? incoming : existing
+    case let (incoming?, nil):
+        return incoming
+    case let (nil, existing?):
+        return existing
+    case (nil, nil):
+        return nil
+    }
+}
+
+private func mergeActiveJob(incoming: ActiveJob?, existing: ActiveJob?) -> ActiveJob? {
+    guard var incoming, let existing else { return incoming }
+    guard let incomingJobId = incoming.jobId,
+          let existingJobId = existing.jobId,
+          incomingJobId == existingJobId else {
+        return incoming
+    }
+    incoming.codexPid = incoming.codexPid ?? existing.codexPid
+    incoming.codexSessionId = incoming.codexSessionId ?? existing.codexSessionId
+    incoming.codexTurnId = incoming.codexTurnId ?? existing.codexTurnId
+    incoming.outputPath = incoming.outputPath ?? existing.outputPath
+    incoming.sessionLogPath = incoming.sessionLogPath ?? existing.sessionLogPath
+    incoming.lastProgressAt = latestNonNilTimestamp(incoming.lastProgressAt, existing.lastProgressAt)
+    incoming.lastUserUpdateAt = latestNonNilTimestamp(incoming.lastUserUpdateAt, existing.lastUserUpdateAt)
+    incoming.lastEventAt = latestNonNilTimestamp(incoming.lastEventAt, existing.lastEventAt)
+    incoming.lastObservedSummary = latestActiveJobSummary(incoming: incoming, existing: existing)
+    incoming.permissionRecoveryAttempts = max(incoming.permissionRecoveryAttempts ?? 0, existing.permissionRecoveryAttempts ?? 0)
+    incoming.waitingForPermissionSince = incoming.waitingForPermissionSince ?? existing.waitingForPermissionSince
+    incoming.lastPermissionEventId = incoming.lastPermissionEventId ?? existing.lastPermissionEventId
+    incoming.recoverableBatch = incoming.recoverableBatch ?? existing.recoverableBatch
+    return incoming
+}
+
+private func latestActiveJobSummary(incoming: ActiveJob, existing: ActiveJob) -> String? {
+    guard let incomingSummary = incoming.lastObservedSummary else { return existing.lastObservedSummary }
+    guard let existingSummary = existing.lastObservedSummary else { return incomingSummary }
+    let incomingDate = DateCodec.parse(incoming.lastEventAt) ?? DateCodec.parse(incoming.lastProgressAt) ?? .distantPast
+    let existingDate = DateCodec.parse(existing.lastEventAt) ?? DateCodec.parse(existing.lastProgressAt) ?? .distantPast
+    return incomingDate >= existingDate ? incomingSummary : existingSummary
+}
+
+private func outboundSendRecordRank(_ record: OutboundSendRecord) -> Int {
+    switch record.status {
+    case "delivered": return 5
+    case "failed": return 4
+    case "dbObserved": return 3
+    case "sentToMessages": return 2
+    case "queued", "sending": return 1
+    default: return record.completedAt == nil ? 0 : 2
+    }
+}
+
+private func pendingInteractiveCallbackIsTerminal(_ callback: PendingInteractiveCallback) -> Bool {
+    ["completed", "answered", "canceled", "cancelled", "timedOut", "timeout", "failed"].contains(callback.status)
+}
+
+private func latestNonNilTimestamp(_ lhs: String?, _ rhs: String?) -> String? {
+    switch (lhs, rhs) {
+    case let (lhs?, rhs?):
+        return lhs >= rhs ? lhs : rhs
+    case let (lhs?, nil):
+        return lhs
+    case let (nil, rhs?):
+        return rhs
+    case (nil, nil):
+        return nil
     }
 }
 

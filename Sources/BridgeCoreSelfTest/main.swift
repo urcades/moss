@@ -17,7 +17,7 @@ func testSQLiteMessageSourceTrustedSenders() async throws {
     defer { try? FileManager.default.removeItem(at: dbURL) }
     let sql = """
     CREATE TABLE handle(ROWID INTEGER PRIMARY KEY, id TEXT, service TEXT);
-    CREATE TABLE message(ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, date INTEGER, handle_id INTEGER, is_from_me INTEGER, service TEXT);
+    CREATE TABLE message(ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB, date INTEGER, handle_id INTEGER, is_from_me INTEGER, service TEXT);
     CREATE TABLE message_attachment_join(message_id INTEGER, attachment_id INTEGER);
     CREATE TABLE attachment(ROWID INTEGER PRIMARY KEY, filename TEXT, mime_type TEXT, uti TEXT, transfer_name TEXT);
     INSERT INTO handle(ROWID, id, service) VALUES (1, '+1 (520) 609-9095', 'iMessage');

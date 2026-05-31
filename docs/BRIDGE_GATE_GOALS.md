@@ -1,0 +1,241 @@
+# Apple Messages Bridge Gate Goals
+
+This file is the working gate list for continuous bridge hardening. A gate is complete only when fake-runtime tests, live smoke evidence, status/doctor visibility, and installed-helper behavior agree.
+
+The continuous-goals contract for this workstream lives in `docs/BRIDGE_CONTINUOUS_GOALS.md`. Use `swift run codexmsgctl-swift gates` or `/codex gates` for the current non-destructive checklist of deterministic gates, live CLI smoke commands, trusted Messages commands, active smoke automation warnings, and latest live smoke blocker evidence. Use `swift run codexmsgctl-swift gates --strict` when a shell gate should fail until trusted Messages evidence, active bridge smoke automations, and live smoke blockers are clear. Use `swift run codexmsgctl-swift trusted-gates` to inspect real trusted-chat inbound/outbound row evidence, and `swift run codexmsgctl-swift trusted-gates --runbook` or `/codex trusted-gates runbook` for the exact Apple Messages command sequence.
+
+## Goal 1: Outbound Delivery Truth
+
+Success means outbound text and media can never look successful when Messages recorded a failed row.
+
+- Deterministic gates:
+  - Text evidence finds `message.text` and `message.attributedBody`.
+  - Attachment evidence records row id, `message.error`, `attachment.transfer_state`, and `date_delivered`.
+  - Failed sends are retryable and visible in `/status`, `/codex status`, and `codexmsgctl-swift status`.
+  - `/codex smoke text` and `/codex smoke attachment` run the same delivery path from Messages and report the recorded evidence.
+  - Attachment verification waits for delayed Messages DB rows and preserves SMS failed-row evidence.
+- Live gates:
+  - `swift run codexmsgctl-swift smoke text` passes with an outgoing Messages row.
+  - `swift run codexmsgctl-swift smoke attachment` passes for an image attachment row, or fails with exact DB evidence.
+- Current status:
+  - Text smoke passed on row 731.
+  - Current text smoke passed on row 745 with marker `CODEXMSGCTL_SMOKE_TEXT_4900E017-5AB5-482C-A02E-47099DB5664A`.
+  - Post-restart text smoke passed on row 747 with marker `CODEXMSGCTL_SMOKE_TEXT_6FCFBD88-EDB4-479C-B949-B9B1B12ACAA0`.
+  - Post-classifier/media-restart text smoke passed on row 749 with marker `CODEXMSGCTL_SMOKE_TEXT_3F39B797-5016-4F66-9F57-03DDAD7E2F1A`; `message.error=0`, `date_delivered=0`, and the DB row was observed.
+  - Current post-app-server-smoke text smoke passed on row 751 with marker `CODEXMSGCTL_SMOKE_TEXT_2F902340-AC0A-4729-A146-EF739E051209`; `message.error=0`, `date_delivered=0`, and the DB row was observed.
+  - Latest post-window-diagnostics text smoke passed on row 763 with marker `CODEXMSGCTL_SMOKE_TEXT_30FCD787-A7E6-4DE0-AD29-5AF038E37820`; `message.error=0`, `date_delivered=0`, and the DB row was observed.
+  - Old file-attachment smoke exposed row 732 with `error=25`, `transfer_state=6`; this was useful evidence but not the final image-media gate.
+  - Image attachment smoke passed on row 737 after normalizing the configured phone handle before opening the `sms:` URL; Messages renamed the pasted image to `IMG_5972.jpeg`, so verification uses the DB baseline row instead of requiring the marker in `transfer_name`.
+  - A later image attachment smoke hit a no-row AppleScript/clipboard failure after baseline row 743. Attachment verification now polls longer and retries once only when no Messages DB row appears; the hardened smoke then passed on row 744 with `transfer_state=5`.
+  - Current attachment smoke passed on row 746 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_B28DE88E-10AF-44FA-8043-A8FE4EAE37AE` after clipboard retry 2; Messages renamed the image to `IMG_1669.jpeg`.
+  - Post-restart attachment smoke passed on row 748 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_0B03A564-0DDA-4429-93DC-97C65995A72E`; Messages renamed the image to `IMG_3577.jpeg`, `message.error=0`, `transfer_state=5`.
+  - Post-classifier/media-restart attachment smoke passed on row 750 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_F8524182-A855-4B0C-854B-E1B061FF1E2B`; Messages renamed the image to `IMG_2008.jpeg`, `message.error=0`, `transfer_state=5`, after clipboard retry 2.
+  - Current post-app-server-smoke attachment smoke passed on row 752 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_97C66EAF-75BE-4839-9F51-1A31484A7791`; Messages renamed the image to `IMG_1774.jpeg`, `message.error=0`, `transfer_state=5`, after clipboard retry 2.
+  - Latest post-window-diagnostics attachment smoke passed on row 764 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_209480A9-1294-4792-8887-E8808FE9AB07`; Messages renamed the image to `IMG_8261.jpeg`, `message.error=0`, `transfer_state=5`, after clipboard retry 2.
+  - Current labeled smoke attachment passed on row 771 with marker `CODEXMSGCTL_SMOKE_ATTACHMENT_897BD28F-CC86-4263-A81E-F9F4C9FE4AB1`; Messages renamed the image to `IMG_1366.jpeg`, `message.error=0`, `transfer_state=5`.
+  - `/codex smoke attachment` now sends a marked image probe from the Messages command surface and keeps the probe as `lastOutboundSend` while sending an unrecorded summary reply.
+  - Fake-runtime coverage now verifies delayed attachment rows are observed after AppleScript returns, and SMS attachment sends pass the SMS service type while surfacing `error=25`/`transfer_state=6` evidence.
+
+## Goal 2: Media Continuity
+
+Success means follow-up prompts like "modify that image" use a real previous chat image or stop and ask for the source.
+
+- Deterministic gates:
+  - Recent inbound and outbound image refs persist in `BridgeState`.
+  - A previous-image follow-up attaches the latest usable image for that chat.
+  - A previous-image follow-up with no usable image asks for the source and does not start Codex.
+  - Final replies containing `BRIDGE_ATTACH:` send the attachment before any success text, and failed attachment delivery prevents the success text from being sent.
+  - `/codex smoke bridge-attach` and `codexmsgctl-swift smoke bridge-attach` exercise a final-reply-style `BRIDGE_ATTACH:` directive rather than direct attachment sending.
+  - `/codex smoke generated-image` asks a real app-server turn to create a marked PNG at a bridge temp path and reply with `BRIDGE_ATTACH:`; deterministic coverage verifies the generated artifact is attached before success text.
+  - `codexmsgctl-swift smoke generated-image` runs the same generated-media path from the CLI, requires the expected `BRIDGE_ATTACH:` directive, validates attachment delivery before success text, and records the generated outbound image for follow-up media smokes.
+  - `/codex smoke edit-image-check` and `codexmsgctl-swift smoke edit-image-check` attach the latest usable chat image, ask app-server to edit it into a new PNG, require the expected `BRIDGE_ATTACH:` directive, validate attachment delivery before success text, and record the edited image for further follow-ups.
+  - Messages DB ingress covers attachment-only rows, multiple attachments, `~/` path expansion, image/PDF/unsupported classification, and existence flags.
+- Live gates:
+  - Send an inbound image, then ask for a marked modification; app-server receives a `localImage`.
+  - Ask for a generated image and verify `BRIDGE_ATTACH` delivery evidence.
+  - Send a marked outbound image through the bridge, then ask app-server about "that image" and verify it receives the exact outbound image as a `localImage`.
+- Current status:
+  - `codexmsgctl-swift status` and `/codex status` now expose the recent media registry.
+  - State saves now merge `recentMediaRefs` so unrelated helper/CLI saves cannot erase the image registry used by "that image" follow-ups.
+  - Very recent inbound rows with attachment paths that are not readable yet are now deferred without advancing the Messages cursor. The bridge retries the same row on later ticks, processes it once the file appears, and stops deferring after the short missing-attachment window so permanently missing files cannot wedge the helper.
+  - `swift run codexmsgctl-swift smoke inbound-image-check` now validates the current recent inbound image registry, builds a "that image" follow-up, verifies the local image is attached to the app-server request, and then runs a marked app-server probe.
+  - If the registry is empty or contains only app-server-incompatible images, inbound-image smoke can recover the latest trusted inbound image from Messages DB and persist it back into `state.json`.
+  - HEIC/HEIF/TIFF/WebP/BMP inbound images recovered from Messages DB are converted to JPEG before app-server invocation, so the smoke verifies an attachable local image rather than accepting an unsupported-image blocker.
+  - Normal "that image" follow-up handling now converts the latest existing unsupported-but-convertible chat image to JPEG before building the app-server request, so a newer iPhone/HEIC-style image is not skipped in favor of an older PNG.
+  - Previous-image follow-up selection now skips unsupported recent image refs such as HEIC when choosing a source for app-server image input, and status marks those refs as `app-server-unsupported`.
+  - Live `swift run codexmsgctl-swift smoke inbound-image-check` passed with marker `CODEXMSGCTL_SMOKE_INBOUND_IMAGE_3A6D9799-EE48-453C-8220-AA8C2F255A3B`: it recovered trusted inbound row 721 (`IMG_5685.HEIC`), converted it to a temp JPEG, and app-server replied `SUCCESS`.
+  - A second live inbound-image smoke passed from the persisted converted media ref with marker `CODEXMSGCTL_SMOKE_INBOUND_IMAGE_5BF48A3C-C0CA-4A82-BAC3-52019F6E86F6`, proving the registry path works after recovery.
+  - Current inbound-image smoke passed from persisted converted row 721 with marker `CODEXMSGCTL_SMOKE_INBOUND_IMAGE_5B6E7633-55B2-4AC4-84FC-CDF4BA033A67`, thread `019e4f1c-56de-7741-9a0f-34894af6d9c3`, and turn `019e4f1c-58e7-7122-a970-152c225300ba`.
+  - Latest inbound-image smoke passed from recovered row 721 with marker `CODEXMSGCTL_SMOKE_INBOUND_IMAGE_023CFA9F-7D8E-4F9A-BE5A-884E7CC94E68`, converted path `/var/folders/dy/x0ybkbk140d3zb5wgfj9gwrw0000gn/T/MessagesCodexBridgeInboundMedia/461865E0-5BA4-4741-8592-C2C656A20167.jpg`, thread `019e4f7c-515c-75f0-85a3-667ddcbc7cbf`, and turn `019e4f7c-5321-7cb3-9715-e435d05facc7`.
+  - `/codex smoke outbound-image-check` and `codexmsgctl-swift smoke outbound-image-check` now send a marked image, persist it as a recent outbound media ref, build a "that image" app-server request, and require marker plus `SUCCESS`.
+  - Live `swift run codexmsgctl-swift smoke outbound-image-check` passed with marker `CODEXMSGCTL_SMOKE_OUTBOUND_IMAGE_D0F56FCE-D2CE-4953-9B01-C1022ADE34F0`: Messages DB row 753 (`message.error=0`, `transfer_state=5`, renamed to `IMG_7646.jpeg`), app-server thread `019e4f2f-3cf5-7b20-813b-d6c4598f6b0e`, and turn `019e4f2f-3f08-7961-a78c-490f507e8073`.
+  - A later outbound-image smoke exposed a corrupt smoke PNG fixture: Messages delivered row 767, but app-server blocked with `Format error decoding Png: CRC error` while reading the bridge-created fixture.
+  - The smoke PNG fixture now has deterministic chunk CRC coverage, and the fixed outbound-image smoke passed with marker `CODEXMSGCTL_SMOKE_OUTBOUND_IMAGE_2DAE7371-5CCC-4798-88C0-97188C29CDE9`: Messages DB row 768 (`message.error=0`, `transfer_state=5`, renamed to `IMG_8029.jpeg`), app-server thread `019e4f7e-516d-7bf3-9a2e-5121afdfa900`, and turn `019e4f7e-53c0-77c3-86eb-24dea23aeec8`.
+  - The smoke PNG fixture is now visually labeled `BRIDGE SMOKE`, not a single mystery pixel, and latest outbound-image smoke passed with marker `CODEXMSGCTL_SMOKE_OUTBOUND_IMAGE_4F0887CA-92A0-4A3A-A68D-DDCA7E32CF4F`: Messages DB row 772 (`message.error=0`, `transfer_state=5`, renamed to `IMG_9953.jpeg`), app-server thread `019e4f85-c7a1-7aa3-857d-15102820b7ee`, and turn `019e4f85-c96b-73b3-bed8-6d6635d2a7b1`.
+  - Media final replies now send validated attachments before success text. Deterministic coverage verifies `Done.` is not sent when the attachment delivery path fails.
+  - Live `swift run codexmsgctl-swift smoke bridge-attach` passed with marker `CODEXMSGCTL_SMOKE_BRIDGE_ATTACH_136C4E7D-091D-4DA8-8AD3-03877F392FF2`: Messages DB attachment row 756 (`message.error=0`, `transfer_state=5`, renamed to `IMG_8173.jpeg`) was observed before success text row 757 (`message.error=0`).
+  - Latest `swift run codexmsgctl-swift smoke bridge-attach` passed with marker `CODEXMSGCTL_SMOKE_BRIDGE_ATTACH_4CDCE433-7B36-473B-9A4A-2CC71B0144A9`: Messages DB attachment row 765 (`message.error=0`, `transfer_state=5`, renamed to `IMG_8619.jpeg`) was observed before success text row 766 (`message.error=0`).
+  - Live `swift run codexmsgctl-swift smoke generated-image` passed with marker `CODEXMSGCTL_SMOKE_GENERATED_IMAGE_6F182844-F31F-41DD-B61D-B9A81CC62485`: app-server thread `019e4fa1-fcf4-7a62-b956-fcb6025fde0a`, turn `019e4fa1-fe66-77e3-9e2d-06739d7db671`, generated PNG `/Users/moss/Library/Application Support/MessagesLLMBridge/tmp/codexmsgctl-generated-image-CODEXMSGCTL_SMOKE_GENERATED_IMAGE_6F182844-F31F-41DD-B61D-B9A81CC62485.png`, attachment row 773 (`message.error=0`, `transfer_state=5`, renamed to `IMG_5080.jpeg`) before success text row 774 (`message.error=0`).
+  - Live `swift run codexmsgctl-swift smoke edit-image-check` passed with marker `CODEXMSGCTL_SMOKE_EDIT_IMAGE_8D4BE177-56AF-4E17-9785-77208FF40E37`: it reused generated source image row 773, app-server thread `019e4fac-5119-7ad2-93f0-847e337d5a31`, turn `019e4fac-52cd-7833-8c20-2de8d8fe8415`, edited PNG `/Users/moss/Library/Application Support/MessagesLLMBridge/tmp/codexmsgctl-edited-image-CODEXMSGCTL_SMOKE_EDIT_IMAGE_8D4BE177-56AF-4E17-9785-77208FF40E37.png`, attachment row 775 (`message.error=0`, `transfer_state=5`, renamed to `IMG_6432.jpeg`) before success text row 776 (`message.error=0`).
+  - `/codex smoke generated-image` and `/codex smoke edit-image-check` are now available as trusted-chat live gates for app-server-produced media; live trusted-chat evidence is still pending.
+
+## Goal 3: Automation Truth
+
+Success means Messages-triggered automation creation is bridge-owned, synchronous, observable, and never contradicted by a later normal Codex reply.
+
+- Deterministic gates:
+  - Automation creation writes a real `automation.toml`.
+  - Creation does not start a normal active Codex job.
+  - `/codex automations` reports in-flight creation status.
+  - Completed automation sessions are forwarded once.
+- Live gates:
+  - A marked automation creation request produces one truthful confirmation.
+  - `/codex automations` shows the route or the exact in-progress/failure phase.
+- Current status:
+  - `/codex automations` now keeps the latest confirmed creation evidence visible too, including created file path, route status, and confirmation-send evidence before listing routes.
+  - `swift run codexmsgctl-swift smoke automation` creates a real inactive `automation.toml`, persists its route, and records `automationCreationStatus`.
+  - `swift run codexmsgctl-swift smoke automation --deactivate-active --dry-run` lists legacy active `bridge-smoke-test*` automations without changing them; the same command without `--dry-run` is the explicit cleanup path to mark them inactive.
+  - Live smoke passed for `bridge-smoke-test-7431ce30` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_B219F241-59D2-449C-BF80-244C7431CE30`.
+  - Current live smoke passed for `bridge-smoke-test-8fd10e85` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_2B366AD1-1F91-45B3-99C9-6B728FD10E85`.
+  - Current post-app-server-smoke automation smoke passed for `bridge-smoke-test-0a76716f` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_162A28FB-86ED-4E98-B083-5A6F0A76716F`; status showed `Automation creation status: confirmed` and route persisted with active job `none`.
+  - Latest automation smoke passed for `bridge-smoke-test-6865d9b0` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_5CB8E56E-8227-4914-943A-37876865D9B0`; route persisted to +1-520-609-9095 via iMessage.
+  - Current inactive automation smoke passed for `bridge-smoke-test-ae750198` with marker `CODEXMSGCTL_SMOKE_AUTOMATION_D6E56FDD-4717-4699-9518-142EAE750198`; the created `automation.toml` contains `status = "INACTIVE"`.
+  - `codexmsgctl-swift status`, `doctor`, and `/codex automations` now report active `bridge-smoke-test*` automation files as informational warnings. On 2026-05-22 they surfaced six older active smoke artifacts while the current smoke-created automation stayed inactive.
+  - `codexmsgctl-swift gates`, `/codex gates`, and `codexmsgctl-swift gates --strict` now include active bridge smoke automation warnings, and strict gates remain red until those artifacts are cleared or made inactive.
+  - `codexmsgctl-swift status` now reports automation creation status and the latest automation routes.
+  - State saves now merge automation route/status fields so a helper tick with stale in-memory state cannot erase a newly persisted route.
+  - Automation creation status, automation route persistence, backfilled automation routes, and automation delivery cursors now pass through serialized mutation helpers. A source-level architecture regression prevents those paths from reintroducing direct automation state assignment patterns inside `BridgeService`.
+  - Automation creation classification now has a phrase matrix covering creation/reminder/monitor/follow-up positives plus management/debug/list/status and ordinary schedule false positives.
+
+## Goal 4: Interactive Callback Parity
+
+Success means app-server `item/tool/requestUserInput` and `mcpServer/elicitation/request` can pause through Messages, accept the next trusted reply, resume the original turn, and time out visibly.
+
+- Deterministic gates:
+  - Pending callback state survives state saves.
+  - Inbound reply routing goes to the callback instead of a new prompt.
+  - Cancel and timeout answer the app-server request and clear state.
+- Architecture gate:
+  - The backend now has a JSON-RPC responder channel for app-server callbacks. The CLI and Messages command surfaces have separate requestUserInput and MCP elicitation callback smokes; the current live requestUserInput proof is blocked before bridge callback handling because Codex reports `request_user_input is unavailable in Default mode`.
+- Current status:
+  - State saves now preserve non-terminal `pendingInteractiveCallback` records across stale helper/CLI saves while still allowing terminal callbacks to clear.
+  - Inbound trusted non-command replies now route to pending callback state instead of starting a new prompt batch, recording response text/row/guid and sending a visible acknowledgement.
+  - `/cancel` and callback expiration now clear pending callback state and send visible Messages feedback.
+  - `CodexAppServerBackend` now accepts an interactive callback responder and can return real JSON-RPC results for `item/tool/requestUserInput` and `mcpServer/elicitation/request` instead of always emitting the unsupported error.
+  - The default bridge backend now persists a pending callback, messages the user, waits for the routed answer, returns app-server-shaped callback results, and clears terminal callback state.
+  - Deterministic coverage now runs a `BridgeService` end-to-end callback flow through the default backend responder seam: fake app-server asks for input, the bridge sends the Messages prompt, the next trusted reply is captured, the responder returns structured answers, the original turn sends its final answer, and pending/active state clears.
+  - `/codex smoke callback` now creates a pending callback from Apple Messages and verifies that the next trusted non-command reply is captured by the callback route, reports the captured row/guid/text, clears pending state, and does not start a normal Codex job. Deterministic coverage exercises the two-message flow.
+  - `/codex smoke app-server-callback` now starts a real app-server turn from Apple Messages with a prompt that must use app-server interactive user input before final answer. Deterministic coverage proves the command starts the default backend, sends the callback prompt, routes the trusted reply, and completes the original turn.
+  - `/codex smoke mcp-elicitation-callback` now starts a separate real app-server turn from Apple Messages with a prompt that must use MCP elicitation before final answer. Deterministic coverage proves the command sends an `mcpServer/elicitation/request` prompt, routes the trusted reply, and completes the original turn.
+  - `codexmsgctl-swift smoke app-server-callback` now runs the same real app-server prompt with an automatic JSON-RPC callback responder and fails distinctly when no callback request is emitted.
+  - `codexmsgctl-swift smoke mcp-elicitation-callback` runs the MCP elicitation prompt with the same automatic responder, so live requestUserInput and MCP elicitation blockers are recorded under separate smoke names.
+  - Live CLI proof on 2026-05-22 reached app-server thread `019e4fb9-e17e-7132-9261-6e5605ab6e21` / turn `019e4fb9-e36e-7a82-bc58-fa965ab16a35`, but Codex completed with `BLOCKED request_user_input is unavailable in Default mode` and emitted no `item/tool/requestUserInput` request.
+  - Live MCP elicitation smoke on 2026-05-22 reached app-server thread `019e4fe6-5a35-7b10-bccb-7d4e2cb26a02` / turn `019e4fe6-5bd2-7860-9526-62ec3ec5613e`, but Codex again completed with `BLOCKED request_user_input is unavailable in Default mode` and emitted no `mcpServer/elicitation/request`.
+  - The app-server request loop now recognizes the full current server-request method set from the generated protocol schema. Command/file approval requests are safely declined, and unsupported client-only requests such as attestation or auth-token refresh return visible JSON-RPC errors instead of being ignored.
+  - Remaining gap: identify whether app-server can start Messages-launched turns in a callback-capable mode or route a real MCP elicitation from a connector/plugin; then rerun both CLI and trusted `/codex smoke app-server-callback` and `/codex smoke mcp-elicitation-callback`.
+
+## Goal 5: Runtime State And Process Supervision
+
+Success means bridge state writes cannot clobber each other and cancellation leaves no orphan app-server or tool descendants.
+
+- Deterministic gates:
+  - Corrupt `state.json` is backed up and defaulted.
+  - Cancel kills the known process tree.
+  - Simultaneous tick/callback/cancel/send-record updates preserve unrelated fields.
+- Current status:
+  - Deterministic coverage now verifies stale state saves preserve concurrently added automation route/status fields and recent media refs while still accepting incoming cursor updates.
+  - The same stale-save coverage now includes non-terminal pending interactive callbacks and last outbound send evidence, including protection against downgrading completed send evidence back to an in-flight state.
+  - Same-active-job state saves now merge process/thread/turn/output metadata, latest progress timestamps, permission recovery fields, and still allow terminal active-job clears.
+  - JSON state writes are now serialized by state-file path across separate `RuntimeStores` instances, and the store exposes an atomic `update` helper. Deterministic coverage verifies concurrent route/media updates from different store objects cannot drop either field.
+  - `BridgeService` now keeps in-memory state in a serialized `BridgeStateBox` instead of an unlocked struct plus scattered ad hoc locks. Deterministic coverage verifies concurrent in-memory mutations cannot drop media refs while updating the cursor.
+  - Cursor updates, outbound delivery evidence, recent media refs, active-job updates, callback completion, and `/cancel` state transitions now pass through serialized mutation helpers. Cancel still saves the terminal callback state before clearing it so the merge layer cannot resurrect a pending callback.
+  - Pending prompt batch state and interactive callback reply/expiry/clear transitions now pass through serialized mutation helpers. A source-level architecture regression prevents direct pending-batch and pending-callback assignment patterns inside `BridgeService`.
+  - Prompt job-start, `/reset`, Codex session start/resume/expiry, session id capture, and session completion/error timestamps now pass through serialized mutation helpers. A source-level architecture regression prevents those paths from reintroducing direct session/job-start assignment patterns.
+  - Automation creation status, automation route persistence, and automation delivery cursor updates now pass through serialized mutation helpers.
+  - Transient local command, interactive callback reply, and prompt batch dispatch now pass through `BridgeJobQueue`; deterministic coverage verifies cut-through jobs can run during active Codex work while prompt batches remain queued, and a source-level regression prevents raw queue array mutation inside `BridgeService`.
+  - App-server connection close now terminates the process tree before closing stdin, preventing timeout cleanup from orphaning app-server child processes.
+  - Deterministic coverage now runs a fake app-server that spawns a child process and verifies timeout cleanup removes the child.
+  - Doctor now parses app-server process snapshots by pid, parent pid, process group, elapsed time, and transport, and flags orphaned `stdio://` app-server processes separately from long-lived `unix://` or desktop app-server processes.
+  - Synchronous doctor probes now have a default timeout, and doctor uses cached capability inventory for status instead of blocking on a fresh app-server inventory refresh.
+  - Doctor now reports corrupt `state.json` recovery backups by exact backup path when they exist. Deterministic coverage verifies the latest backup path is discoverable; current live doctor reports `State recovery backups: none`.
+  - Doctor now reports helper and permission-broker LaunchAgent loaded state plus provenance across expected installed executable path, LaunchAgent plist `ProgramArguments[0]`, and the loaded `launchctl print` program path. Current live doctor shows all three paths agree for both LaunchAgents.
+  - Doctor now compares built helper/broker executables with the installed runtime copies and reports byte-level match/mismatch when both artifacts exist. Deterministic coverage verifies match, mismatch, and missing-built-artifact behavior.
+  - Current live doctor reports built-vs-installed identity matches for the helper (`3367392` bytes) and permission broker (`3430304` bytes), with matching built/installed mtimes.
+- Live gates:
+  - Doctor reports app-server process snapshots without hanging.
+  - Cancel/timeout leaves no bridge-owned orphan `codex app-server` or Computer Use child process.
+
+## Goal 6: Capability And Version Drift
+
+Success means the bridge continuously reports what Codex can really do from Messages, and each relevant Codex changelog capability is adopted, tested unavailable, or explicitly deferred.
+
+- Deterministic gates:
+  - Capability cache separates discovered, callable, blocked, and unsupported.
+  - Browser, Chrome, Computer Use, and app connector probes report exact blockers.
+  - Dynamic app-server tool forwarding has contract coverage for MCP success, MCP error content, unsupported non-MCP namespaces, malformed request fields, images, primitives, and unknown JSON object content with searchable keys.
+  - Stalled dynamic MCP forwarding returns a structured tool failure, includes the timed-out app-server response id, and closes the app-server connection.
+- Live gates:
+  - `doctor --probe-computer-use` returns within its timeout and prints exact blocker text.
+  - `/codex status` agrees with `codexmsgctl-swift status` about callable tools.
+- Current status:
+  - `swift run codexmsgctl-swift smoke computer-use` passed with real `list_apps` and `get_app_state` calls and marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_2AFB06AB-BA16-4C44-B947-5543EEBB8654`.
+  - Later `swift run codexmsgctl-swift doctor --probe-computer-use` runs failed twice with exact live blocker `Computer Use server error -10005: cgWindowNotFound`; this is now recorded as a live runtime condition rather than a silent fallback.
+  - Current `swift run codexmsgctl-swift doctor --probe-computer-use` passed with `Computer Use probe: SUCCESS Start Page`.
+  - Current `swift run codexmsgctl-swift smoke computer-use` passed with real `list_apps` and `get_app_state` calls and marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_D076BC6E-2948-4C7B-94A3-E7AFFC703587`.
+  - Current smoke computer-use passed again with marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_C809B0CA-D913-4040-9B3A-5A5DB1CF9D2E`.
+  - A later `doctor --probe-computer-use` run returned without hanging and failed visibly with exact blocker `BLOCKED Computer Use server error -10005: cgWindowNotFound`.
+  - Current `swift run codexmsgctl-swift doctor --probe-computer-use` uses the same marker-based Computer Use prompt as smoke and passed with marker `CODEX_DOCTOR_COMPUTER_USE_D98B1A76-6117-48FC-96E0-B660287BE5B0`, response `SUCCESS Start Page`.
+  - `swift run codexmsgctl-swift smoke chrome` invoked the Chrome skill path and returned the exact blocker `privileged native pipe bridge is not available; browser-client is not trusted` with marker `CODEXMSGCTL_SMOKE_CHROME_9E2AAA1F-51AE-44D3-9B60-6A63DBEED695`.
+  - Current `swift run codexmsgctl-swift smoke chrome` still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_CHROME_BF716326-E9E4-40FF-A47A-173DB6A40F3A`.
+  - Current smoke chrome still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_CHROME_AFFEEED9-3DCA-469B-AC95-CF261D565C74`.
+  - Post-dynamic-tool-contract smoke chrome passed with marker `CODEXMSGCTL_SMOKE_CHROME_576B25C3-DDA5-47B2-9221-ACEC6F3EDAC9` and exact blocker `privileged native pipe bridge is not available; browser-client is not trusted`.
+  - Post-classifier-restart `swift run codexmsgctl-swift smoke computer-use` passed with marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_76A2D932-9377-4AD0-A1E5-B91A4747AB10` and exact blocker `Computer Use server error -10005: cgWindowNotFound`.
+  - Current capability smokes passed with exact results: Chrome marker `CODEXMSGCTL_SMOKE_CHROME_EECDCD30-9A25-42BA-B67D-869D8C5F6ABB` blocked by `privileged native pipe bridge is not available; browser-client is not trusted`; Browser marker `CODEXMSGCTL_SMOKE_BROWSER_99BE312F-8601-418D-AEC9-3CBEA61ACDA0` blocked by `Browser is not available: iab`; Computer Use marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_3A921966-16AC-4650-82D4-27825778951F` succeeded with `Start Page`.
+  - Latest `swift run codexmsgctl-swift doctor --probe-computer-use` returned without hanging and failed visibly with marker `CODEX_DOCTOR_COMPUTER_USE_F18B0330-8F43-44B5-A088-849685647F2A`, exact blocker `Computer Use server error -10005: cgWindowNotFound`, and local window preflight `Safari=0; Messages=0; Finder=0; TextEdit=0; System Settings=0`.
+  - Latest `swift run codexmsgctl-swift smoke computer-use` passed as an exact-blocker smoke with marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_E06B7FB1-009A-4274-B3B5-4C739955853B` and the same local window preflight appended to the response.
+  - After a visible Safari window was available again, latest `swift run codexmsgctl-swift doctor --probe-computer-use` passed with marker `CODEX_DOCTOR_COMPUTER_USE_F6BCAFB4-43A8-49AF-99E6-A3C4BE3E9532`, response `SUCCESS Start Page`, and full doctor status green.
+  - Doctor's Computer Use probe now decorates `cgWindowNotFound` with local AX/frontmost/window counts and explicitly calls out the all-zero-window case as a current GUI-session/capturable-target problem.
+  - `swift run codexmsgctl-swift smoke browser` invoked the Browser skill path and returned the exact blocker `Browser is not available: iab` with marker `CODEXMSGCTL_SMOKE_BROWSER_9BC2108C-E062-4CA4-8F74-CD305E23A487`.
+  - Current `swift run codexmsgctl-swift smoke browser` still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_BROWSER_8A9C61EA-F7B0-451F-8BC4-E261E15DAFAD`.
+  - Current smoke browser still reports the expected blocker with marker `CODEXMSGCTL_SMOKE_BROWSER_F03F2AD3-962F-4A33-8C8E-09CCE3734F69`.
+  - `codexmsgctl-swift smoke` now has standalone `chrome`, `browser`, and `computer-use` subcommands that print app-server pid, thread id, turn id, progress, final response, and blocker text.
+  - Doctor's Computer Use probe now shares the same hardened marker prompt as `smoke computer-use`, so health checks and capability smoke no longer drift in behavior.
+  - `codexmsgctl-swift status` and `/codex status` now use the capability cache first and bound live refresh attempts, so a stuck app-server capability refresh cannot hang status. Deterministic coverage verifies the best-effort status lookup returns an existing cache even when the Codex command is unavailable.
+  - `codexmsgctl-swift trusted-gates` now reports whether trusted Messages gate commands have real inbound rows and nearby outbound reply rows, including outbound `message.error` values.
+  - Trusted-gate evidence now constrains outbound replies to the same trusted chat when Messages exposes an outgoing handle, reads attributed-body snippets when `message.text` is empty, and prints the next missing trusted command to send from Apple Messages. `/codex trusted-gates` exposes the same evidence from Apple Messages as an observer command, not as a required gate. Two-step callback gates now distinguish the initial prompt from the trusted follow-up reply and completion reply, reporting `awaiting-followup` or `awaiting-completion` instead of prematurely reporting `observed`. `status`, `/codex status`, and doctor now summarize trusted gate counts and the next required trusted command. `trusted-gates --runbook` and `/codex trusted-gates runbook` print the exact trusted-chat command sequence plus callback follow-up replies. Latest live CLI output still shows missing trusted inbound gate commands, with `/codex status` as the next command.
+  - Strict gates now accept Browser, Chrome, and Computer Use live smoke blockers only when marker plus exact blocker detail are present, and keep those accepted blockers visible in the report. App-server callback and MCP elicitation blockers remain hard failures.
+  - Capability cache formatting now marks caches stale after 24h in status and doctor output, so version/tool drift is visible even when bounded refreshes are skipped.
+  - CLI live smoke probes and `doctor --probe-computer-use` now persist their latest result by smoke name in `BridgeState`, and `status`, `/codex status`, and doctor show the latest blocker/success marker. This makes inventory/runtime drift visible after the smoke command exits, such as Chrome inventory being callable while live Chrome smoke is blocked by native-pipe trust or Computer Use being blocked by `cgWindowNotFound`.
+  - Messages-launched `/codex smoke ...` commands persist their start/result evidence as `messages-*` live smoke records. Long-running generated-image, app-server-callback, and mcp-elicitation-callback smokes overwrite the initial pending record with final pass/block/fail evidence, thread id, and turn id when the active app-server job completes.
+  - Dynamic tool forwarding now has deterministic stalled-call coverage using a fake app-server connection that waits until the RPC deadline, then verifies the bridge sends an explicit failed tool result for the original dynamic call.
+  - `codexmsgctl-swift smoke app-server` and `/codex smoke app-server` now run a no-tool marked app-server turn and require the final response to contain the marker plus `SUCCESS`.
+  - Current `swift run codexmsgctl-swift smoke app-server` passed with marker `CODEXMSGCTL_SMOKE_APP_SERVER_67979A3A-523E-4A7D-8938-B9CABF065197`, thread `019e4f19-beec-70c1-8786-1ec4e10486f2`, and turn `019e4f19-c068-75d2-96ab-0fddbd3b903c`.
+  - Latest `swift run codexmsgctl-swift smoke app-server` passed with marker `CODEXMSGCTL_SMOKE_APP_SERVER_A0B8DD92-1F8E-44DD-A337-9DDA2AD19D9E`, thread `019e4f7c-36ec-7cb3-a816-b0334b7ccc30`, and turn `019e4f7c-387d-79e2-8fe5-eb033d9cab8d`.
+  - Post-restart `swift run codexmsgctl-swift status` returned with `Codex capability cache: cached at 2026-05-22T08:38:33.701Z` and callable Chrome, Computer Use, and Apps/connectors invocation status.
+  - The Messages command surface now recognizes `/codex smoke automation`, `/codex smoke callback`, `/codex smoke inbound-image-check`, `/codex smoke chrome`, `/codex smoke browser`, and `/codex smoke computer-use`, so capability probes can be launched from Apple Messages instead of only from the CLI. Deterministic coverage verifies `/codex smoke chrome` invokes the app-server probe path and returns thread/turn evidence in the reply.
+  - Post-restart `swift run codexmsgctl-swift smoke chrome` passed with marker `CODEXMSGCTL_SMOKE_CHROME_33E4142A-6BDF-4224-A9BD-2D7148DAACCA` and exact blocker `privileged native pipe bridge is not available; browser-client is not trusted`.
+  - Latest capability smokes passed with exact results: Chrome marker `CODEXMSGCTL_SMOKE_CHROME_C2CBB592-630B-4B75-80C3-92C20E4757E9` blocked by `privileged native pipe bridge is not available; browser-client is not trusted`; Browser marker `CODEXMSGCTL_SMOKE_BROWSER_711A4E9A-D50F-4B1D-B0A0-F6BBA5F1A86D` blocked by `Browser is not available: iab`; Computer Use marker `CODEXMSGCTL_SMOKE_COMPUTER_USE_C2AED373-CC7A-4A76-8443-A45744CD9722` succeeded with `Start Page`.
+
+## Required Green Gate Set
+
+Before this workstream is complete, the installed helper must satisfy:
+
+- `swift run BridgeCoreTests`
+- `swift run BridgeCoreSelfTest`
+- `swift test`
+- `swift run codexmsgctl-swift doctor --probe-computer-use`
+- `swift run codexmsgctl-swift gates`
+- `swift run codexmsgctl-swift gates --strict`
+- `swift run codexmsgctl-swift trusted-gates`
+- `swift run codexmsgctl-swift smoke text`
+- `swift run codexmsgctl-swift smoke attachment`
+- `swift run codexmsgctl-swift smoke bridge-attach`
+- `swift run codexmsgctl-swift smoke generated-image`
+- `swift run codexmsgctl-swift smoke edit-image-check`
+- `swift run codexmsgctl-swift smoke app-server`
+- `swift run codexmsgctl-swift smoke inbound-image-check`
+- `swift run codexmsgctl-swift smoke outbound-image-check`
+- `/codex status` from the trusted Messages chat
+- A live inbound-image follow-up edit probe
+- A live automation creation/list/delivery probe
+- A live Browser/Chrome/Computer Use blocker-or-success probe

@@ -5,13 +5,15 @@ public struct CodexCapabilities: Codable, Equatable, Sendable {
     public var appServerAvailable: Bool
     public var remoteControlAvailable: Bool
     public var threadReadAvailable: Bool
+    public var inventory: CodexToolInventory?
     public var warnings: [String]
 
-    public init(version: String?, appServerAvailable: Bool, remoteControlAvailable: Bool, threadReadAvailable: Bool, warnings: [String]) {
+    public init(version: String?, appServerAvailable: Bool, remoteControlAvailable: Bool, threadReadAvailable: Bool, inventory: CodexToolInventory? = nil, warnings: [String]) {
         self.version = version
         self.appServerAvailable = appServerAvailable
         self.remoteControlAvailable = remoteControlAvailable
         self.threadReadAvailable = threadReadAvailable
+        self.inventory = inventory
         self.warnings = warnings
     }
 
@@ -21,6 +23,125 @@ public struct CodexCapabilities: Codable, Equatable, Sendable {
         remoteControlAvailable &&
         threadReadAvailable &&
         !warnings.contains { $0.contains("0.130.0") }
+    }
+}
+
+public struct CodexToolInventory: Codable, Equatable, Sendable {
+    public var skills: [CodexSkillInventoryItem]
+    public var plugins: [CodexPluginInventoryItem]
+    public var apps: [CodexAppInventoryItem]
+    public var mcpServers: [CodexMcpServerInventoryItem]
+    public var warnings: [String]
+
+    public init(
+        skills: [CodexSkillInventoryItem] = [],
+        plugins: [CodexPluginInventoryItem] = [],
+        apps: [CodexAppInventoryItem] = [],
+        mcpServers: [CodexMcpServerInventoryItem] = [],
+        warnings: [String] = []
+    ) {
+        self.skills = skills
+        self.plugins = plugins
+        self.apps = apps
+        self.mcpServers = mcpServers
+        self.warnings = warnings
+    }
+
+    public var enabledSkillCount: Int {
+        skills.filter(\.enabled).count
+    }
+
+    public var accessibleAppCount: Int {
+        apps.filter(\.isAccessible).count
+    }
+
+    public var mcpToolCount: Int {
+        mcpServers.reduce(0) { $0 + $1.toolCount }
+    }
+}
+
+public struct CodexSkillInventoryItem: Codable, Equatable, Sendable {
+    public var name: String
+    public var description: String?
+    public var path: String?
+    public var enabled: Bool
+
+    public init(name: String, description: String? = nil, path: String? = nil, enabled: Bool = true) {
+        self.name = name
+        self.description = description
+        self.path = path
+        self.enabled = enabled
+    }
+}
+
+public struct CodexPluginInventoryItem: Codable, Equatable, Sendable {
+    public var name: String
+    public var displayName: String?
+    public var skillCount: Int
+    public var appCount: Int
+    public var mcpServerCount: Int
+
+    public init(name: String, displayName: String? = nil, skillCount: Int = 0, appCount: Int = 0, mcpServerCount: Int = 0) {
+        self.name = name
+        self.displayName = displayName
+        self.skillCount = skillCount
+        self.appCount = appCount
+        self.mcpServerCount = mcpServerCount
+    }
+}
+
+public struct CodexAppInventoryItem: Codable, Equatable, Sendable {
+    public var id: String
+    public var name: String
+    public var description: String?
+    public var isAccessible: Bool
+    public var isEnabled: Bool
+    public var pluginDisplayNames: [String]
+    public var labels: [String: String]
+
+    public init(id: String, name: String, description: String? = nil, isAccessible: Bool = false, isEnabled: Bool = false, pluginDisplayNames: [String] = [], labels: [String: String] = [:]) {
+        self.id = id
+        self.name = name
+        self.description = description
+        self.isAccessible = isAccessible
+        self.isEnabled = isEnabled
+        self.pluginDisplayNames = pluginDisplayNames
+        self.labels = labels
+    }
+}
+
+public struct CodexMcpServerInventoryItem: Codable, Equatable, Sendable {
+    public var name: String
+    public var toolCount: Int
+    public var resourceCount: Int
+    public var resourceTemplateCount: Int
+    public var authStatus: String?
+
+    public init(name: String, toolCount: Int = 0, resourceCount: Int = 0, resourceTemplateCount: Int = 0, authStatus: String? = nil) {
+        self.name = name
+        self.toolCount = toolCount
+        self.resourceCount = resourceCount
+        self.resourceTemplateCount = resourceTemplateCount
+        self.authStatus = authStatus
+    }
+}
+
+public enum CapabilityInvocationStatus: String, Codable, Equatable, Sendable {
+    case discovered
+    case callable
+    case blocked
+    case unsupported
+}
+
+public struct CodexCapabilityInvocation: Codable, Equatable, Sendable {
+    public var name: String
+    public var status: CapabilityInvocationStatus
+    public var detail: String
+
+    public init(name: String, status: CapabilityInvocationStatus, detail: String) {
+        self.name = name
+        self.status = status
+        self.detail = detail
     }
 }
 
@@ -37,6 +158,8 @@ public struct CodexCapabilitySnapshot: Equatable, Sendable {
         self.cacheAgeSeconds = cacheAgeSeconds
     }
 }
+
+public let staleCodexCapabilityCacheAgeSeconds = 86_400
 
 private struct CodexCapabilityCacheEntry: Codable {
     var cachedAt: String
@@ -81,6 +204,8 @@ public enum CodexAppServerError: Error, CustomStringConvertible, Equatable, Send
     }
 }
 
+public typealias CodexInteractiveCallbackResponder = @Sendable (_ method: String, _ requestId: Any, _ params: [String: Any]?) throws -> [String: Any]
+
 public protocol CodexAppServerConnection: AnyObject, Sendable {
     func start() throws
     func send(_ message: [String: Any]) throws
@@ -120,32 +245,78 @@ public final class CodexAppServerClient: @unchecked Sendable {
             return codexThreadHistory(from: result, fallbackThreadId: threadId)
         }.value
     }
+
+    public func capabilityInventory(cwd: String, forceReload: Bool = false) async throws -> CodexToolInventory {
+        let timeoutMs = timeoutMs
+        let makeConnection = makeConnection
+        return try await Task.detached {
+            let connection = try makeConnection()
+            let rpc = CodexAppServerRPC(connection: connection, timeoutMs: timeoutMs)
+            defer { rpc.close() }
+            try rpc.initialize()
+
+            var inventory = CodexToolInventory()
+            inventory.skills = try rpc.optionalRequest(
+                method: "skills/list",
+                params: ["cwds": [cwd], "forceReload": forceReload],
+                warning: &inventory.warnings
+            ).map(codexSkillInventoryItems) ?? []
+            inventory.plugins = try rpc.optionalRequest(
+                method: "plugin/list",
+                params: ["cwds": [cwd]],
+                warning: &inventory.warnings
+            ).map(codexPluginInventoryItems) ?? []
+            inventory.apps = try rpc.optionalRequest(
+                method: "app/list",
+                params: ["limit": 200, "forceRefetch": forceReload],
+                warning: &inventory.warnings
+            ).map(codexAppInventoryItems) ?? []
+            inventory.mcpServers = try rpc.optionalRequest(
+                method: "mcpServerStatus/list",
+                params: ["limit": 200, "detail": "toolsAndAuthOnly"],
+                warning: &inventory.warnings
+            ).map(codexMcpServerInventoryItems) ?? []
+            return inventory
+        }.value
+    }
 }
 
 public final class CodexAppServerBackend: CodexBackend, @unchecked Sendable {
     private let config: BridgeConfig
+    private let paths: RuntimePaths
     private let makeConnection: @Sendable () throws -> CodexAppServerConnection
+    private let interactiveCallbackResponder: CodexInteractiveCallbackResponder?
 
     public convenience init(config: BridgeConfig, paths: RuntimePaths) {
-        self.init(config: config, paths: paths) {
+        self.init(config: config, paths: paths, interactiveCallbackResponder: nil) {
             ProcessCodexAppServerConnection(command: config.codex.command)
         }
     }
 
-    public init(config: BridgeConfig, paths _: RuntimePaths, makeConnection: @escaping @Sendable () throws -> CodexAppServerConnection) {
+    public convenience init(config: BridgeConfig, paths: RuntimePaths, interactiveCallbackResponder: CodexInteractiveCallbackResponder?) {
+        self.init(config: config, paths: paths, interactiveCallbackResponder: interactiveCallbackResponder) {
+            ProcessCodexAppServerConnection(command: config.codex.command)
+        }
+    }
+
+    public init(config: BridgeConfig, paths: RuntimePaths, interactiveCallbackResponder: CodexInteractiveCallbackResponder? = nil, makeConnection: @escaping @Sendable () throws -> CodexAppServerConnection) {
         self.config = config
+        self.paths = paths
         self.makeConnection = makeConnection
+        self.interactiveCallbackResponder = interactiveCallbackResponder
     }
 
     public func invoke(_ request: PromptRequest, sessionId: String?, onEvent: (@Sendable (CodexStreamEvent) -> Void)?) async throws -> CodexResponse {
         let config = config
+        let paths = paths
         let makeConnection = makeConnection
+        let interactiveCallbackResponder = interactiveCallbackResponder
         return try await Task.detached {
             let collector = CodexAppServerTurnCollector(onEvent: onEvent)
             let connection = try makeConnection()
             let rpc = CodexAppServerRPC(connection: connection, timeoutMs: config.timeoutMs, onNotification: { message in
                 collector.handleNotification(message)
-            })
+            }, interactiveCallbackResponder: interactiveCallbackResponder)
             defer { rpc.close() }
 
             do {
@@ -156,10 +327,10 @@ public final class CodexAppServerBackend: CodexBackend, @unchecked Sendable {
 
                 let threadId: String
                 if let sessionId, !sessionId.isEmpty {
-                    let resume = try rpc.request(method: "thread/resume", params: appServerThreadResumeParams(config: config, threadId: sessionId))
+                    let resume = try rpc.request(method: "thread/resume", params: appServerThreadResumeParams(config: config, paths: paths, threadId: sessionId))
                     threadId = appServerThreadId(from: resume, fallback: sessionId)
                 } else {
-                    let start = try rpc.request(method: "thread/start", params: appServerThreadStartParams(config: config))
+                    let start = try rpc.request(method: "thread/start", params: appServerThreadStartParams(config: config, paths: paths))
                     threadId = appServerThreadId(from: start, fallback: nil)
                 }
                 guard !threadId.isEmpty else {
@@ -246,12 +417,14 @@ private final class CodexAppServerRPC {
     private let connection: CodexAppServerConnection
     private let timeoutMs: Int
     private let onNotification: (([String: Any]) -> Void)?
+    private let interactiveCallbackResponder: CodexInteractiveCallbackResponder?
     private var nextId = 1
 
-    init(connection: CodexAppServerConnection, timeoutMs: Int, onNotification: (([String: Any]) -> Void)? = nil) {
+    init(connection: CodexAppServerConnection, timeoutMs: Int, onNotification: (([String: Any]) -> Void)? = nil, interactiveCallbackResponder: CodexInteractiveCallbackResponder? = nil) {
         self.connection = connection
         self.timeoutMs = timeoutMs
         self.onNotification = onNotification
+        self.interactiveCallbackResponder = interactiveCallbackResponder
     }
 
     func initialize() throws {
@@ -274,6 +447,15 @@ private final class CodexAppServerRPC {
         nextId += 1
         try connection.send(["id": id, "method": method, "params": params])
         return try readResponse(id: id)
+    }
+
+    func optionalRequest(method: String, params: [String: Any], warning warnings: inout [String]) throws -> [String: Any]? {
+        do {
+            return try request(method: method, params: params)
+        } catch let error as CodexAppServerError {
+            warnings.append("\(method) unavailable: \(error.description)")
+            return nil
+        }
     }
 
     func close() {
@@ -300,6 +482,9 @@ private final class CodexAppServerRPC {
                 }
                 return result
             }
+            if try handleServerRequestIfNeeded(message) {
+                continue
+            }
             onNotification?(message)
         }
         let detail = connection.diagnostics.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -317,6 +502,12 @@ private final class CodexAppServerRPC {
         defer { finished.set(true) }
         while Date() < deadline {
             guard let message = try readMessage(deadline: deadline) else { break }
+            if try handleServerRequestIfNeeded(message) {
+                if predicate(message) {
+                    return true
+                }
+                continue
+            }
             if predicate(message) {
                 return true
             }
@@ -337,6 +528,194 @@ private final class CodexAppServerRPC {
         }
         return nil
     }
+
+    private func handleServerRequestIfNeeded(_ message: [String: Any]) throws -> Bool {
+        guard let requestId = message["id"],
+              let method = message["method"] as? String else {
+            return false
+        }
+        let response = try serverRequestResponse(method: method, requestId: requestId, params: message["params"] as? [String: Any])
+        onNotification?(serverRequestNotification(method: method, response: response))
+        var reply = response
+        reply["id"] = requestId
+        try connection.send(reply)
+        return true
+    }
+
+    private func serverRequestResponse(method: String, requestId: Any, params: [String: Any]?) throws -> [String: Any] {
+        switch method {
+        case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
+            return ["result": ["decision": "decline"]]
+        case "execCommandApproval", "applyPatchApproval":
+            return ["result": ["decision": "denied"]]
+        case "item/tool/call":
+            return try dynamicToolCallResponse(params: params)
+        case "item/tool/requestUserInput":
+            if let interactiveCallbackResponder {
+                return try interactiveCallbackResponder(method, requestId, params)
+            }
+            return unsupportedInteractiveCallbackResponse(
+                "Codex app-server requires interactive user input that the Messages bridge cannot answer. Ask the user to continue in Codex Desktop or send a new Messages reply with the requested choice."
+            )
+        case "mcpServer/elicitation/request":
+            if let interactiveCallbackResponder {
+                return try interactiveCallbackResponder(method, requestId, params)
+            }
+            return unsupportedInteractiveCallbackResponse(
+                "Codex app-server requires MCP elicitation that the Messages bridge cannot answer. Ask the user to continue in Codex Desktop or send a new Messages reply with the requested confirmation."
+            )
+        case "item/permissions/requestApproval":
+            return unsupportedInteractiveCallbackResponse(
+                "Codex app-server requested a permission profile change that the Messages bridge cannot safely grant. Ask the user to continue in Codex Desktop or send a new Messages reply with a narrower request."
+            )
+        case "account/chatgptAuthTokens/refresh":
+            return unsupportedInteractiveCallbackResponse(
+                "Codex app-server requested ChatGPT auth token refresh through a client API that the Messages bridge cannot provide."
+            )
+        case "attestation/generate":
+            return unsupportedInteractiveCallbackResponse(
+                "Codex app-server requested client attestation that the Messages bridge cannot provide."
+            )
+        default:
+            return [
+                "error": [
+                    "code": -32601,
+                    "message": "Unsupported app-server request: \(method)"
+                ]
+            ]
+        }
+    }
+
+    private func dynamicToolCallResponse(params: [String: Any]?) throws -> [String: Any] {
+        guard let params,
+              let tool = params["tool"] as? String,
+              let threadId = params["threadId"] as? String else {
+            return ["result": dynamicToolFailure("Dynamic tool call was missing required thread/tool fields.")]
+        }
+        guard let server = mcpServerName(forDynamicToolNamespace: params["namespace"] as? String) else {
+            let name = dynamicToolDisplayName(namespace: params["namespace"] as? String, tool: tool)
+            return ["result": dynamicToolFailure("\(name) is known to Codex, but this bridge can only execute MCP-backed dynamic tools from app-server.")]
+        }
+
+        do {
+            let arguments = params["arguments"] ?? [String: Any]()
+            let meta = params["_meta"] ?? NSNull()
+            let result = try request(method: "mcpServer/tool/call", params: [
+                "threadId": threadId,
+                "server": server,
+                "tool": tool,
+                "arguments": arguments,
+                "_meta": meta
+            ])
+            return ["result": dynamicToolResponse(fromMcpResult: result)]
+        } catch {
+            let name = dynamicToolDisplayName(namespace: params["namespace"] as? String, tool: tool)
+            return ["result": dynamicToolFailure("\(name) failed through app-server MCP forwarding: \(error)")]
+        }
+    }
+}
+
+private func unsupportedInteractiveCallbackResponse(_ message: String) -> [String: Any] {
+    [
+        "error": [
+            "code": -32004,
+            "message": message
+        ]
+    ]
+}
+
+private func mcpServerName(forDynamicToolNamespace namespace: String?) -> String? {
+    let raw = (namespace ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !raw.isEmpty else { return nil }
+    if raw == "codex_app" || raw == "codex_apps" || raw == "mcp__codex_apps__" {
+        return "codex_apps"
+    }
+    if raw.hasPrefix("mcp__"), raw.hasSuffix("__"), raw.count > 7 {
+        let start = raw.index(raw.startIndex, offsetBy: 5)
+        let end = raw.index(raw.endIndex, offsetBy: -2)
+        return String(raw[start..<end])
+    }
+    if raw.range(of: #"^[A-Za-z0-9_-]+$"#, options: .regularExpression) != nil {
+        return raw
+    }
+    return nil
+}
+
+private func dynamicToolDisplayName(namespace: String?, tool: String) -> String {
+    [namespace, tool]
+        .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+        .joined(separator: ".")
+}
+
+private func dynamicToolFailure(_ text: String) -> [String: Any] {
+    [
+        "success": false,
+        "contentItems": [
+            ["type": "inputText", "text": text]
+        ]
+    ]
+}
+
+private func dynamicToolResponse(fromMcpResult result: [String: Any]) -> [String: Any] {
+    let isError = result["isError"] as? Bool ?? false
+    let content = result["content"] as? [Any] ?? []
+    let contentItems = dynamicToolContentItems(fromMcpContent: content)
+    let fallback: [[String: Any]] = [
+        ["type": "inputText", "text": isError ? "Tool failed without content." : "Tool completed without text output."]
+    ]
+    return [
+        "success": !isError,
+        "contentItems": contentItems.isEmpty ? fallback : contentItems
+    ]
+}
+
+private func dynamicToolContentItems(fromMcpContent content: [Any]) -> [[String: Any]] {
+    content.compactMap { item in
+        if let object = item as? [String: Any] {
+            let type = object["type"] as? String
+            if type == "text", let text = object["text"] as? String {
+                return ["type": "inputText", "text": text]
+            }
+            if type == "image", let url = object["imageUrl"] as? String ?? object["url"] as? String {
+                return ["type": "inputImage", "imageUrl": url]
+            }
+            if let text = object["text"] as? String {
+                return ["type": "inputText", "text": text]
+            }
+            return ["type": "inputText", "text": dynamicToolSearchableText(object)]
+        }
+        return ["type": "inputText", "text": searchableText(item)]
+    }
+}
+
+private func dynamicToolSearchableText(_ value: Any) -> String {
+    if let string = value as? String { return string }
+    if let array = value as? [Any] { return array.map(dynamicToolSearchableText).joined(separator: "\n") }
+    if let dict = value as? [String: Any] {
+        return dict
+            .keys
+            .sorted()
+            .map { key in
+                let text = dynamicToolSearchableText(dict[key] ?? "")
+                return text.isEmpty ? key : "\(key): \(text)"
+            }
+            .joined(separator: "\n")
+    }
+    return "\(value)"
+}
+
+private func serverRequestNotification(method: String, response: [String: Any]) -> [String: Any] {
+    let succeeded = response["result"] != nil
+    let detail = succeeded ? "Handled app-server request \(method)." : searchableText(response["error"] ?? response)
+    return [
+        "method": succeeded ? "bridge/serverRequest/resolved" : "bridge/serverRequest/unsupported",
+        "params": [
+            "method": method,
+            "status": succeeded ? "handled" : "failed",
+            "detail": detail
+        ]
+    ]
 }
 
 private final class CodexAppServerTurnCollector: @unchecked Sendable {
@@ -347,7 +726,6 @@ private final class CodexAppServerTurnCollector: @unchecked Sendable {
     private var finished = false
     private var errorText: String?
     private var finalText: String?
-    private var fallbackAgentText: String?
     private var agentMessageBuffers: [String: String] = [:]
     private var sessionPath: String?
 
@@ -364,7 +742,7 @@ private final class CodexAppServerTurnCollector: @unchecked Sendable {
     var finalAnswer: String? {
         lock.lock()
         defer { lock.unlock() }
-        return (finalText ?? fallbackAgentText).map(cleanPlainText).flatMap { $0.isEmpty ? nil : $0 }
+        return finalText.map(cleanPlainText).flatMap { $0.isEmpty ? nil : $0 }
     }
 
     var outputPath: String? {
@@ -435,8 +813,6 @@ private final class CodexAppServerTurnCollector: @unchecked Sendable {
                     let text = textValue(in: item, keys: ["text", "message", "content"]) ?? ((item["id"] as? String).flatMap { agentMessageBuffers[$0] })
                     if phase == "final_answer" || phase == "final" {
                         finalText = text
-                    } else if let text, !cleanPlainText(text).isEmpty {
-                        fallbackAgentText = text
                     }
                 }
             }
@@ -453,6 +829,12 @@ private final class CodexAppServerTurnCollector: @unchecked Sendable {
                status["type"] as? String == "systemError",
                errorText == nil {
                 errorText = "Codex app-server reported a system error."
+            }
+        case "bridge/serverRequest/unsupported":
+            if let detail = params["detail"] as? String {
+                events.append(.blocker(detail))
+                errorText = detail
+                finished = true
             }
         default:
             break
@@ -479,7 +861,7 @@ private func appServerItemIndicatesFailure(_ item: [String: Any]) -> Bool {
     return false
 }
 
-private func appServerThreadStartParams(config: BridgeConfig) -> [String: Any] {
+private func appServerThreadStartParams(config: BridgeConfig, paths: RuntimePaths) -> [String: Any] {
     var params: [String: Any] = [
         "cwd": config.codex.cwd,
         "approvalPolicy": "never",
@@ -488,20 +870,20 @@ private func appServerThreadStartParams(config: BridgeConfig) -> [String: Any] {
         "sessionStartSource": "clear",
         "threadSource": "user"
     ]
-    if let instructions = bridgeDeveloperInstructions(config: config) {
+    if let instructions = bridgeDeveloperInstructions(config: config, paths: paths) {
         params["developerInstructions"] = instructions
     }
     return params
 }
 
-private func appServerThreadResumeParams(config: BridgeConfig, threadId: String) -> [String: Any] {
+private func appServerThreadResumeParams(config: BridgeConfig, paths: RuntimePaths, threadId: String) -> [String: Any] {
     var params: [String: Any] = [
         "threadId": threadId,
         "cwd": config.codex.cwd,
         "approvalPolicy": "never",
         "sandbox": "danger-full-access"
     ]
-    if let instructions = bridgeDeveloperInstructions(config: config) {
+    if let instructions = bridgeDeveloperInstructions(config: config, paths: paths) {
         params["developerInstructions"] = instructions
     }
     return params
@@ -520,8 +902,12 @@ private func appServerTurnStartParams(config: BridgeConfig, request: PromptReque
         "input": appServerInputItems(from: request),
         "cwd": config.codex.cwd,
         "approvalPolicy": "never",
-        "sandboxPolicy": ["type": "dangerFullAccess"]
+        "sandboxPolicy": appServerSandboxPolicy(for: request)
     ]
+}
+
+private func appServerSandboxPolicy(for _: PromptRequest) -> [String: Any] {
+    return ["type": "dangerFullAccess"]
 }
 
 private func appServerInputItems(from request: PromptRequest) -> [[String: Any]] {
@@ -552,12 +938,56 @@ private func cleanThreadNameCandidate(_ value: String) -> String? {
     return truncateForMessages(text, limit: 80)
 }
 
-private func bridgeDeveloperInstructions(config: BridgeConfig) -> String? {
-    let text = [BridgeConstants.baseBridgeInstructions, config.codex.stylePrompt]
-        .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-        .filter { !$0.isEmpty }
-        .joined(separator: "\n\n")
+private func bridgeDeveloperInstructions(config _: BridgeConfig, paths _: RuntimePaths) -> String? {
+    let text = BridgeConstants.baseBridgeInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
     return text.isEmpty ? nil : text
+}
+
+public func capabilityInvocations(for inventory: CodexToolInventory) -> [CodexCapabilityInvocation] {
+    let mcpServers = Set(inventory.mcpServers.filter { $0.toolCount > 0 }.map { $0.name.lowercased() })
+    let enabledSkills = Set(inventory.skills.filter(\.enabled).map { $0.name.lowercased() })
+    var result: [CodexCapabilityInvocation] = []
+
+    if enabledSkills.contains("chrome:chrome") {
+        let callable = mcpServers.contains("node_repl")
+        result.append(CodexCapabilityInvocation(
+            name: "Chrome",
+            status: callable ? .callable : .discovered,
+            detail: callable ? "node_repl MCP is callable" : "Chrome skill is enabled, but node_repl MCP is not in the callable inventory"
+        ))
+    }
+    if enabledSkills.contains("browser:browser") || enabledSkills.contains("browser-use:browser") {
+        result.append(CodexCapabilityInvocation(
+            name: "Browser",
+            status: .discovered,
+            detail: "browser skill is enabled; callable browser backend depends on app-server dynamic tool forwarding"
+        ))
+    }
+    if enabledSkills.contains("computer-use:computer-use") || mcpServers.contains("computer-use") {
+        let callable = mcpServers.contains("computer-use")
+        result.append(CodexCapabilityInvocation(
+            name: "Computer Use",
+            status: callable ? .callable : .discovered,
+            detail: callable ? "computer-use MCP is callable" : "Computer Use skill is enabled, but MCP server is not callable"
+        ))
+    }
+    if inventory.accessibleAppCount > 0 {
+        let callable = mcpServers.contains("codex_apps")
+        result.append(CodexCapabilityInvocation(
+            name: "Apps/connectors",
+            status: callable ? .callable : .discovered,
+            detail: callable ? "codex_apps MCP is callable" : "apps are accessible, but codex_apps MCP is not callable"
+        ))
+    }
+    return result
+}
+
+private func capabilityInvocationStatusLines(for inventory: CodexToolInventory) -> [String] {
+    let invocations = capabilityInvocations(for: inventory)
+    guard !invocations.isEmpty else {
+        return ["no named capability callability hints"]
+    }
+    return invocations.map { "\($0.name): \($0.status.rawValue) (\($0.detail))" }
 }
 
 private func appServerThreadId(from result: [String: Any], fallback: String?) -> String {
@@ -639,10 +1069,10 @@ private final class ProcessCodexAppServerConnection: CodexAppServerConnection, @
 
     func close() {
         stderr.fileHandleForReading.readabilityHandler = nil
-        try? stdin.fileHandleForWriting.close()
         if process.isRunning {
-            process.terminate()
+            terminateProcessTree(rootPid: process.processIdentifier)
         }
+        try? stdin.fileHandleForWriting.close()
     }
 }
 
@@ -704,6 +1134,22 @@ public func cachedCodexCapabilities(
     return CodexCapabilitySnapshot(capabilities: capabilities, cachedAt: cachedAt, refreshed: true, cacheAgeSeconds: 0)
 }
 
+public func cachedCodexCapabilitiesBestEffort(
+    command: String,
+    runner: ProcessRunner = ProcessRunner(),
+    paths: RuntimePaths = .current(),
+    ttlMs: Int = Int.max,
+    refreshTimeoutMs: Int = 10_000,
+    now: Date = Date()
+) async -> CodexCapabilitySnapshot? {
+    if let cached = loadCachedCodexCapabilities(paths: paths, now: now, ttlMs: ttlMs) {
+        return cached
+    }
+    return await codexAsyncTimeout(nanoseconds: UInt64(max(1, refreshTimeoutMs)) * 1_000_000) {
+        await cachedCodexCapabilities(command: command, runner: runner, paths: paths, ttlMs: 0, now: now)
+    }
+}
+
 public func probeCodexCapabilities(command: String, runner: ProcessRunner = ProcessRunner(), paths: RuntimePaths = .current()) async -> CodexCapabilities {
     var version: String?
     var warnings: [String] = []
@@ -721,9 +1167,19 @@ public func probeCodexCapabilities(command: String, runner: ProcessRunner = Proc
     let appServerAvailable = (try? await runner.run(command, ["app-server", "--help"], timeoutMs: 10_000)) != nil
     let remoteControlAvailable = (try? await runner.run(command, ["remote-control", "--help"], timeoutMs: 10_000)) != nil
     let threadReadAvailable = await codexThreadReadAvailable(command: command, runner: runner, paths: paths)
+    var inventory: CodexToolInventory?
 
     if !appServerAvailable {
         warnings.append("Codex app-server command is unavailable.")
+    } else {
+        do {
+            let loaded = try await CodexAppServerClient(command: command, timeoutMs: 20_000)
+                .capabilityInventory(cwd: paths.defaultCodexCwd.path)
+            inventory = loaded
+            warnings += loaded.warnings.map { "Codex capability inventory warning: \($0)" }
+        } catch {
+            warnings.append("Unable to read Codex app-server capability inventory: \(error)")
+        }
     }
     if !remoteControlAvailable {
         warnings.append("Codex remote-control command is unavailable.")
@@ -737,6 +1193,7 @@ public func probeCodexCapabilities(command: String, runner: ProcessRunner = Proc
         appServerAvailable: appServerAvailable,
         remoteControlAvailable: remoteControlAvailable,
         threadReadAvailable: threadReadAvailable,
+        inventory: inventory,
         warnings: warnings
     )
 }
@@ -749,20 +1206,156 @@ public func formatCodexCapabilityLines(_ capabilities: CodexCapabilities) -> [St
         "Codex thread/read: \(capabilities.threadReadAvailable ? "yes" : "no")",
         "Enhanced bridge UX: \(capabilities.enhancedBridgeUXAvailable ? "yes" : "degraded")"
     ]
+    if let inventory = capabilities.inventory {
+        lines += formatCodexToolInventoryLines(inventory)
+    } else {
+        lines.append("Codex tool inventory: unavailable")
+    }
     lines += capabilities.warnings.map { "WARNING  \($0)" }
     return lines
 }
 
+public func formatCodexToolInventoryLines(_ inventory: CodexToolInventory) -> [String] {
+    var lines = [
+        "Codex skills: \(inventory.enabledSkillCount) enabled / \(inventory.skills.count) total\(sampleSuffix(inventory.skills.map(\.name)))",
+        "Codex plugins: \(inventory.plugins.count)\(sampleSuffix(inventory.plugins.map { $0.displayName ?? $0.name }))",
+        "Codex apps/connectors: \(inventory.accessibleAppCount) accessible / \(inventory.apps.count) total\(sampleSuffix(inventory.apps.filter(\.isAccessible).map(\.name)))",
+        "Codex MCP servers: \(inventory.mcpServers.count), tools: \(inventory.mcpToolCount)\(sampleSuffix(inventory.mcpServers.map(\.name)))",
+        "Codex invocation status: \(capabilityInvocationStatusLines(for: inventory).joined(separator: "; "))"
+    ]
+    lines += inventory.warnings.map { "WARNING  \($0)" }
+    return lines
+}
+
+private func sampleSuffix(_ values: [String], limit: Int = 5) -> String {
+    let names = values
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+    guard !names.isEmpty else { return "" }
+    let shown = names.prefix(limit).joined(separator: ", ")
+    return names.count > limit ? " (\(shown), ...)" : " (\(shown))"
+}
+
 public func formatCodexCapabilityCacheLine(_ snapshot: CodexCapabilitySnapshot) -> String {
+    "Codex capability cache: \(formatCodexCapabilityCacheDetail(snapshot))"
+}
+
+public func formatCodexCapabilityCacheDetail(_ snapshot: CodexCapabilitySnapshot) -> String {
     if snapshot.refreshed {
-        return "Codex capability cache: refreshed at \(snapshot.cachedAt)"
+        return "refreshed at \(snapshot.cachedAt)"
     }
-    return "Codex capability cache: cached at \(snapshot.cachedAt), age \(snapshot.cacheAgeSeconds ?? 0)s"
+    let age = snapshot.cacheAgeSeconds ?? 0
+    var detail = "cached at \(snapshot.cachedAt), age \(age)s"
+    if age >= staleCodexCapabilityCacheAgeSeconds {
+        detail += "; stale >24h"
+    }
+    return detail
 }
 
 public func readCodexThreadHistory(command: String, threadId: String, timeoutMs: Int = 15_000) async throws -> String {
     let history = try await CodexAppServerClient(command: command, timeoutMs: timeoutMs).threadRead(threadId: threadId, includeTurns: true)
     return formatCodexThreadHistory(history)
+}
+
+public func codexSkillInventoryItems(from result: [String: Any]) -> [CodexSkillInventoryItem] {
+    let entries = result["data"] as? [[String: Any]] ?? []
+    let skills = entries.flatMap { entry -> [[String: Any]] in
+        if let skills = entry["skills"] as? [[String: Any]] {
+            return skills
+        }
+        return [entry]
+    }
+    return skills.compactMap { item in
+        guard let name = item["name"] as? String, !name.isEmpty else { return nil }
+        return CodexSkillInventoryItem(
+            name: name,
+            description: item["description"] as? String ?? item["shortDescription"] as? String,
+            path: item["path"] as? String,
+            enabled: item["enabled"] as? Bool ?? true
+        )
+    }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+}
+
+public func codexPluginInventoryItems(from result: [String: Any]) -> [CodexPluginInventoryItem] {
+    let marketplaces = result["marketplaces"] as? [[String: Any]] ?? []
+    var plugins: [CodexPluginInventoryItem] = []
+    for marketplace in marketplaces {
+        if let entries = marketplace["plugins"] as? [[String: Any]] ?? marketplace["items"] as? [[String: Any]] {
+            plugins += entries.compactMap(codexPluginInventoryItem)
+        } else if let item = codexPluginInventoryItem(from: marketplace) {
+            plugins.append(item)
+        }
+    }
+    return plugins.sorted { ($0.displayName ?? $0.name).localizedCaseInsensitiveCompare($1.displayName ?? $1.name) == .orderedAscending }
+}
+
+private func codexPluginInventoryItem(from item: [String: Any]) -> CodexPluginInventoryItem? {
+    let summary = item["summary"] as? [String: Any]
+    let name = item["marketplaceName"] as? String ??
+        item["name"] as? String ??
+        item["id"] as? String ??
+        summary?["name"] as? String
+    guard let name, !name.isEmpty else { return nil }
+    let displayName = item["displayName"] as? String ??
+        summary?["displayName"] as? String ??
+        summary?["name"] as? String
+    return CodexPluginInventoryItem(
+        name: name,
+        displayName: displayName,
+        skillCount: (item["skills"] as? [Any])?.count ?? 0,
+        appCount: (item["apps"] as? [Any])?.count ?? 0,
+        mcpServerCount: (item["mcpServers"] as? [Any])?.count ?? 0
+    )
+}
+
+public func codexAppInventoryItems(from result: [String: Any]) -> [CodexAppInventoryItem] {
+    let apps = result["data"] as? [[String: Any]] ?? result["apps"] as? [[String: Any]] ?? []
+    return apps.compactMap { item in
+        guard let id = item["id"] as? String,
+              let name = item["name"] as? String,
+              !id.isEmpty,
+              !name.isEmpty else {
+            return nil
+        }
+        return CodexAppInventoryItem(
+            id: id,
+            name: name,
+            description: item["description"] as? String,
+            isAccessible: item["isAccessible"] as? Bool ?? false,
+            isEnabled: item["isEnabled"] as? Bool ?? false,
+            pluginDisplayNames: item["pluginDisplayNames"] as? [String] ?? [],
+            labels: stringDictionary(item["labels"])
+        )
+    }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+}
+
+public func codexMcpServerInventoryItems(from result: [String: Any]) -> [CodexMcpServerInventoryItem] {
+    let servers = result["data"] as? [[String: Any]] ?? result["servers"] as? [[String: Any]] ?? []
+    return servers.compactMap { item in
+        guard let name = item["name"] as? String, !name.isEmpty else { return nil }
+        return CodexMcpServerInventoryItem(
+            name: name,
+            toolCount: (item["tools"] as? [String: Any])?.count ?? (item["tools"] as? [Any])?.count ?? 0,
+            resourceCount: (item["resources"] as? [Any])?.count ?? 0,
+            resourceTemplateCount: (item["resourceTemplates"] as? [Any])?.count ?? 0,
+            authStatus: searchableText(item["authStatus"] ?? "")
+        )
+    }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+}
+
+private func stringDictionary(_ value: Any?) -> [String: String] {
+    guard let object = value as? [String: Any] else { return [:] }
+    var result: [String: String] = [:]
+    for (key, value) in object {
+        if let string = value as? String {
+            result[key] = string
+        } else if let bool = value as? Bool {
+            result[key] = bool ? "true" : "false"
+        } else if let number = value as? NSNumber {
+            result[key] = number.stringValue
+        }
+    }
+    return result
 }
 
 public func codexThreadHistory(from result: [String: Any], fallbackThreadId: String) -> CodexThreadHistory {
@@ -820,6 +1413,18 @@ private func codexItemSummary(prefix: String, params: [String: Any]) -> String? 
     if (item["status"] as? String)?.lowercased() == "failed" {
         return nil
     }
+    if item["type"] as? String == "agentMessage" {
+        let phase = (item["phase"] as? String ?? "").lowercased()
+        if phase == "final" || phase == "final_answer" {
+            return nil
+        }
+        if let text = textValue(in: item, keys: ["text", "message", "content"]) {
+            let clean = cleanPlainText(text)
+            if !clean.isEmpty {
+                return bridgeProgressText(from: clean) ?? truncateForMessages(clean, limit: 240)
+            }
+        }
+    }
     let name = item["tool"] as? String ??
         item["name"] as? String ??
         item["command"] as? String ??
@@ -827,6 +1432,15 @@ private func codexItemSummary(prefix: String, params: [String: Any]) -> String? 
         "Codex item"
     let status = item["status"] as? String
     return [prefix, name, status.map { "(\($0))" }].compactMap { $0 }.joined(separator: " ")
+}
+
+private func bridgeProgressText(from text: String) -> String? {
+    markerEvents(in: text).compactMap { event in
+        if case .progress(let value) = event {
+            return value
+        }
+        return nil
+    }.first
 }
 
 private func codexThreadTurnSummary(_ turn: [String: Any]) -> CodexThreadTurnSummary {
@@ -927,6 +1541,41 @@ private func saveCachedCodexCapabilities(_ entry: CodexCapabilityCacheEntry, pat
     }
 }
 
+private func codexAsyncTimeout<T: Sendable>(nanoseconds: UInt64, operation: @escaping @Sendable () async -> T) async -> T? {
+    await withCheckedContinuation { continuation in
+        let resumeOnce = CodexTimeoutResumeOnce()
+        let task = Task {
+            let value = await operation()
+            resumeOnce.run {
+                continuation.resume(returning: value)
+            }
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            resumeOnce.run {
+                task.cancel()
+                continuation.resume(returning: nil)
+            }
+        }
+    }
+}
+
+private final class CodexTimeoutResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didResume = false
+
+    func run(_ body: () -> Void) {
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            return
+        }
+        didResume = true
+        lock.unlock()
+        body()
+    }
+}
+
 private func codexThreadReadAvailable(command: String, runner: ProcessRunner, paths: RuntimePaths) async -> Bool {
     let tmp = paths.tmpDir.appendingPathComponent("codex-app-server-schema-\(UUID().uuidString)")
     try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
@@ -956,7 +1605,7 @@ private func compareCodexVersion(_ version: String, minimum: String) -> Int {
     return 0
 }
 
-private func truncateForMessages(_ value: String, limit: Int) -> String {
+func truncateForMessages(_ value: String, limit: Int) -> String {
     let text = value.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
     guard text.count > limit else { return text.isEmpty ? "(empty)" : text }
     return String(text.prefix(max(0, limit - 3))) + "..."

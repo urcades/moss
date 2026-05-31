@@ -14,7 +14,7 @@ public enum BridgeConstants {
     public static let defaultAckDelayMs = 0
     public static let defaultTimeoutMs = 15 * 60 * 1_000
     public static let defaultSessionTtlMs = 4 * 60 * 60 * 1_000
-    public static let defaultLongTaskProgressIntervalMs = 120_000
+    public static let defaultLongTaskProgressIntervalMs = 30_000
     public static let defaultLongTaskMilestoneMinIntervalMs = 30_000
     public static let defaultPermissionBrokerScanIntervalMs = 500
     public static let defaultPermissionBrokerRecoveryTimeoutMs = 120_000
@@ -27,6 +27,8 @@ public enum BridgeConstants {
     Do not include ANSI color codes.
     Avoid heavy markdown, code fences, and tables unless the user explicitly asks for them.
     When you create or save an image, screenshot, PDF, document, archive, or other file artifact that should be sent to the user, include a separate line `BRIDGE_ATTACH: /absolute/path/to/file`.
+    For long work, send concise user-visible heartbeat updates by including a separate line `BRIDGE_PROGRESS: brief status`.
+    You are running inside the Apple Messages bridge helper. Do not stop, restart, kickstart, bootout, unload, reinstall, or replace the Messages bridge helper or permission broker from a Messages-triggered turn. Do not run `codexmsgctl-swift start`, `launchctl kickstart`, `launchctl bootout`, or similar lifecycle commands for this bridge from inside the turn; report that a manual or out-of-band helper restart is needed instead.
     Output only the text that should be sent back as the message reply.
     """
     public static let defaultStylePrompt = """
@@ -144,6 +146,7 @@ public struct ActiveJob: Codable, Equatable, Sendable {
     public var permissionRecoveryAttempts: Int?
     public var waitingForPermissionSince: String?
     public var lastPermissionEventId: String?
+    public var recoverableBatch: PendingBatch?
 
     public init(
         jobId: String?,
@@ -167,7 +170,8 @@ public struct ActiveJob: Codable, Equatable, Sendable {
         lastObservedSummary: String?,
         permissionRecoveryAttempts: Int?,
         waitingForPermissionSince: String?,
-        lastPermissionEventId: String?
+        lastPermissionEventId: String?,
+        recoverableBatch: PendingBatch? = nil
     ) {
         self.jobId = jobId
         self.guid = guid
@@ -191,6 +195,7 @@ public struct ActiveJob: Codable, Equatable, Sendable {
         self.permissionRecoveryAttempts = permissionRecoveryAttempts
         self.waitingForPermissionSince = waitingForPermissionSince
         self.lastPermissionEventId = lastPermissionEventId
+        self.recoverableBatch = recoverableBatch
     }
 }
 
@@ -276,6 +281,84 @@ public struct AttachmentRef: Codable, Equatable, Sendable {
     }
 }
 
+public enum StreamPublishStatus {
+    public static let claimed = "claimed"
+    public static let waitingMedia = "waiting_media"
+    public static let running = "running"
+    public static let succeeded = "succeeded"
+    public static let failed = "failed"
+}
+
+public struct StreamPublishRecord: Codable, Equatable, Sendable {
+    public var rowId: Int64
+    public var guid: String
+    public var receivedAt: String
+    public var rawTextHash: String
+    public var attachmentIds: [Int64]
+    public var eventJsonPath: String?
+    public var resultJsonPath: String?
+    public var status: String
+    public var startedAt: String?
+    public var finishedAt: String?
+    public var exitCode: Int32?
+    public var stdoutTail: String?
+    public var stderrTail: String?
+    public var publicUrl: String?
+    public var commitHash: String?
+    public var failureReason: String?
+    public var rawText: String?
+    public var sender: String?
+    public var service: String?
+    public var mediaWaitExpiresAt: String?
+    public var eventId: String?
+
+    public init(
+        rowId: Int64,
+        guid: String,
+        receivedAt: String,
+        rawTextHash: String,
+        attachmentIds: [Int64],
+        eventJsonPath: String?,
+        resultJsonPath: String?,
+        status: String,
+        startedAt: String?,
+        finishedAt: String?,
+        exitCode: Int32?,
+        stdoutTail: String?,
+        stderrTail: String?,
+        publicUrl: String?,
+        commitHash: String?,
+        failureReason: String?,
+        rawText: String? = nil,
+        sender: String? = nil,
+        service: String? = nil,
+        mediaWaitExpiresAt: String? = nil,
+        eventId: String? = nil
+    ) {
+        self.rowId = rowId
+        self.guid = guid
+        self.receivedAt = receivedAt
+        self.rawTextHash = rawTextHash
+        self.attachmentIds = attachmentIds
+        self.eventJsonPath = eventJsonPath
+        self.resultJsonPath = resultJsonPath
+        self.status = status
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.exitCode = exitCode
+        self.stdoutTail = stdoutTail
+        self.stderrTail = stderrTail
+        self.publicUrl = publicUrl
+        self.commitHash = commitHash
+        self.failureReason = failureReason
+        self.rawText = rawText
+        self.sender = sender
+        self.service = service
+        self.mediaWaitExpiresAt = mediaWaitExpiresAt
+        self.eventId = eventId
+    }
+}
+
 public struct MessageItem: Codable, Equatable, Sendable {
     public var rowId: Int64
     public var guid: String
@@ -312,19 +395,239 @@ public struct PendingBatch: Codable, Equatable, Sendable {
     }
 }
 
+public struct CodexAutomationRoute: Codable, Equatable, Sendable {
+    public var automationId: String
+    public var name: String
+    public var recipient: String
+    public var service: String
+    public var createdFromGuid: String?
+    public var createdFromRowId: Int64?
+    public var createdAt: String
+    public var lastSeenSessionId: String?
+    public var lastDeliveredSessionId: String?
+    public var lastDeliveredAt: String?
+
+    public init(
+        automationId: String,
+        name: String,
+        recipient: String,
+        service: String,
+        createdFromGuid: String?,
+        createdFromRowId: Int64?,
+        createdAt: String,
+        lastSeenSessionId: String? = nil,
+        lastDeliveredSessionId: String? = nil,
+        lastDeliveredAt: String? = nil
+    ) {
+        self.automationId = automationId
+        self.name = name
+        self.recipient = recipient
+        self.service = service
+        self.createdFromGuid = createdFromGuid
+        self.createdFromRowId = createdFromRowId
+        self.createdAt = createdAt
+        self.lastSeenSessionId = lastSeenSessionId
+        self.lastDeliveredSessionId = lastDeliveredSessionId
+        self.lastDeliveredAt = lastDeliveredAt
+    }
+}
+
+public struct OutboundDeliveryEvidence: Codable, Equatable, Sendable {
+    public var transport: String
+    public var dbRowId: Int64?
+    public var dbError: Int?
+    public var transferState: Int?
+    public var dateDelivered: Int64?
+    public var detail: String?
+
+    public init(transport: String, dbRowId: Int64? = nil, dbError: Int? = nil, transferState: Int? = nil, dateDelivered: Int64? = nil, detail: String? = nil) {
+        self.transport = transport
+        self.dbRowId = dbRowId
+        self.dbError = dbError
+        self.transferState = transferState
+        self.dateDelivered = dateDelivered
+        self.detail = detail
+    }
+}
+
+public struct OutboundSendRecord: Codable, Equatable, Sendable {
+    public var attemptId: String
+    public var kind: String
+    public var recipient: String
+    public var service: String
+    public var artifact: String?
+    public var body: String?
+    public var status: String
+    public var startedAt: String
+    public var completedAt: String?
+    public var retryable: Bool
+    public var evidence: OutboundDeliveryEvidence?
+    public var error: String?
+
+    public init(
+        attemptId: String,
+        kind: String,
+        recipient: String,
+        service: String,
+        artifact: String?,
+        body: String? = nil,
+        status: String,
+        startedAt: String,
+        completedAt: String? = nil,
+        retryable: Bool = false,
+        evidence: OutboundDeliveryEvidence? = nil,
+        error: String? = nil
+    ) {
+        self.attemptId = attemptId
+        self.kind = kind
+        self.recipient = recipient
+        self.service = service
+        self.artifact = artifact
+        self.body = body
+        self.status = status
+        self.startedAt = startedAt
+        self.completedAt = completedAt
+        self.retryable = retryable
+        self.evidence = evidence
+        self.error = error
+    }
+}
+
+public struct RecentMediaRef: Codable, Equatable, Sendable {
+    public var direction: String
+    public var rowId: Int64?
+    public var handleId: String
+    public var service: String
+    public var path: String
+    public var transferName: String?
+    public var kind: String
+    public var createdAt: String
+    public var exists: Bool
+
+    public init(direction: String, rowId: Int64? = nil, handleId: String, service: String, path: String, transferName: String? = nil, kind: String, createdAt: String, exists: Bool) {
+        self.direction = direction
+        self.rowId = rowId
+        self.handleId = handleId
+        self.service = service
+        self.path = path
+        self.transferName = transferName
+        self.kind = kind
+        self.createdAt = createdAt
+        self.exists = exists
+    }
+}
+
+public struct LiveSmokeResult: Codable, Equatable, Sendable {
+    public var name: String
+    public var marker: String
+    public var status: String
+    public var detail: String
+    public var threadId: String?
+    public var turnId: String?
+    public var updatedAt: String
+
+    public init(name: String, marker: String, status: String, detail: String, threadId: String? = nil, turnId: String? = nil, updatedAt: String) {
+        self.name = name
+        self.marker = marker
+        self.status = status
+        self.detail = detail
+        self.threadId = threadId
+        self.turnId = turnId
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct AutomationCreationStatus: Codable, Equatable, Sendable {
+    public var automationId: String?
+    public var name: String?
+    public var sourceRowId: Int64?
+    public var sourceGuid: String?
+    public var phase: String
+    public var createdFilePath: String?
+    public var routeStatus: String?
+    public var confirmationSendStatus: String?
+    public var failureText: String?
+    public var updatedAt: String
+
+    public init(automationId: String? = nil, name: String? = nil, sourceRowId: Int64? = nil, sourceGuid: String? = nil, phase: String, createdFilePath: String? = nil, routeStatus: String? = nil, confirmationSendStatus: String? = nil, failureText: String? = nil, updatedAt: String) {
+        self.automationId = automationId
+        self.name = name
+        self.sourceRowId = sourceRowId
+        self.sourceGuid = sourceGuid
+        self.phase = phase
+        self.createdFilePath = createdFilePath
+        self.routeStatus = routeStatus
+        self.confirmationSendStatus = confirmationSendStatus
+        self.failureText = failureText
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct PendingInteractiveCallback: Codable, Equatable, Sendable {
+    public var callbackId: String
+    public var jobId: String?
+    public var jsonRpcId: String?
+    public var method: String
+    public var recipient: String
+    public var service: String
+    public var prompt: String
+    public var createdAt: String
+    public var expiresAt: String?
+    public var status: String
+    public var failureText: String?
+    public var responseText: String?
+    public var responseRowId: Int64?
+    public var responseGuid: String?
+    public var answeredAt: String?
+
+    public init(callbackId: String, jobId: String? = nil, jsonRpcId: String? = nil, method: String, recipient: String, service: String, prompt: String, createdAt: String, expiresAt: String? = nil, status: String, failureText: String? = nil, responseText: String? = nil, responseRowId: Int64? = nil, responseGuid: String? = nil, answeredAt: String? = nil) {
+        self.callbackId = callbackId
+        self.jobId = jobId
+        self.jsonRpcId = jsonRpcId
+        self.method = method
+        self.recipient = recipient
+        self.service = service
+        self.prompt = prompt
+        self.createdAt = createdAt
+        self.expiresAt = expiresAt
+        self.status = status
+        self.failureText = failureText
+        self.responseText = responseText
+        self.responseRowId = responseRowId
+        self.responseGuid = responseGuid
+        self.answeredAt = answeredAt
+    }
+}
+
 public struct BridgeState: Codable, Equatable, Sendable {
     public var lastProcessedGuid: String?
     public var lastProcessedRowId: Int64
     public var pendingBatch: PendingBatch?
     public var activeJob: ActiveJob?
     public var codexSession: CodexSessionState
+    public var automationRoutes: [CodexAutomationRoute]?
+    public var lastOutboundSend: OutboundSendRecord?
+    public var recentMediaRefs: [RecentMediaRef]?
+    public var liveSmokeResults: [LiveSmokeResult]?
+    public var automationCreationStatus: AutomationCreationStatus?
+    public var pendingInteractiveCallback: PendingInteractiveCallback?
+    public var lastRecoverablePromptBatch: PendingBatch?
+    public var streamPublishLedger: [String: StreamPublishRecord]?
 
-    public init(lastProcessedGuid: String?, lastProcessedRowId: Int64, pendingBatch: PendingBatch?, activeJob: ActiveJob?, codexSession: CodexSessionState) {
+    public init(lastProcessedGuid: String?, lastProcessedRowId: Int64, pendingBatch: PendingBatch?, activeJob: ActiveJob?, codexSession: CodexSessionState, automationRoutes: [CodexAutomationRoute]? = nil, lastOutboundSend: OutboundSendRecord? = nil, recentMediaRefs: [RecentMediaRef]? = nil, liveSmokeResults: [LiveSmokeResult]? = nil, automationCreationStatus: AutomationCreationStatus? = nil, pendingInteractiveCallback: PendingInteractiveCallback? = nil, lastRecoverablePromptBatch: PendingBatch? = nil, streamPublishLedger: [String: StreamPublishRecord]? = nil) {
         self.lastProcessedGuid = lastProcessedGuid
         self.lastProcessedRowId = lastProcessedRowId
         self.pendingBatch = pendingBatch
         self.activeJob = activeJob
         self.codexSession = codexSession
+        self.automationRoutes = automationRoutes
+        self.lastOutboundSend = lastOutboundSend
+        self.recentMediaRefs = recentMediaRefs
+        self.liveSmokeResults = liveSmokeResults
+        self.automationCreationStatus = automationCreationStatus
+        self.pendingInteractiveCallback = pendingInteractiveCallback
+        self.lastRecoverablePromptBatch = lastRecoverablePromptBatch
+        self.streamPublishLedger = streamPublishLedger
     }
 }
 
