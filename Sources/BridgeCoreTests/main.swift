@@ -15,11 +15,27 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {
 struct BridgeCoreFocusedTests {
     static func main() async throws {
         try testExactCodexCommandsBypassNormalPromptBatching()
-        try testBridgeInstructionsRouteAutomationAndPluginRequests()
-        try testAutomationRequestsGetRoutingGuard()
+        try testBridgeInstructionsAreTransportOnly()
+        try testAutomationRequestsStayPlainPromptText()
         try testPromptBatchPreservesPluginIntentAndOrder()
         try await testRecentMissingAttachmentDefersCursorUntilFileExists()
+        try testStreamPublishInvocationUsesAbsoluteNPMAndPathParent()
+        try testStreamPublishCrosspostSummaryFormatsAllTargetsOK()
+        try testStreamPublishCrosspostSummaryFormatsFailedTarget()
+        try testStreamPublishCrosspostSummaryFormatsSkippedTarget()
+        try await testStreamPublishMarkerRunsWebsiteWrapperAndRepliesWithResult()
+        try await testStreamPublishReplyIncludesCrosspostSummaryAfterCommit()
+        try await testStreamPublishDuplicateGuidDoesNotRepublish()
+        try await testStreamPublishJobsRunSingleFlight()
+        try await testStreamPublishFailureRepliesAndMarksLedgerFailed()
+        try await testStreamPublishNPMResolutionFailureRepliesAndMarksLedgerFailed()
+        try await testStreamPublishWaitsForStableMediaAndIncludesIt()
+        try await testStreamPublishUnsupportedMediaFailsWithoutWrapper()
+        try await testDoubleFerrisWaitsForNextTrustedMediaAndPublishesCombinedEvent()
+        try await testDoubleFerrisTimesOutWaitingForMedia()
+        try await testDoubleFerrisUnsupportedNextMediaFailsWithoutWrapper()
         try await testSQLiteMessageSourceAttachmentRowsAndClassification()
+        try await testSQLiteMessageSourceReadsAttributedBodyOnlyText()
         try testPreviousImageReferenceAddsRecentImage()
         try testPreviousImageReferenceSkipsUnsupportedRecentImage()
         try testLiveSmokeResultsStatusHighlightsLatestBlocker()
@@ -76,8 +92,6 @@ struct BridgeCoreFocusedTests {
         try await testSmsAttachmentSendUsesSmsServiceAndReportsFailedRow()
         try await testRecentFailedOutboundEvidenceFindsFailedTextAndAttachmentRows()
         try testCodexAppServerProcessSnapshotParsesTransportsAndOrphans()
-        try testCodexMentionExtraction()
-        try testNaturalLanguageCodexMentionExtraction()
         try await testAppServerClientCapabilityInventory()
         try testThreadHistoryFormattingSummarizesLastThreeTurns()
         try testEmptyHistoryHasClearDegradedMessage()
@@ -88,9 +102,10 @@ struct BridgeCoreFocusedTests {
         try await testAppServerClientInvalidResultAndTimeout()
         try await testAppServerTimeoutTerminatesChildProcesses()
         try await testAppServerBackendStartsThreadAndReturnsFinalAnswer()
-        try await testAppServerBackendAddsCapabilityInventoryToDeveloperInstructions()
-        try await testAppServerBackendAddsStructuredMentionsToTurnInput()
-        try await testAppServerBackendUsesReadOnlySandboxForAutomationRequests()
+        try await testAppServerBackendKeepsDeveloperInstructionsTransportOnly()
+        try await testAppServerBackendDeveloperInstructionsPreventSelfRestart()
+        try await testAppServerBackendDoesNotAddStructuredMentionsToTurnInput()
+        try await testAppServerBackendUsesDefaultSandboxForAutomationRequests()
         try await testAppServerBackendRejectsNonFinalAgentMessageAsReply()
         try await testAppServerBackendForwardsDynamicToolRequests()
         try await testAppServerBackendReturnsDynamicToolFailureWhenMcpCallStalls()
@@ -106,23 +121,31 @@ struct BridgeCoreFocusedTests {
         try await testAppServerBackendResumesThreadAndIgnoresMalformedNotifications()
         try await testAppServerBackendErrorNotificationThrowsBridgeFailure()
         try testCodexProgressSummaryHandlesAppServerNotifications()
+        try testCodexProgressSummaryUsesCommentaryText()
         try testOutgoingAttachmentIntentGate()
         try await testBridgeAttachDirectiveAlwaysSendsValidatedAttachment()
         try await testBridgeAttachDirectiveDoesNotSendSuccessTextWhenAttachmentFails()
         try await testProgressEventsUpdateStateWithoutSendingSms()
+        try await testProgressEventsSendVisibleUpdatesAfterInterval()
         try await testDeadActiveJobOnStartupNotifiesAndClears()
+        try await testBridgeRepairDryRunReportsStaleJobAndMissedAttributedRows()
+        try await testBridgeRepairStagesRecoverableAndMissedRowsForReplay()
+        try await testBridgeRepairNoReplayReportsAndAdvancesPastMissedRows()
+        try await testTryAgainReplaysRecoveredActiveJobBatch()
         try await testPendingInteractiveCallbackCapturesNextReply()
         try await testPendingInteractiveCallbackCancelAndTimeout()
         try testCorruptedStateJsonBacksUpAndDefaults()
         try testStateRecoveryBackupDiagnosticsReportBackupPath()
         try testLaunchAgentProgramDiagnostics()
+        try testLaunchAgentLoadStateFormatting()
         try testRuntimeExecutableIdentityDiagnostics()
         try testBridgeGateChecklistEnumeratesLocalAndTrustedGates()
         try testBridgeGateStrictReportFailsOnTrustedAndLiveBlockers()
         try testBridgeGateStrictReportAcceptsCapabilityBlockersWithEvidence()
-        try await testAutomationRequestCreatesCodexAutomationFromInterpretedSpec()
+        try await testAutomationRequestStartsNormalCodexJob()
         try await testCodexAutomationsReportsCreationInProgress()
-        try await testCompletedAutomationSessionIsForwardedOnce()
+        try await testNormalTickDoesNotForwardCompletedAutomationSessions()
+        try await testAutomationForwardOnceSidecar()
         try testCompletedAutomationScanUsesDeliveredSessionLowerBound()
         try testTerminateProcessTreeIncludesRoot()
         try await testOrdinaryTextDuringActiveJobQueuesNextBatchWhileCodexStatusCutsThrough()
@@ -161,17 +184,18 @@ struct BridgeCoreFocusedTests {
         try expect(bridgeLocalCommandName("/status please") == "/status", "existing command arguments still work")
     }
 
-    private static func testBridgeInstructionsRouteAutomationAndPluginRequests() throws {
+    private static func testBridgeInstructionsAreTransportOnly() throws {
         let instructions = BridgeConstants.baseBridgeInstructions
-        try expect(instructions.contains("remote control surface for Codex running on this Mac"), "bridge instructions describe Messages as Codex remote control")
-        try expect(instructions.contains("use Codex automation tools"), "bridge instructions route automation requests to Codex tools")
-        try expect(instructions.contains("do not implement a replacement inside the Messages bridge"), "bridge instructions prevent bridge scheduler invention")
-        try expect(instructions.contains("name plugins, skills, apps, or tools"), "bridge instructions route plugin and skill requests")
-        try expect(instructions.contains("Do not modify the Messages bridge itself unless the user explicitly asks"), "bridge instructions prevent accidental bridge edits")
+        try expect(instructions.contains("Return plain text only"), "bridge instructions preserve Messages-safe plain text contract")
+        try expect(instructions.contains("BRIDGE_ATTACH:"), "bridge instructions preserve attachment handoff contract")
+        try expect(!instructions.contains("remote control surface for Codex running on this Mac"), "bridge instructions do not describe a capability steering surface")
+        try expect(!instructions.contains("use Codex automation tools"), "bridge instructions do not route automation requests")
+        try expect(!instructions.contains("name plugins, skills, apps, or tools"), "bridge instructions do not route plugin and skill requests")
+        try expect(!instructions.contains("Do not modify the Messages bridge itself unless the user explicitly asks"), "bridge instructions avoid bridge-specific source-code steering")
     }
 
-    private static func testAutomationRequestsGetRoutingGuard() throws {
-        let guardedBatch = PendingBatch(
+    private static func testAutomationRequestsStayPlainPromptText() throws {
+        let batch = PendingBatch(
             handleId: "+1",
             service: "iMessage",
             startedAt: "2026-05-12T00:00:00.000Z",
@@ -180,22 +204,11 @@ struct BridgeCoreFocusedTests {
                 MessageItem(rowId: 1, guid: "guarded", text: "Create an automation that sends me a daily digest every morning.", handleId: "+1", service: "iMessage", receivedAt: "2026-05-12T00:00:00.000Z", attachments: [])
             ]
         )
-        let guarded = buildPromptRequest(from: guardedBatch)
-        try expect(guarded.promptText.contains("Bridge routing guard:"), "automation prompt gets bridge routing guard")
-        try expect(guarded.promptText.contains("Do not implement, modify, inspect, or continue any Messages bridge scheduler"), "automation guard blocks bridge scheduler work")
-        try expect(guarded.promptText.contains("If a Codex automation tool is available, use it"), "automation guard routes to Codex automation tools")
-
-        let bridgeSourceBatch = PendingBatch(
-            handleId: "+1",
-            service: "iMessage",
-            startedAt: "2026-05-12T00:00:00.000Z",
-            deadlineAt: "2026-05-12T00:00:01.000Z",
-            items: [
-                MessageItem(rowId: 2, guid: "source", text: "Please modify the Messages bridge source code for its automation handling.", handleId: "+1", service: "iMessage", receivedAt: "2026-05-12T00:00:00.000Z", attachments: [])
-            ]
-        )
-        let explicitBridgeWork = buildPromptRequest(from: bridgeSourceBatch)
-        try expect(!explicitBridgeWork.promptText.contains("Bridge routing guard:"), "explicit bridge source work is not sandboxed as an automation request")
+        let request = buildPromptRequest(from: batch)
+        try expect(request.promptText.contains("Create an automation that sends me a daily digest every morning."), "automation request text is preserved")
+        try expect(!request.promptText.contains("Bridge routing guard:"), "automation prompt does not get bridge routing guard")
+        try expect(!request.promptText.contains("Do not implement, modify, inspect, or continue any Messages bridge scheduler"), "automation prompt does not get scheduler guard text")
+        try expect(!request.promptText.contains("If a Codex automation tool is available, use it"), "automation prompt does not get tool-routing text")
     }
 
     private static func testPromptBatchPreservesPluginIntentAndOrder() throws {
@@ -219,7 +232,7 @@ struct BridgeCoreFocusedTests {
         try expect(request.promptText.contains("Message 1:\nFirst, use @Chrome to inspect the page.\n\nMessage 2:\nThen summarize this image."), "message order is preserved")
         try expect(request.promptText.contains("page.png (image/png) at \(attachmentPath)"), "attachment path is preserved")
         try expect(request.attachments.first?.absolutePath == attachmentPath, "image attachment is passed through")
-        try expect(extractCodexMentionRefs(from: request.promptText).contains(CodexMentionRef(name: "Chrome", path: "plugin://chrome@openai-bundled")), "batch preamble does not hide Chrome intent")
+        try expect(request.promptText.contains("@Chrome"), "capability intent remains plain prompt text")
     }
 
     private static func testRecentMissingAttachmentDefersCursorUntilFileExists() async throws {
@@ -228,6 +241,7 @@ struct BridgeCoreFocusedTests {
         let stores = RuntimeStores(paths: paths)
         var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
         config.batchWindowMs = 1
+        config.activeJobAckEnabled = false
         try stores.config.save(config)
         let attachmentPath = paths.tmpDir.appendingPathComponent("delayed-image.png")
         let receivedAt = Date(timeIntervalSince1970: 99)
@@ -285,6 +299,458 @@ struct BridgeCoreFocusedTests {
         try expect(request?.attachments.first?.exists == true, "ready delayed attachment is refreshed as existing")
     }
 
+    private static func testStreamPublishInvocationUsesAbsoluteNPMAndPathParent() throws {
+        let npmPath = "/Users/moss/.nvm/versions/node/v25.8.2/bin/npm"
+        let invocation = streamPublishInvocation(eventJsonPath: "/tmp/event.json", resultJsonPath: "/tmp/result.json", npmPath: npmPath)
+
+        try expect(invocation.cwd == "/Users/moss/Developer/urcad.es", "stream publish wrapper cwd is website repo")
+        try expect(invocation.executable == "/usr/bin/env", "stream publish wrapper uses env executable")
+        try expect(invocation.arguments == [
+            "PATH=/Users/moss/.nvm/versions/node/v25.8.2/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            npmPath, "run", "publish:stream:run", "--",
+            "--event", "/tmp/event.json",
+            "--result-json", "/tmp/result.json"
+        ], "stream publish invocation uses absolute npm and PATH with npm parent first")
+    }
+
+    private static func testStreamPublishCrosspostSummaryFormatsAllTargetsOK() throws {
+        let summary = try parseStreamPublishResultForTest("""
+        {
+          "ok": true,
+          "phase": "complete",
+          "publicUrl": "https://urcad.es/writing/all-ok",
+          "commit": "abcdef1234567890",
+          "crossposts": {
+            "attempted": true,
+            "bluesky": { "ok": true, "skipped": false, "error": null },
+            "arena": { "ok": true, "skipped": false, "error": null },
+            "gotosocial": { "ok": true, "skipped": false, "error": null }
+          }
+        }
+        """)
+
+        try expect(summary.crosspostSummary == "Cross-posts: Bluesky ok, Are.na ok, GoToSocial ok", "all-ok crossposts are summarized compactly")
+    }
+
+    private static func testStreamPublishCrosspostSummaryFormatsFailedTarget() throws {
+        let summary = try parseStreamPublishResultForTest("""
+        {
+          "ok": true,
+          "phase": "complete",
+          "publicUrl": "https://urcad.es/writing/one-failed",
+          "commit": "abcdef1234567890",
+          "crossposts": {
+            "attempted": true,
+            "bluesky": { "ok": true, "skipped": false, "error": null },
+            "arena": { "ok": true, "skipped": false, "error": null },
+            "gotosocial": { "ok": false, "skipped": false, "error": "status 401: unauthorized" }
+          }
+        }
+        """)
+
+        try expect(summary.crosspostSummary == "Cross-posts: Bluesky ok, Are.na ok, GoToSocial failed (401)", "failed crosspost includes status code without raw error text")
+    }
+
+    private static func testStreamPublishCrosspostSummaryFormatsSkippedTarget() throws {
+        let summary = try parseStreamPublishResultForTest("""
+        {
+          "ok": true,
+          "phase": "complete",
+          "publicUrl": "https://urcad.es/writing/skipped",
+          "commit": "abcdef1234567890",
+          "crossposts": {
+            "attempted": true,
+            "bluesky": { "ok": false, "skipped": true, "error": "not configured" },
+            "arena": { "ok": true, "skipped": false, "error": null },
+            "gotosocial": { "ok": true, "skipped": false, "error": null }
+          }
+        }
+        """)
+
+        try expect(summary.crosspostSummary == "Cross-posts: Bluesky skipped, Are.na ok, GoToSocial ok", "skipped crosspost target is summarized without raw reason")
+    }
+
+    private static func testStreamPublishMarkerRunsWebsiteWrapperAndRepliesWithResult() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        config.activeJobAckEnabled = false
+        try stores.config.save(config)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 10, guid: "imsg-guid/with space", text: "🎡 battery 1%", handleId: "+15551234567", service: "iMessage", receivedAt: "2026-05-30T12:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let backend = CapturingCodexBackend(response: "should not run")
+        let publisher = CapturingStreamPublisher(mode: .success(publicUrl: "https://urcad.es/writing/battery-1", commitHash: "abcdef1234567890"))
+        let npmPath = "/Users/moss/.nvm/versions/node/v25.8.2/bin/npm"
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in backend },
+            streamPublisher: publisher.run,
+            resolveStreamPublisherNPM: { .success(npmPath) }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+
+        let invocations = await publisher.invocationsSnapshot()
+        try expect(invocations.count == 1, "stream publish marker invokes website wrapper once")
+        let invocation = try unwrap(invocations.first, "missing stream publisher invocation")
+        try expect(invocation.cwd == "/Users/moss/Developer/urcad.es", "stream publish wrapper cwd is website repo")
+        try expect(invocation.executable == "/usr/bin/env", "stream publish wrapper uses env executable")
+        try expect(invocation.arguments == [
+            "PATH=/Users/moss/.nvm/versions/node/v25.8.2/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            npmPath, "run", "publish:stream:run", "--",
+            "--event", invocation.eventJsonPath,
+            "--result-json", invocation.resultJsonPath
+        ], "stream publish wrapper args use absolute npm and exact wrapper arguments")
+        try expect(invocation.eventJsonPath.hasPrefix(paths.tmpDir.appendingPathComponent("stream-events").path), "event JSON is under bridge tmp stream-events")
+        try expect(invocation.resultJsonPath.hasPrefix(paths.tmpDir.appendingPathComponent("stream-events").path), "result JSON is under bridge tmp stream-events")
+        try expect(URL(fileURLWithPath: invocation.eventJsonPath).lastPathComponent.hasSuffix(".json"), "event JSON has json extension")
+        try expect(!URL(fileURLWithPath: invocation.eventJsonPath).lastPathComponent.hasSuffix(".event.json"), "event JSON path uses the bridge contract filename shape")
+        try expect(!invocation.eventJsonPath.hasPrefix("/Users/moss/Developer/urcad.es"), "event JSON is outside website repo")
+        try expect(!invocation.resultJsonPath.hasPrefix("/Users/moss/Developer/urcad.es"), "result JSON is outside website repo")
+
+        let event = try readJsonObject(invocation.eventJsonPath)
+        try expect(event["id"] as? String == "imsg-guid/with space", "event id preserves message guid")
+        try expect(event["source"] as? String == "imessage", "event source is imessage")
+        try expect(event["sender"] as? String == "+15551234567", "event sender preserves trusted sender")
+        try expect(event["receivedAt"] as? String == "2026-05-30T12:00:00.000Z", "event receivedAt is message timestamp")
+        try expect(event["text"] as? String == "🎡 battery 1%", "event text preserves raw marker")
+        try expect((event["media"] as? [[String: Any]])?.isEmpty == true, "text-only stream event has empty media")
+
+        let replies = await sink.repliesSnapshot()
+        try expect(replies.map(\.text).contains("Published: https://urcad.es/writing/battery-1\nCommit: abcdef1"), "success reply includes URL and short commit")
+        try expect(replies.map(\.text).contains { !$0.contains("Cross-posts:") }, "missing crossposts preserves current success reply")
+        let request = await backend.requestSnapshot()
+        try expect(request == nil, "stream publish message does not enter normal Codex prompt queue")
+        let record = try unwrap(try stores.state.load().streamPublishLedger?["imsg-guid/with space"], "missing stream publish ledger record")
+        try expect(record.status == "succeeded", "stream publish ledger is succeeded")
+        try expect(record.publicUrl == "https://urcad.es/writing/battery-1", "stream publish ledger records public URL")
+        try expect(record.commitHash == "abcdef1234567890", "stream publish ledger records commit hash")
+    }
+
+    private static func testStreamPublishReplyIncludesCrosspostSummaryAfterCommit() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        try stores.config.save(defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo"))
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 15, guid: "crosspost-guid", text: "🎡 crosspost me", handleId: "+1", service: "iMessage", receivedAt: "2026-05-31T12:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let crossposts = """
+        {
+          "attempted": true,
+          "bluesky": { "ok": true, "skipped": false, "error": null },
+          "arena": { "ok": true, "skipped": false, "error": null },
+          "gotosocial": { "ok": true, "skipped": false, "error": null }
+        }
+        """
+        let publisher = CapturingStreamPublisher(mode: .success(publicUrl: "https://urcad.es/writing/crosspost", commitHash: "123456789abcdef", crosspostsJson: crossposts))
+        let service = BridgeService(paths: paths, stores: stores, makeSource: { _ in source }, makeReplySink: { _ in sink }, makeCodex: { _ in CapturingCodexBackend(response: "unused") }, streamPublisher: publisher.run, resolveStreamPublisherNPM: { .success("/Users/moss/.nvm/versions/node/v25.8.2/bin/npm") })
+
+        try await service.initialize()
+        try await service.tick()
+
+        let replies = await sink.repliesSnapshot()
+        try expect(replies.map(\.text).contains("Published: https://urcad.es/writing/crosspost\nCommit: 1234567\nCross-posts: Bluesky ok, Are.na ok, GoToSocial ok"), "success reply appends crosspost summary after commit")
+    }
+
+    private static func testStreamPublishDuplicateGuidDoesNotRepublish() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        try stores.config.save(defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo"))
+        var state = defaultBridgeState()
+        state.streamPublishLedger = [
+            "dup-guid": StreamPublishRecord(
+                rowId: 7,
+                guid: "dup-guid",
+                receivedAt: "2026-05-30T12:00:00.000Z",
+                rawTextHash: "hash",
+                attachmentIds: [],
+                eventJsonPath: "/tmp/event.json",
+                resultJsonPath: "/tmp/result.json",
+                status: "succeeded",
+                startedAt: "2026-05-30T12:00:00.000Z",
+                finishedAt: "2026-05-30T12:01:00.000Z",
+                exitCode: 0,
+                stdoutTail: nil,
+                stderrTail: nil,
+                publicUrl: "https://urcad.es/writing/already",
+                commitHash: "abcdef1",
+                failureReason: nil
+            )
+        ]
+        try stores.state.save(state)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 8, guid: "dup-guid", text: "🎡 duplicate", handleId: "+1", service: "iMessage", receivedAt: "2026-05-30T12:02:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let publisher = CapturingStreamPublisher(mode: .success(publicUrl: "https://example.invalid/new", commitHash: "1111111"))
+        let service = BridgeService(paths: paths, stores: stores, makeSource: { _ in source }, makeReplySink: { _ in sink }, makeCodex: { _ in CapturingCodexBackend(response: "unused") }, streamPublisher: publisher.run, resolveStreamPublisherNPM: { .success("/Users/moss/.nvm/versions/node/v25.8.2/bin/npm") })
+
+        try await service.initialize()
+        try await service.tick()
+
+        let invocations = await publisher.invocationsSnapshot()
+        let savedState = try stores.state.load()
+        try expect(invocations.isEmpty, "duplicate stream publish guid does not invoke wrapper")
+        try expect(savedState.lastProcessedRowId == 8, "duplicate stream publish still advances cursor")
+    }
+
+    private static func testStreamPublishJobsRunSingleFlight() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        try stores.config.save(defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo"))
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 1, guid: "single-1", text: "🎡 first", handleId: "+1", service: "iMessage", receivedAt: "2026-05-30T12:00:00.000Z", attachments: []),
+            MessageItem(rowId: 2, guid: "single-2", text: "🎡 second", handleId: "+1", service: "iMessage", receivedAt: "2026-05-30T12:00:01.000Z", attachments: [])
+        ])
+        let publisher = CapturingStreamPublisher(mode: .success(publicUrl: "https://urcad.es/writing/single", commitHash: "2222222"), delayNanoseconds: 100_000_000)
+        let service = BridgeService(paths: paths, stores: stores, makeSource: { _ in source }, makeReplySink: { _ in CapturingReplySink() }, makeCodex: { _ in CapturingCodexBackend(response: "unused") }, streamPublisher: publisher.run, resolveStreamPublisherNPM: { .success("/Users/moss/.nvm/versions/node/v25.8.2/bin/npm") })
+
+        try await service.initialize()
+        try await service.tick()
+
+        let maxConcurrent = await publisher.maxConcurrentSnapshot()
+        let invocationCount = await publisher.invocationsSnapshot().count
+        try expect(maxConcurrent == 1, "stream publish wrapper runs single-flight")
+        try expect(invocationCount == 2, "both stream publish jobs run sequentially")
+    }
+
+    private static func testStreamPublishFailureRepliesAndMarksLedgerFailed() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        try stores.config.save(defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo"))
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 11, guid: "fail-guid", text: "🎡 fail me", handleId: "+1", service: "iMessage", receivedAt: "2026-05-30T12:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let publisher = CapturingStreamPublisher(mode: .failure(phase: "deploy", error: "CF_API_TOKEN=super-secret-token failed", stderr: "Authorization: Bearer secret-value"))
+        let service = BridgeService(paths: paths, stores: stores, makeSource: { _ in source }, makeReplySink: { _ in sink }, makeCodex: { _ in CapturingCodexBackend(response: "unused") }, streamPublisher: publisher.run, resolveStreamPublisherNPM: { .success("/Users/moss/.nvm/versions/node/v25.8.2/bin/npm") })
+
+        try await service.initialize()
+        try await service.tick()
+
+        let replies = await sink.repliesSnapshot()
+        try expect(replies.last?.text.contains("Publish failed during deploy:") == true, "failure reply includes failing phase")
+        try expect(replies.last?.text.contains("super-secret-token") == false, "failure reply redacts token values")
+        try expect(replies.last?.text.contains("secret-value") == false, "failure reply redacts bearer token values")
+        let record = try unwrap(try stores.state.load().streamPublishLedger?["fail-guid"], "missing failed stream publish record")
+        try expect(record.status == "failed", "failed stream publish updates ledger status")
+        try expect(record.exitCode == 1, "failed stream publish records exit code")
+        try expect(record.failureReason?.contains("deploy") == true, "failed stream publish records phase")
+    }
+
+    private static func testStreamPublishNPMResolutionFailureRepliesAndMarksLedgerFailed() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        try stores.config.save(defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo"))
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 14, guid: "npm-missing-guid", text: "🎡 missing npm", handleId: "+1", service: "iMessage", receivedAt: "2026-05-30T12:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let publisher = CapturingStreamPublisher(mode: .success(publicUrl: "https://example.invalid/should-not-run", commitHash: "5555555"))
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in CapturingCodexBackend(response: "unused") },
+            streamPublisher: publisher.run,
+            resolveStreamPublisherNPM: { .failure("npm not found from /bin/zsh -lc 'command -v npm'") }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+
+        let invocations = await publisher.invocationsSnapshot()
+        let replies = await sink.repliesSnapshot()
+        try expect(invocations.isEmpty, "missing npm does not invoke wrapper")
+        try expect(replies.last?.text.contains("Publish failed during wrapper:") == true, "missing npm replies with wrapper phase")
+        try expect(replies.last?.text.contains("npm not found") == true, "missing npm reply is clear")
+        let record = try unwrap(try stores.state.load().streamPublishLedger?["npm-missing-guid"], "missing npm failure ledger record")
+        try expect(record.status == "failed", "missing npm marks ledger failed")
+        try expect(record.failureReason?.contains("wrapper") == true, "missing npm records wrapper failure phase")
+        try expect(record.failureReason?.contains("npm not found") == true, "missing npm records clear failure reason")
+    }
+
+    private static func testStreamPublishWaitsForStableMediaAndIncludesIt() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        try stores.config.save(defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo"))
+        let image = paths.tmpDir.appendingPathComponent("photo.jpg")
+        try Data("image bytes".utf8).write(to: image)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 12, guid: "media-guid", text: "🎡 image post", handleId: "+1", service: "iMessage", receivedAt: "2026-05-30T12:00:00.000Z", attachments: [
+                AttachmentRef(attachmentId: 44, transferName: "photo.jpg", mimeType: "image/jpeg", uti: nil, absolutePath: image.path, kind: "image", exists: true)
+            ])
+        ])
+        let publisher = CapturingStreamPublisher(mode: .success(publicUrl: "https://urcad.es/writing/media", commitHash: "3333333"))
+        let service = BridgeService(paths: paths, stores: stores, makeSource: { _ in source }, makeReplySink: { _ in CapturingReplySink() }, makeCodex: { _ in CapturingCodexBackend(response: "unused") }, streamPublisher: publisher.run, resolveStreamPublisherNPM: { .success("/Users/moss/.nvm/versions/node/v25.8.2/bin/npm") })
+
+        try await service.initialize()
+        try await service.tick()
+
+        let invocations = await publisher.invocationsSnapshot()
+        let invocation = try unwrap(invocations.first, "missing media stream invocation")
+        let event = try readJsonObject(invocation.eventJsonPath)
+        let media = try unwrap(event["media"] as? [[String: Any]], "missing media array")
+        let firstMedia = try unwrap(media.first, "missing first media item")
+        try expect(media.count == 1, "stream event includes ready media")
+        try expect(firstMedia["path"] as? String == image.path, "stream media path is absolute")
+        try expect(firstMedia["mimeType"] as? String == "image/jpeg", "stream media preserves mime type")
+        try expect(firstMedia["alt"] as? String == "", "stream media alt defaults empty")
+        let record = try unwrap(try stores.state.load().streamPublishLedger?["media-guid"], "missing media ledger record")
+        try expect(record.status == "succeeded", "media stream publish succeeds after readiness")
+    }
+
+    private static func testStreamPublishUnsupportedMediaFailsWithoutWrapper() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        try stores.config.save(defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo"))
+        let pdf = paths.tmpDir.appendingPathComponent("paper.pdf")
+        try Data("%PDF".utf8).write(to: pdf)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 13, guid: "unsupported-guid", text: "🎡 pdf post", handleId: "+1", service: "iMessage", receivedAt: "2026-05-30T12:00:00.000Z", attachments: [
+                AttachmentRef(attachmentId: 45, transferName: "paper.pdf", mimeType: "application/pdf", uti: nil, absolutePath: pdf.path, kind: "pdf", exists: true)
+            ])
+        ])
+        let sink = CapturingReplySink()
+        let publisher = CapturingStreamPublisher(mode: .success(publicUrl: "https://example.invalid/should-not-run", commitHash: "4444444"))
+        let service = BridgeService(paths: paths, stores: stores, makeSource: { _ in source }, makeReplySink: { _ in sink }, makeCodex: { _ in CapturingCodexBackend(response: "unused") }, streamPublisher: publisher.run, resolveStreamPublisherNPM: { .success("/Users/moss/.nvm/versions/node/v25.8.2/bin/npm") })
+
+        try await service.initialize()
+        try await service.tick()
+
+        let invocations = await publisher.invocationsSnapshot()
+        let replies = await sink.repliesSnapshot()
+        try expect(invocations.isEmpty, "unsupported media does not invoke wrapper")
+        try expect(replies.last?.text.contains("Publish failed during media:") == true, "unsupported media failure replies")
+        let record = try unwrap(try stores.state.load().streamPublishLedger?["unsupported-guid"], "missing unsupported media ledger record")
+        try expect(record.status == "failed", "unsupported media marks ledger failed")
+        try expect(record.failureReason?.contains("Unsupported attachment") == true, "unsupported media records clear failure")
+    }
+
+    private static func testDoubleFerrisWaitsForNextTrustedMediaAndPublishesCombinedEvent() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        try stores.config.save(defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo"))
+        let image = paths.tmpDir.appendingPathComponent("physical-memory.jpg")
+        try Data("image bytes".utf8).write(to: image)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 20, guid: "text-guid", text: "🎡🎡 physical memory", handleId: "+15551234567", service: "iMessage", receivedAt: "2026-05-30T21:39:00.000Z", attachments: []),
+            MessageItem(rowId: 21, guid: "media-guid", text: "", handleId: "+15551234567", service: "iMessage", receivedAt: "2026-05-30T21:40:00.000Z", attachments: [
+                AttachmentRef(attachmentId: 99, transferName: "physical-memory.jpg", mimeType: "image/jpeg", uti: nil, absolutePath: image.path, kind: "image", exists: true)
+            ])
+        ])
+        let sink = CapturingReplySink()
+        let backend = CapturingCodexBackend(response: "should not run")
+        let publisher = CapturingStreamPublisher(mode: .success(publicUrl: "https://urcad.es/writing/260530/", commitHash: "9999999abcdef"))
+        let service = BridgeService(paths: paths, stores: stores, makeSource: { _ in source }, makeReplySink: { _ in sink }, makeCodex: { _ in backend }, streamPublisher: publisher.run, resolveStreamPublisherNPM: { .success("/Users/moss/.nvm/versions/node/v25.8.2/bin/npm") })
+
+        try await service.initialize()
+        try await service.tick()
+
+        let replies = await sink.repliesSnapshot()
+        try expect(replies.map(\.text).contains("Waiting for media for: physical memory"), "double ferris replies that it is waiting for media")
+        try expect(replies.map(\.text).contains("Published: https://urcad.es/writing/260530/\nCommit: 9999999"), "double ferris success reply includes URL and short commit")
+        let request = await backend.requestSnapshot()
+        try expect(request == nil, "double ferris messages do not enter normal Codex prompt queue")
+        let invocations = await publisher.invocationsSnapshot()
+        try expect(invocations.count == 1, "double ferris invokes website wrapper once after media arrives")
+        let invocation = try unwrap(invocations.first, "missing double ferris stream invocation")
+        let event = try readJsonObject(invocation.eventJsonPath)
+        try expect(event["id"] as? String == "text-guid+media-guid+99", "double ferris event id derives from text guid, media guid, and attachment id")
+        try expect(event["source"] as? String == "imessage", "double ferris event source is imessage")
+        try expect(event["sender"] as? String == "+15551234567", "double ferris event sender comes from original trusted sender")
+        try expect(event["receivedAt"] as? String == "2026-05-30T21:39:00.000Z", "double ferris event receivedAt comes from original text")
+        try expect(event["text"] as? String == "🎡🎡 physical memory", "double ferris event preserves original raw text")
+        let media = try unwrap(event["media"] as? [[String: Any]], "missing double ferris media array")
+        let firstMedia = try unwrap(media.first, "missing double ferris media item")
+        try expect(media.count == 1, "double ferris event includes one media item")
+        try expect(firstMedia["path"] as? String == image.path, "double ferris media path is absolute")
+        try expect(firstMedia["mimeType"] as? String == "image/jpeg", "double ferris media preserves MIME type")
+        try expect(firstMedia["alt"] as? String == "", "double ferris media alt defaults empty")
+        let record = try unwrap(try stores.state.load().streamPublishLedger?["text-guid"], "missing double ferris text ledger record")
+        try expect(record.status == "succeeded", "double ferris ledger under text guid succeeds")
+        try expect(record.attachmentIds == [99], "double ferris ledger records consumed attachment id")
+        try expect(record.eventJsonPath == invocation.eventJsonPath, "double ferris ledger records combined event path")
+    }
+
+    private static func testDoubleFerrisTimesOutWaitingForMedia() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        try stores.config.save(defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo"))
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 30, guid: "timeout-text-guid", text: "🎡🎡 no media", handleId: "+1", service: "iMessage", receivedAt: "2026-05-30T22:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let publisher = CapturingStreamPublisher(mode: .success(publicUrl: "https://example.invalid/should-not-run", commitHash: "0000000"))
+        var currentDate = Date(timeIntervalSince1970: 100)
+        let service = BridgeService(paths: paths, stores: stores, makeSource: { _ in source }, makeReplySink: { _ in sink }, makeCodex: { _ in CapturingCodexBackend(response: "unused") }, streamPublisher: publisher.run, resolveStreamPublisherNPM: { .success("/Users/moss/.nvm/versions/node/v25.8.2/bin/npm") }, now: { currentDate })
+
+        try await service.initialize()
+        try await service.tick()
+        currentDate = Date(timeIntervalSince1970: 701)
+        try await service.tick()
+
+        let invocations = await publisher.invocationsSnapshot()
+        try expect(invocations.isEmpty, "double ferris timeout does not invoke wrapper")
+        let replies = await sink.repliesSnapshot()
+        try expect(replies.map(\.text).contains("Waiting for media for: no media"), "double ferris timeout starts with waiting reply")
+        try expect(replies.last?.text.contains("Timed out waiting for media for: no media") == true, "double ferris timeout replies clearly")
+        let record = try unwrap(try stores.state.load().streamPublishLedger?["timeout-text-guid"], "missing timed out double ferris ledger record")
+        try expect(record.status == "failed", "double ferris timeout marks ledger failed")
+        try expect(record.failureReason?.contains("Timed out waiting for media") == true, "double ferris timeout records clear failure")
+    }
+
+    private static func testDoubleFerrisUnsupportedNextMediaFailsWithoutWrapper() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        try stores.config.save(defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo"))
+        let pdf = paths.tmpDir.appendingPathComponent("physical-memory.pdf")
+        try Data("%PDF".utf8).write(to: pdf)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 40, guid: "unsupported-text-guid", text: "🎡🎡 physical memory", handleId: "+1", service: "iMessage", receivedAt: "2026-05-30T23:00:00.000Z", attachments: []),
+            MessageItem(rowId: 41, guid: "unsupported-media-guid", text: "", handleId: "+1", service: "iMessage", receivedAt: "2026-05-30T23:01:00.000Z", attachments: [
+                AttachmentRef(attachmentId: 101, transferName: "physical-memory.pdf", mimeType: "application/pdf", uti: nil, absolutePath: pdf.path, kind: "pdf", exists: true)
+            ])
+        ])
+        let sink = CapturingReplySink()
+        let publisher = CapturingStreamPublisher(mode: .success(publicUrl: "https://example.invalid/should-not-run", commitHash: "0000000"))
+        let service = BridgeService(paths: paths, stores: stores, makeSource: { _ in source }, makeReplySink: { _ in sink }, makeCodex: { _ in CapturingCodexBackend(response: "unused") }, streamPublisher: publisher.run, resolveStreamPublisherNPM: { .success("/Users/moss/.nvm/versions/node/v25.8.2/bin/npm") })
+
+        try await service.initialize()
+        try await service.tick()
+
+        let invocations = await publisher.invocationsSnapshot()
+        try expect(invocations.isEmpty, "double ferris unsupported media does not invoke wrapper")
+        let replies = await sink.repliesSnapshot()
+        try expect(replies.map(\.text).contains("Waiting for media for: physical memory"), "double ferris unsupported media starts with waiting reply")
+        try expect(replies.last?.text.contains("Publish failed during media:") == true, "double ferris unsupported media replies clearly")
+        try expect(replies.last?.text.contains("Unsupported attachment") == true, "double ferris unsupported media names unsupported attachment")
+        let record = try unwrap(try stores.state.load().streamPublishLedger?["unsupported-text-guid"], "missing unsupported double ferris ledger record")
+        try expect(record.status == "failed", "double ferris unsupported media marks ledger failed")
+        try expect(record.attachmentIds == [101], "double ferris unsupported media records consumed attachment id")
+        try expect(record.failureReason?.contains("Unsupported attachment") == true, "double ferris unsupported media records clear failure")
+    }
+
     private static func testSQLiteMessageSourceAttachmentRowsAndClassification() async throws {
         let paths = testPaths()
         let db = try makeSmokeMessagesDb(paths: paths)
@@ -333,6 +799,32 @@ struct BridgeCoreFocusedTests {
         try expect(messages[0].attachments[0].exists, "sqlite source records existing image attachment")
         try expect(messages[1].attachments.map(\.kind) == ["pdf", "unsupported"], "sqlite source classifies pdf and unsupported attachments")
         try expect(messages[1].attachments.map(\.exists) == [true, false], "sqlite source records attachment existence")
+    }
+
+    private static func testSQLiteMessageSourceReadsAttributedBodyOnlyText() async throws {
+        let paths = testPaths()
+        let db = try makeSmokeMessagesDb(paths: paths)
+        let attributed = attributedBodyFixture(text: "Hello?", extraStrings: ["streamtyped", "NSAttributedString", "NSObject", "__kIMMessagePartAttributeName"])
+        try runSQLite(db, """
+        INSERT INTO handle (ROWID, id, service)
+        VALUES (1, '+15551234567', 'iMessage');
+        INSERT INTO message (ROWID, guid, text, attributedBody, is_from_me, date, service, handle_id)
+        VALUES (20, 'attributed-only', NULL, \(sqliteBlobLiteral(attributed)), 0, 1000000000, 'iMessage', 1);
+        """)
+        let source = SQLiteMessageSource(
+            dbPath: db.path,
+            trustedSenders: ["+15551234567"],
+            homeDir: paths.homeDir.path
+        )
+
+        let latest = try await source.latestMatchingMessage()
+        let messages = try await source.fetchNewMessages(afterRowId: 0)
+
+        try expect(latest?.rowId == 20, "sqlite source latest sees attributed-body-only text")
+        try expect(messages.count == 1, "sqlite source returns attributed-body-only row")
+        try expect(messages[0].text == "Hello?", "sqlite source extracts user text from attributedBody")
+        try expect(!messages[0].text.contains("NSAttributedString"), "attributedBody extraction filters archive metadata")
+        try expect(!messages[0].text.contains("__kIMMessagePartAttributeName"), "attributedBody extraction filters Messages metadata")
     }
 
     private static func testPreviousImageReferenceAddsRecentImage() throws {
@@ -453,6 +945,7 @@ struct BridgeCoreFocusedTests {
         let stores = RuntimeStores(paths: paths)
         var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
         config.batchWindowMs = 1
+        config.activeJobAckEnabled = false
         try stores.config.save(config)
         let source = QueueMessageSource(messages: [
             MessageItem(rowId: 1, guid: "guid-image-followup", text: "Can you modify that image to add a hat?", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
@@ -2180,22 +2673,6 @@ struct BridgeCoreFocusedTests {
         }
     }
 
-    private static func testCodexMentionExtraction() throws {
-        let mentions = extractCodexMentionRefs(from: "Use [@Computer Use](plugin://computer-use@openai-bundled), @Chrome, plugin://chrome@openai-bundled, and app://google-calendar@openai-curated.")
-        try expect(mentions.contains(CodexMentionRef(name: "Computer Use", path: "plugin://computer-use@openai-bundled")), "markdown plugin mention is extracted")
-        try expect(mentions.contains(CodexMentionRef(name: "Chrome", path: "plugin://chrome@openai-bundled")), "bare Chrome mention is extracted and deduped against plugin URI")
-        try expect(mentions.contains(CodexMentionRef(name: "google-calendar@openai-curated", path: "app://google-calendar@openai-curated")), "app URI mention is extracted")
-        let chromeCount = mentions.filter { $0.path == "plugin://chrome@openai-bundled" }.count
-        try expect(chromeCount == 1, "Chrome mention is deduplicated by path")
-    }
-
-    private static func testNaturalLanguageCodexMentionExtraction() throws {
-        let mentions = extractCodexMentionRefs(from: "Please use Computer Use, then use Chrome, then use Browser.")
-        try expect(mentions.contains(CodexMentionRef(name: "Computer Use", path: "plugin://computer-use@openai-bundled")), "natural language Computer Use mention is extracted")
-        try expect(mentions.contains(CodexMentionRef(name: "Chrome", path: "plugin://chrome@openai-bundled")), "natural language Chrome mention is extracted")
-        try expect(mentions.contains(CodexMentionRef(name: "Browser", path: "plugin://browser@openai-bundled")), "natural language Browser mention is extracted")
-    }
-
     private static func testAppServerClientCapabilityInventory() async throws {
         let fake = FakeCodexAppServerConnection(lines: [
             #"{"id":1,"result":{"userAgent":"codex-test","codexHome":"/tmp/.codex","platformFamily":"unix","platformOs":"macos"}}"#,
@@ -2378,7 +2855,7 @@ struct BridgeCoreFocusedTests {
         try expect(fake.closed, "app-server backend closes connection")
     }
 
-    private static func testAppServerBackendUsesReadOnlySandboxForAutomationRequests() async throws {
+    private static func testAppServerBackendUsesDefaultSandboxForAutomationRequests() async throws {
         let fake = FakeCodexAppServerConnection(lines: [
             #"{"id":1,"result":{"ok":true}}"#,
             #"{"id":2,"result":{"thread":{"id":"thread-automation","path":"/tmp/thread.jsonl"}}}"#,
@@ -2395,10 +2872,10 @@ struct BridgeCoreFocusedTests {
         let turnStart = fake.sentMessages.first { $0["method"] as? String == "turn/start" }
         let params = turnStart?["params"] as? [String: Any]
         let sandboxPolicy = params?["sandboxPolicy"] as? [String: Any]
-        try expect(sandboxPolicy?["type"] as? String == "readOnly", "automation requests use read-only app-server sandbox")
+        try expect(sandboxPolicy?["type"] as? String == "dangerFullAccess", "automation requests use the normal app-server sandbox")
     }
 
-    private static func testAppServerBackendAddsCapabilityInventoryToDeveloperInstructions() async throws {
+    private static func testAppServerBackendKeepsDeveloperInstructionsTransportOnly() async throws {
         let paths = testPaths()
         try writeCapabilityCacheWithInventory(paths: paths)
         let fake = FakeCodexAppServerConnection(lines: [
@@ -2417,13 +2894,39 @@ struct BridgeCoreFocusedTests {
         let threadStart = fake.sentMessages.first { $0["method"] as? String == "thread/start" }
         let params = threadStart?["params"] as? [String: Any]
         let instructions = params?["developerInstructions"] as? String ?? ""
-        try expect(instructions.contains("Current Codex capability inventory from app-server cache"), "developer instructions include cached capability inventory")
-        try expect(instructions.contains("Browser"), "developer instructions include accessible app inventory")
-        try expect(instructions.contains("chrome:Chrome"), "developer instructions include enabled skill inventory")
-        try expect(instructions.contains("Invocation status: Chrome: callable"), "developer instructions distinguish callable capability status")
+        try expect(instructions.contains("Return plain text only"), "developer instructions include transport plain-text contract")
+        try expect(instructions.contains("BRIDGE_ATTACH:"), "developer instructions include attachment transport contract")
+        try expect(!instructions.contains("Current Codex capability inventory from app-server cache"), "developer instructions do not include cached capability inventory")
+        try expect(!instructions.contains("Browser"), "developer instructions do not include accessible app inventory")
+        try expect(!instructions.contains("chrome:Chrome"), "developer instructions do not include enabled skill inventory")
+        try expect(!instructions.contains("Invocation status:"), "developer instructions do not include invocation status")
     }
 
-    private static func testAppServerBackendAddsStructuredMentionsToTurnInput() async throws {
+    private static func testAppServerBackendDeveloperInstructionsPreventSelfRestart() async throws {
+        let paths = testPaths()
+        try writeCapabilityCacheWithInventory(paths: paths)
+        let fake = FakeCodexAppServerConnection(lines: [
+            #"{"id":1,"result":{"ok":true}}"#,
+            #"{"id":2,"result":{"thread":{"id":"thread-restart","path":"/tmp/thread.jsonl"}}}"#,
+            #"{"id":3,"result":{"turn":{"id":"turn-restart"}}}"#,
+            #"{"method":"item/completed","params":{"threadId":"thread-restart","turnId":"turn-restart","item":{"type":"agentMessage","id":"item-1","phase":"final_answer","text":"Done."}}}"#,
+            #"{"method":"turn/completed","params":{"threadId":"thread-restart","turn":{"id":"turn-restart","status":"completed","error":null}}}"#
+        ])
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.timeoutMs = 1_000
+        let backend = CodexAppServerBackend(config: config, paths: paths) { fake }
+
+        _ = try await backend.invoke(PromptRequest(promptText: "Rebuild and restart the bridge helper.", attachments: []), sessionId: nil, onEvent: nil)
+
+        let threadStart = fake.sentMessages.first { $0["method"] as? String == "thread/start" }
+        let params = threadStart?["params"] as? [String: Any]
+        let instructions = params?["developerInstructions"] as? String ?? ""
+        try expect(instructions.contains("Do not stop, restart, kickstart, bootout, unload, reinstall, or replace the Messages bridge helper"), "developer instructions forbid self-restarting helper")
+        try expect(instructions.contains("codexmsgctl-swift start"), "developer instructions call out codexmsgctl-swift start as unsafe from Messages bridge turns")
+        try expect(instructions.contains("BRIDGE_PROGRESS:"), "developer instructions tell Codex how to surface visible progress")
+    }
+
+    private static func testAppServerBackendDoesNotAddStructuredMentionsToTurnInput() async throws {
         let fake = FakeCodexAppServerConnection(lines: [
             #"{"id":1,"result":{"ok":true}}"#,
             #"{"id":2,"result":{"thread":{"id":"thread-mentions","path":"/tmp/thread.jsonl"}}}"#,
@@ -2447,8 +2950,7 @@ struct BridgeCoreFocusedTests {
         try expect(input.first?["type"] as? String == "text", "turn input preserves original text first")
         try expect(input.first?["text"] as? String == "Use [@Computer Use](plugin://computer-use@openai-bundled), then @Chrome.", "turn input does not rewrite visible prompt text")
         let mentions = input.filter { $0["type"] as? String == "mention" }
-        try expect(mentions.contains { $0["name"] as? String == "Computer Use" && $0["path"] as? String == "plugin://computer-use@openai-bundled" }, "turn input includes Computer Use mention metadata")
-        try expect(mentions.contains { $0["name"] as? String == "Chrome" && $0["path"] as? String == "plugin://chrome@openai-bundled" }, "turn input includes Chrome mention metadata")
+        try expect(mentions.isEmpty, "turn input does not include structured mention metadata")
     }
 
     private static func testAppServerBackendRejectsNonFinalAgentMessageAsReply() async throws {
@@ -2856,6 +3358,20 @@ struct BridgeCoreFocusedTests {
         try expect(events == [.progress("Completed swift test (completed)")], "parser emits app-server progress")
     }
 
+    private static func testCodexProgressSummaryUsesCommentaryText() throws {
+        let summary = codexProgressSummary(from: [
+            "method": "item/completed",
+            "params": [
+                "item": [
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "Verified the wrapper fix in source; rebuilding the helper next."
+                ]
+            ]
+        ])
+        try expect(summary == "Verified the wrapper fix in source; rebuilding the helper next.", "commentary agent messages become visible progress summaries")
+    }
+
     private static func testOutgoingAttachmentIntentGate() throws {
         try expect(!outgoingAttachmentsWereRequested(in: "Sending you an App Store Connect api key, can you move it over to your Developer folder?"), "incoming file transfer is not an outgoing attachment request")
         try expect(!outgoingAttachmentsWereRequested(in: "Create an article from this page and save it to disk"), "save-to-disk request is not an outgoing attachment request")
@@ -2985,6 +3501,44 @@ struct BridgeCoreFocusedTests {
         try expect(state.activeJob == nil, "progress test clears completed active job")
     }
 
+    private static func testProgressEventsSendVisibleUpdatesAfterInterval() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        config.longTaskProgressIntervalMs = 1
+        try stores.config.save(config)
+        let clock = IncrementingClock(start: Date(timeIntervalSince1970: 1_777_777_777), step: 1)
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 1, guid: "guid-progress-visible", text: "run a harmless probe", handleId: "+1", service: "iMessage", receivedAt: "2026-01-01T00:00:00.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in
+                FakeProgressCodexBackend(
+                    events: [
+                        .sessionStarted("thread-progress-visible"),
+                        .turnStarted("turn-progress-visible"),
+                        .progress("Visible progress update")
+                    ],
+                    response: "final answer only"
+                )
+            },
+            now: { clock.now() }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        let replies = try await waitForReplies(sink, count: 2)
+
+        try expect(replies.map(\.text) == ["Visible progress update", "final answer only"], "progress sends a visible heartbeat once the interval has elapsed")
+    }
+
     private static func testDeadActiveJobOnStartupNotifiesAndClears() async throws {
         let paths = testPaths()
         try ensureRuntimeDirectories(paths)
@@ -3038,6 +3592,177 @@ struct BridgeCoreFocusedTests {
         try expect(replies.map(\.text) == ["That active job stopped before it could finish, so I cleared it. Please send the request again."], "dead startup job sends a visible recovery notice")
         let state = try stores.state.load()
         try expect(state.activeJob == nil, "dead startup job is cleared after notification")
+    }
+
+    private static func testBridgeRepairDryRunReportsStaleJobAndMissedAttributedRows() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        let db = try makeSmokeMessagesDb(paths: paths)
+        config.messagesDbPath = db.path
+        config.allowedSender = "+1-520-609-9095"
+        try stores.config.save(config)
+        try insertRepairMessages(db: db)
+        try stores.state.save(repairIncidentState())
+
+        let report = try await runBridgeRepair(
+            paths: paths,
+            stores: stores,
+            options: BridgeRepairOptions(dryRun: true, replay: true, maxReplay: 10, reloadLaunchAgents: false),
+            processIsRunning: { _ in false },
+            launchAgentStateProvider: { (.notLoaded, .error("Bad request.")) },
+            reloadLaunchAgents: {}
+        )
+
+        try expect(report.dryRun, "repair report records dry-run mode")
+        try expect(report.staleJobRecovered, "dry run reports stale active job")
+        try expect(report.missedMessageRowIds == [887, 888, 889], "dry run reports attributed-body missed rows")
+        try expect(report.replayRowIds == [885, 887, 888, 889], "dry run plans recoverable plus missed replay rows")
+        try expect(report.helperLaunchAgentState == .notLoaded, "dry run reports helper launch state")
+        try expect(report.permissionBrokerLaunchAgentState == .error("Bad request."), "dry run reports broker launch state")
+        let state = try stores.state.load()
+        try expect(state.activeJob != nil, "dry run leaves active job untouched")
+        try expect(state.pendingBatch == nil, "dry run does not stage replay")
+        try expect(state.lastProcessedRowId == 885, "dry run does not advance cursor")
+    }
+
+    private static func testBridgeRepairStagesRecoverableAndMissedRowsForReplay() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        let db = try makeSmokeMessagesDb(paths: paths)
+        config.messagesDbPath = db.path
+        config.allowedSender = "+1-520-609-9095"
+        try stores.config.save(config)
+        try insertRepairMessages(db: db)
+        try stores.state.save(repairIncidentState())
+
+        let report = try await runBridgeRepair(
+            paths: paths,
+            stores: stores,
+            options: BridgeRepairOptions(dryRun: false, replay: true, maxReplay: 10, reloadLaunchAgents: false),
+            processIsRunning: { _ in false },
+            launchAgentStateProvider: { (.notLoaded, .notLoaded) },
+            reloadLaunchAgents: {}
+        )
+
+        try expect(report.staleJobRecovered, "repair recovers stale active job")
+        try expect(report.replayStaged, "repair stages replay")
+        try expect(report.replayRowIds == [885, 887, 888, 889], "repair stages original and missed rows in chronological order")
+        let state = try stores.state.load()
+        try expect(state.activeJob == nil, "repair clears stale active job")
+        try expect(state.lastRecoverablePromptBatch == nil, "repair consumes recoverable batch into replay")
+        try expect(state.pendingBatch?.items.map(\.rowId) == [885, 887, 888, 889], "repair pending batch contains replay rows")
+        try expect(state.pendingBatch?.items.map(\.text).contains("Hello?") == true, "repair replay includes attributed-body text")
+        try expect(state.lastProcessedRowId == 889, "repair advances cursor past staged missed rows")
+    }
+
+    private static func testBridgeRepairNoReplayReportsAndAdvancesPastMissedRows() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        let db = try makeSmokeMessagesDb(paths: paths)
+        config.messagesDbPath = db.path
+        config.allowedSender = "+1-520-609-9095"
+        try stores.config.save(config)
+        try insertRepairMessages(db: db)
+        try stores.state.save(repairIncidentState())
+
+        let report = try await runBridgeRepair(
+            paths: paths,
+            stores: stores,
+            options: BridgeRepairOptions(dryRun: false, replay: false, maxReplay: 10, reloadLaunchAgents: false),
+            processIsRunning: { _ in false },
+            launchAgentStateProvider: { (.notLoaded, .notLoaded) },
+            reloadLaunchAgents: {}
+        )
+
+        try expect(!report.replayStaged, "no-replay does not stage replay")
+        try expect(report.missedMessageRowIds == [887, 888, 889], "no-replay reports missed rows")
+        let state = try stores.state.load()
+        try expect(state.activeJob == nil, "no-replay clears stale active job")
+        try expect(state.pendingBatch == nil, "no-replay leaves no pending batch")
+        try expect(state.lastRecoverablePromptBatch?.items.map(\.rowId) == [885], "no-replay preserves recoverable original batch for explicit retry")
+        try expect(state.lastProcessedRowId == 889, "no-replay advances cursor so missed rows are report-only")
+    }
+
+    private static func testTryAgainReplaysRecoveredActiveJobBatch() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var config = defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo")
+        config.batchWindowMs = 1
+        config.activeJobAckEnabled = false
+        try stores.config.save(config)
+        let originalBatch = PendingBatch(
+            handleId: "+1",
+            service: "iMessage",
+            startedAt: "2026-05-22T19:29:02.000Z",
+            deadlineAt: "2026-05-22T19:29:03.000Z",
+            items: [
+                MessageItem(rowId: 42, guid: "dead-guid", text: "Use Computer Use to play Dungeon Crawl Stone Soup.", handleId: "+1", service: "iMessage", receivedAt: "2026-05-22T19:29:02.000Z", attachments: [])
+            ]
+        )
+        try stores.state.save(BridgeState(
+            lastProcessedGuid: nil,
+            lastProcessedRowId: 42,
+            pendingBatch: nil,
+            activeJob: ActiveJob(
+                jobId: "dead-job",
+                guid: "dead-guid",
+                rowId: 42,
+                type: "promptBatch",
+                receivedAt: "2026-05-22T19:29:02.000Z",
+                promptPreview: "Use Computer Use to play Dungeon Crawl Stone Soup.",
+                recipient: "+1",
+                service: "iMessage",
+                startedAt: "2026-05-22T19:29:02.000Z",
+                lastProgressAt: nil,
+                lastUserUpdateAt: nil,
+                lastEventAt: "2026-05-22T19:29:15.000Z",
+                codexPid: 999_999,
+                codexSessionId: "thread-dead",
+                outputPath: nil,
+                sessionLogPath: nil,
+                status: "running",
+                lastObservedSummary: "Started Computer Use.",
+                permissionRecoveryAttempts: 0,
+                waitingForPermissionSince: nil,
+                lastPermissionEventId: nil,
+                recoverableBatch: originalBatch
+            ),
+            codexSession: CodexSessionState(sessionId: "thread-dead", startedAt: nil, lastPromptAt: nil, lastCompletedAt: nil, expiresAt: nil, lastErrorAt: nil)
+        ))
+        let source = QueueMessageSource(messages: [
+            MessageItem(rowId: 43, guid: "retry-guid", text: "Ok try again", handleId: "+1", service: "iMessage", receivedAt: "2026-05-22T19:36:38.000Z", attachments: [])
+        ])
+        let sink = CapturingReplySink()
+        let backend = CapturingCodexBackend(response: "replayed")
+        let service = BridgeService(
+            paths: paths,
+            stores: stores,
+            makeSource: { _ in source },
+            makeReplySink: { _ in sink },
+            makeCodex: { _ in backend },
+            now: { Date(timeIntervalSince1970: 1_779_478_800) }
+        )
+
+        try await service.initialize()
+        try await service.tick()
+        try await service.tick()
+
+        let replies = try await waitForReplies(sink, count: 2)
+        try expect(replies.first?.text == "That active job stopped before it could finish, so I cleared it. Reply \"try again\" to rerun the original request.", "dead recoverable job sends retry hint")
+        try expect(replies.map(\.text).contains { $0.contains("SUCCESS replayed") }, "retry follow-up replays the original request: \(replies.map(\.text))")
+        let request = await backend.requestSnapshot()
+        try expect(request?.promptText.contains("Use Computer Use to play Dungeon Crawl Stone Soup.") == true, "replayed prompt contains original request")
+        try expect(request?.promptText.contains("Ok try again") == false, "replayed prompt does not replace original with retry text")
+        let state = try stores.state.load()
+        try expect(state.lastRecoverablePromptBatch == nil, "successful retry clears recoverable batch")
+        try expect(state.activeJob == nil, "successful retry clears active job")
     }
 
     private static func testPendingInteractiveCallbackCapturesNextReply() async throws {
@@ -3202,6 +3927,14 @@ struct BridgeCoreFocusedTests {
 
         try expect(launchAgentProgramArgument(at: paths.helperLaunchAgentPath) == helperPath.path, "launchagent plist program argument")
         try expect(launchctlProgram(from: launchctlOutput) == helperPath.path, "launchctl loaded program parser")
+    }
+
+    private static func testLaunchAgentLoadStateFormatting() throws {
+        try expect(LaunchAgentLoadState.loaded.statusText == "loaded", "loaded launch state text")
+        try expect(LaunchAgentLoadState.notLoaded.statusText == "not loaded", "not loaded launch state text")
+        try expect(LaunchAgentLoadState.error("Bad request.").statusText == "error: Bad request.", "error launch state text includes detail")
+        try expect(LaunchAgentLoadState.notLoaded.isLoaded == false, "not loaded launch state is not loaded")
+        try expect(LaunchAgentLoadState.loaded.isLoaded, "loaded launch state is loaded")
     }
 
     private static func testRuntimeExecutableIdentityDiagnostics() throws {
@@ -3378,7 +4111,7 @@ struct BridgeCoreFocusedTests {
         try expect(report.text.contains("Accepted live capability blockers: computer-use-doctor blocked CU_MARKER Computer Use server error -10005: cgWindowNotFound; messages-browser blocked BROWSER_MARKER Browser is not available: iab"), "strict report lists accepted capability blockers")
     }
 
-    private static func testAutomationRequestCreatesCodexAutomationFromInterpretedSpec() async throws {
+    private static func testAutomationRequestStartsNormalCodexJob() async throws {
         let paths = testPaths()
         try ensureRuntimeDirectories(paths)
         let stores = RuntimeStores(paths: paths)
@@ -3389,45 +4122,29 @@ struct BridgeCoreFocusedTests {
             MessageItem(rowId: 1, guid: "guid-auto", text: "Can we create a new automation? Every morning at 7am, send a small morning digest.", handleId: "+1", service: "iMessage", receivedAt: "2026-05-12T00:00:00.000Z", attachments: [])
         ])
         let sink = CapturingReplySink()
+        let backend = CapturingCodexBackend(response: "I'll create that with Codex.")
         let service = BridgeService(
             paths: paths,
             stores: stores,
             makeSource: { _ in source },
             makeReplySink: { _ in sink },
-            makeCodex: { _ in
-                FakeProgressCodexBackend(
-                    events: [],
-                    response: """
-                    {"name":"Morning News and Weather Digest","prompt":"Create a concise morning digest for the user in Brooklyn/NYC. Gather current information from reliable sources and include local news, American news, AI news, technology news, breaking news, weather and clothing advice, and interesting x.com threads. Use Chrome or Computer Use when available.","rrule":"FREQ=DAILY;BYHOUR=7;BYMINUTE=0;BYSECOND=0","model":"gpt-5.2","reasoningEffort":"medium","executionEnvironment":"local","cwds":["/Users/moss/Developer/Codex Misc"]}
-                    """
-                )
-            },
+            makeCodex: { _ in backend },
             now: { Date(timeIntervalSince1970: 1_778_640_000) }
         )
 
         try await service.initialize()
         try await service.tick()
-        try await Task.sleep(nanoseconds: 50_000_000)
-        try await service.tick()
+        let replies = try await waitForReplies(sink, count: 1)
+        let request = await backend.requestSnapshot()
+        let state = try await waitForState(stores, timeout: 3) { $0.activeJob == nil }
 
-        let replies = await sink.repliesSnapshot()
-        try expect(replies.count == 1, "automation request gets one creation reply")
-        let reply = try expectReply(replies.first)
-        try expect(reply.text.contains("Created Codex automation: Morning News and Weather Digest"), "automation reply confirms interpreted creation")
-        let toml = try String(contentsOf: paths.codexAutomationsDir.appendingPathComponent("morning-news-and-weather-digest/automation.toml"), encoding: .utf8)
-        try expect(toml.contains(#"rrule = "FREQ=DAILY;BYHOUR=7;BYMINUTE=0;BYSECOND=0""#), "service-created automation has interpreted morning schedule")
-        try expect(toml.contains("Create a concise morning digest for the user"), "service-created automation uses interpreted prompt")
-        try expect(!toml.contains("Can we create a new automation?"), "service-created automation does not paste raw request")
-        let state = try stores.state.load()
-        try expect(state.activeJob == nil, "automation creation does not start Codex job")
-        try expect(state.codexSession.sessionId == nil, "automation creation does not mutate Codex session")
-        try expect(state.automationCreationStatus?.phase == "confirmed", "automation creation status records confirmation")
-        try expect(state.automationCreationStatus?.createdFilePath?.hasSuffix("automation.toml") == true, "automation creation status records file path")
-        let route = try expectRoute(state.automationRoutes?.first)
-        try expect(route.automationId == "morning-news-and-weather-digest", "automation route id persisted")
-        try expect(route.recipient == "+1", "automation route recipient comes from Messages batch")
-        try expect(route.service == "iMessage", "automation route service comes from Messages batch")
-        try expect(route.createdFromGuid == "guid-auto", "automation route source guid persisted")
+        try expect(replies.first?.text.contains("I'll create that with Codex.") == true, "automation-looking request is answered by normal Codex job")
+        try expect(request?.promptText.contains("Can we create a new automation?") == true, "automation-looking request reaches Codex unchanged")
+        try expect(request?.promptText.contains("Bridge routing guard:") == false, "automation-looking request has no routing guard")
+        try expect(!FileManager.default.fileExists(atPath: paths.codexAutomationsDir.appendingPathComponent("morning-news-and-weather-digest/automation.toml").path), "normal message flow does not create native automation files")
+        try expect(state.codexSession.sessionId == "thread-smoke", "normal Codex job mutates Codex session")
+        try expect(state.automationCreationStatus == nil, "normal message flow does not record automation creation status")
+        try expect((state.automationRoutes ?? []).isEmpty, "normal message flow does not create automation routes")
     }
 
     private static func testCodexAutomationsReportsCreationInProgress() async throws {
@@ -3512,7 +4229,7 @@ struct BridgeCoreFocusedTests {
         try expect(text.contains("Codex automation routes:"), "/codex automations still lists routes")
     }
 
-    private static func testCompletedAutomationSessionIsForwardedOnce() async throws {
+    private static func testNormalTickDoesNotForwardCompletedAutomationSessions() async throws {
         let paths = testPaths()
         try ensureRuntimeDirectories(paths)
         let stores = RuntimeStores(paths: paths)
@@ -3553,11 +4270,94 @@ struct BridgeCoreFocusedTests {
         try await service.tick()
 
         let replies = await sink.repliesSnapshot()
-        try expect(replies.map(\.text) == ["Morning Digest\nBring an umbrella."], "completed automation final answer is forwarded once")
+        try expect(replies.isEmpty, "normal tick does not forward completed automation sessions")
         let state = try stores.state.load()
         let route = try expectRoute(state.automationRoutes?.first)
-        try expect(route.lastSeenSessionId == "019e20ff-4dca-7571-9425-0713bddb0d73", "route records seen session")
-        try expect(route.lastDeliveredSessionId == "019e20ff-4dca-7571-9425-0713bddb0d73", "route records delivered session")
+        try expect(route.lastSeenSessionId == nil, "normal tick does not scan automation sessions")
+        try expect(route.lastDeliveredSessionId == nil, "normal tick does not mark automation sessions delivered")
+    }
+
+    private static func testAutomationForwardOnceSidecar() async throws {
+        let emptyPaths = testPaths()
+        try ensureRuntimeDirectories(emptyPaths)
+        let emptyStores = RuntimeStores(paths: emptyPaths)
+        try emptyStores.config.save(defaultBridgeConfig(paths: emptyPaths, codexCommand: "/bin/echo"))
+        let emptySink = CapturingReplySink()
+        let emptyResult = try await forwardCompletedAutomationRunsOnce(
+            paths: emptyPaths,
+            stores: emptyStores,
+            replySink: emptySink,
+            now: Date(timeIntervalSince1970: 1_778_650_000),
+            maximumFilesToRead: 10
+        )
+        try expect(emptyResult.forwardedCount == 0, "sidecar forwards nothing when no routes exist")
+        try expect(emptyResult.scan.readFileCount == 0, "sidecar does not scan sessions when no routes exist")
+
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        try stores.config.save(defaultBridgeConfig(paths: paths, codexCommand: "/bin/echo"))
+        try stores.state.save(BridgeState(
+            lastProcessedGuid: nil,
+            lastProcessedRowId: 0,
+            pendingBatch: nil,
+            activeJob: nil,
+            codexSession: CodexSessionState(),
+            automationRoutes: [
+                CodexAutomationRoute(
+                    automationId: "morning-news-and-weather-digest",
+                    name: "Morning News and Weather Digest",
+                    recipient: "+1",
+                    service: "iMessage",
+                    createdFromGuid: "guid-auto",
+                    createdFromRowId: 1,
+                    createdAt: "2026-05-12T00:00:00.000Z"
+                )
+            ]
+        ))
+        try writeAutomationSessionFixture(paths: paths)
+
+        let cappedSink = CapturingReplySink()
+        let cappedResult = try await forwardCompletedAutomationRunsOnce(
+            paths: paths,
+            stores: stores,
+            replySink: cappedSink,
+            now: Date(timeIntervalSince1970: 1_778_650_000),
+            maximumFilesToRead: 0
+        )
+        try expect(cappedResult.forwardedCount == 0, "sidecar honors max-files cap")
+        try expect(cappedResult.scan.readFileCount == 0, "sidecar reads no files when capped at zero")
+        let cappedReplies = await cappedSink.repliesSnapshot()
+        try expect(cappedReplies.isEmpty, "sidecar sends no replies when capped before reading")
+
+        let sink = CapturingReplySink()
+        let result = try await forwardCompletedAutomationRunsOnce(
+            paths: paths,
+            stores: stores,
+            replySink: sink,
+            now: Date(timeIntervalSince1970: 1_778_650_000),
+            maximumFilesToRead: 10
+        )
+        let replies = await sink.repliesSnapshot()
+        try expect(result.forwardedCount == 1, "sidecar forwards one completed automation run")
+        try expect(result.scan.readFileCount == 1, "sidecar scans within bounded file limit")
+        try expect(replies.map(\.text) == ["Morning Digest\nBring an umbrella."], "sidecar forwards completed automation final answer")
+        let state = try stores.state.load()
+        let route = try expectRoute(state.automationRoutes?.first)
+        try expect(route.lastSeenSessionId == "019e20ff-4dca-7571-9425-0713bddb0d73", "sidecar records seen session")
+        try expect(route.lastDeliveredSessionId == "019e20ff-4dca-7571-9425-0713bddb0d73", "sidecar records delivered session")
+
+        let repeatSink = CapturingReplySink()
+        let repeatResult = try await forwardCompletedAutomationRunsOnce(
+            paths: paths,
+            stores: stores,
+            replySink: repeatSink,
+            now: Date(timeIntervalSince1970: 1_778_650_010),
+            maximumFilesToRead: 10
+        )
+        try expect(repeatResult.forwardedCount == 0, "sidecar does not redeliver an already delivered route")
+        let repeatReplies = await repeatSink.repliesSnapshot()
+        try expect(repeatReplies.isEmpty, "already delivered route produces no sidecar reply")
     }
 
     private static func testCompletedAutomationScanUsesDeliveredSessionLowerBound() throws {
@@ -4096,6 +4896,87 @@ private actor ReplyCollector {
     }
 }
 
+private final class IncrementingClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: Date
+    private let step: TimeInterval
+
+    init(start: Date, step: TimeInterval) {
+        self.current = start
+        self.step = step
+    }
+
+    func now() -> Date {
+        lock.lock()
+        defer { lock.unlock() }
+        let value = current
+        current = current.addingTimeInterval(step)
+        return value
+    }
+}
+
+private actor CapturingStreamPublisher {
+    enum Mode {
+        case success(publicUrl: String, commitHash: String, crosspostsJson: String? = nil)
+        case failure(phase: String, error: String, stderr: String)
+    }
+
+    private let mode: Mode
+    private let delayNanoseconds: UInt64
+    private var invocations: [StreamPublishInvocation] = []
+    private var running = 0
+    private var maxConcurrent = 0
+
+    init(mode: Mode, delayNanoseconds: UInt64 = 0) {
+        self.mode = mode
+        self.delayNanoseconds = delayNanoseconds
+    }
+
+    func run(_ invocation: StreamPublishInvocation) async -> StreamPublishProcessResult {
+        running += 1
+        maxConcurrent = max(maxConcurrent, running)
+        invocations.append(invocation)
+        if delayNanoseconds > 0 {
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
+        }
+        defer { running -= 1 }
+        switch mode {
+        case .success(let publicUrl, let commitHash, let crosspostsJson):
+            let crosspostsField = crosspostsJson.map { #","crossposts":"# + $0 } ?? ""
+            let json = """
+            {"success":true,"phase":"verify","publicUrl":"\(publicUrl)","commitHash":"\(commitHash)"\(crosspostsField)}
+            """
+            try? Data(json.utf8).write(to: URL(fileURLWithPath: invocation.resultJsonPath))
+            return StreamPublishProcessResult(stdout: "published \(publicUrl)", stderr: "", exitCode: 0)
+        case .failure(let phase, let error, let stderr):
+            let json = """
+            {"success":false,"phase":"\(phase)","error":"\(error)"}
+            """
+            try? Data(json.utf8).write(to: URL(fileURLWithPath: invocation.resultJsonPath))
+            return StreamPublishProcessResult(stdout: "", stderr: stderr, exitCode: 1)
+        }
+    }
+
+    func invocationsSnapshot() -> [StreamPublishInvocation] {
+        invocations
+    }
+
+    func maxConcurrentSnapshot() -> Int {
+        maxConcurrent
+    }
+}
+
+private func parseStreamPublishResultForTest(_ json: String) throws -> StreamPublishResultSummary {
+    let paths = testPaths()
+    try ensureRuntimeDirectories(paths)
+    let resultJson = paths.tmpDir.appendingPathComponent("result.json")
+    try Data(json.utf8).write(to: resultJson)
+    return parseStreamPublishResult(
+        resultJsonPath: resultJson.path,
+        processResult: StreamPublishProcessResult(stdout: "noisy stdout", stderr: "noisy stderr", exitCode: 0)
+    )
+}
+
 private func testPaths() -> RuntimePaths {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("MessagesCodexBridgeTests")
@@ -4151,6 +5032,76 @@ private func makeSmokeMessagesDb(paths: RuntimePaths) throws -> URL {
     return db
 }
 
+private func attributedBodyFixture(text: String, extraStrings: [String]) -> Data {
+    let joined = (extraStrings + [text]).joined(separator: "\u{0}")
+    return Data(joined.utf8)
+}
+
+private func sqliteBlobLiteral(_ data: Data) -> String {
+    "X'\(data.map { String(format: "%02x", $0) }.joined())'"
+}
+
+private func insertRepairMessages(db: URL) throws {
+    try runSQLite(db, """
+    INSERT INTO handle (ROWID, id, service)
+    VALUES (1, '+15206099095', 'iMessage');
+    INSERT INTO message (ROWID, guid, text, attributedBody, is_from_me, date, service, handle_id)
+    VALUES
+      (887, 'guid-887', NULL, \(sqliteBlobLiteral(attributedBodyFixture(text: "Small update before you implement.", extraStrings: ["streamtyped", "NSMutableAttributedString", "NSObject"]))), 0, 1000000000, 'iMessage', 1),
+      (888, 'guid-888', NULL, \(sqliteBlobLiteral(attributedBodyFixture(text: "Did you ever take my prior prompts anywhere?", extraStrings: ["streamtyped", "NSAttributedString"]))), 0, 1000000001, 'iMessage', 1),
+      (889, 'guid-889', NULL, \(sqliteBlobLiteral(attributedBodyFixture(text: "Hello?", extraStrings: ["streamtyped", "__kIMMessagePartAttributeName"]))), 0, 1000000002, 'iMessage', 1);
+    """)
+}
+
+private func repairIncidentState() -> BridgeState {
+    let original = MessageItem(
+        rowId: 885,
+        guid: "guid-885",
+        text: "Please implement the Messages bridge side of the stream publisher.",
+        handleId: "+15206099095",
+        service: "iMessage",
+        receivedAt: "2026-05-30T07:20:22.990Z",
+        attachments: []
+    )
+    let batch = PendingBatch(
+        handleId: "+15206099095",
+        service: "iMessage",
+        startedAt: "2026-05-30T07:20:22.990Z",
+        deadlineAt: "2026-05-30T07:20:33.990Z",
+        items: [original]
+    )
+    var state = defaultBridgeState()
+    state.lastProcessedRowId = 885
+    state.lastProcessedGuid = "guid-885"
+    state.codexSession = CodexSessionState(sessionId: "thread-stale", startedAt: nil, lastPromptAt: nil, lastCompletedAt: nil, expiresAt: nil, lastErrorAt: nil)
+    state.activeJob = ActiveJob(
+        jobId: "stale-job",
+        guid: "guid-885",
+        rowId: 885,
+        type: "promptBatch",
+        receivedAt: "2026-05-30T07:20:34.732Z",
+        promptPreview: original.text,
+        recipient: "+15206099095",
+        service: "iMessage",
+        startedAt: "2026-05-30T07:20:34.732Z",
+        lastProgressAt: nil,
+        lastUserUpdateAt: nil,
+        lastEventAt: "2026-05-30T07:27:05.270Z",
+        codexPid: 999_999,
+        codexSessionId: "thread-stale",
+        codexTurnId: "turn-stale",
+        outputPath: nil,
+        sessionLogPath: nil,
+        status: "running",
+        lastObservedSummary: "Started bridge restart.",
+        permissionRecoveryAttempts: 0,
+        waitingForPermissionSince: nil,
+        lastPermissionEventId: nil,
+        recoverableBatch: batch
+    )
+    return state
+}
+
 private func writeAutomationToml(id: String, name: String, status: String, paths: RuntimePaths) throws {
     let dir = paths.codexAutomationsDir.appendingPathComponent(id)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -4184,6 +5135,19 @@ private func runSQLite(_ db: URL, _ sql: String) throws {
 
 private func shellQuoted(_ value: String) -> String {
     "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+}
+
+private func unwrap<T>(_ value: T?, _ message: String) throws -> T {
+    guard let value else { throw TestFailure(description: message) }
+    return value
+}
+
+private func readJsonObject(_ path: String) throws -> [String: Any] {
+    let data = try Data(contentsOf: URL(fileURLWithPath: path))
+    guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        throw TestFailure(description: "Expected JSON object at \(path)")
+    }
+    return object
 }
 
 private func waitForReplies(_ sink: CapturingReplySink, count: Int, timeout: TimeInterval = 5) async throws -> [CapturingReplySink.Reply] {
