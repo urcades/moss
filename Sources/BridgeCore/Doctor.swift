@@ -283,17 +283,17 @@ public final class Doctor: @unchecked Sendable {
     }
 
     private func checkPermissionBrokerLaunchAgent() async -> DoctorCheck {
-        let loaded = await ServiceLifecycle(paths: paths).permissionBrokerLaunchAgentLoaded()
-        return loaded
+        let state = await ServiceLifecycle(paths: paths).permissionBrokerLaunchAgentState()
+        return state.isLoaded
             ? DoctorCheck(name: "Permission Broker LaunchAgent", ok: true, detail: BridgeConstants.permissionBrokerLaunchAgentLabel)
-            : DoctorCheck(name: "Permission Broker LaunchAgent", ok: false, detail: "Start the bridge with codexmsgctl-swift start to load \(BridgeConstants.permissionBrokerLaunchAgentLabel).")
+            : DoctorCheck(name: "Permission Broker LaunchAgent", ok: false, detail: "\(state.statusText). Run codexmsgctl-swift repair to reload \(BridgeConstants.permissionBrokerLaunchAgentLabel).")
     }
 
     private func checkHelperLaunchAgent() async -> DoctorCheck {
-        let loaded = await ServiceLifecycle(paths: paths).helperLaunchAgentLoaded()
-        return loaded
+        let state = await ServiceLifecycle(paths: paths).helperLaunchAgentState()
+        return state.isLoaded
             ? DoctorCheck(name: "Helper LaunchAgent", ok: true, detail: BridgeConstants.helperLaunchAgentLabel)
-            : DoctorCheck(name: "Helper LaunchAgent", ok: false, detail: "Start the bridge with codexmsgctl-swift start to load \(BridgeConstants.helperLaunchAgentLabel).")
+            : DoctorCheck(name: "Helper LaunchAgent", ok: false, detail: "\(state.statusText). Run codexmsgctl-swift repair to reload \(BridgeConstants.helperLaunchAgentLabel).")
     }
 
     private func checkLaunchAgentProvenance(name: String, label: String, plistPath: URL, expectedExecutable: URL) -> DoctorCheck {

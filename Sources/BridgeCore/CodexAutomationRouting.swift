@@ -40,6 +40,16 @@ public struct CodexAutomationScanResult: Equatable, Sendable {
     }
 }
 
+public struct CodexAutomationForwardingResult: Equatable, Sendable {
+    public var scan: CodexAutomationScanResult
+    public var forwardedCount: Int
+
+    public init(scan: CodexAutomationScanResult, forwardedCount: Int) {
+        self.scan = scan
+        self.forwardedCount = forwardedCount
+    }
+}
+
 public struct CodexAutomationFileSummary: Equatable, Sendable {
     public var id: String
     public var name: String
@@ -93,6 +103,42 @@ public func sanitizedAutomationMessage(_ text: String) -> String {
 
 public func completedCodexAutomationRuns(in sessionsDir: URL, routes: [CodexAutomationRoute]) -> [CodexAutomationRunResult] {
     completedCodexAutomationRunScan(in: sessionsDir, routes: routes).runs
+}
+
+@discardableResult
+public func forwardCompletedAutomationRunsOnce(
+    paths: RuntimePaths,
+    stores: RuntimeStores,
+    replySink: any ReplySink,
+    now: Date = Date(),
+    maximumFilesToRead: Int? = 25
+) async throws -> CodexAutomationForwardingResult {
+    let initialState = try stores.state.load()
+    let routes = initialState.automationRoutes ?? []
+    let scan = completedCodexAutomationRunScan(
+        in: paths.codexSessionsDir,
+        routes: routes,
+        options: CodexAutomationScanOptions(maximumFilesToRead: maximumFilesToRead)
+    )
+    guard !scan.runs.isEmpty else {
+        return CodexAutomationForwardingResult(scan: scan, forwardedCount: 0)
+    }
+
+    let latestRuns = Dictionary(scan.runs.map { ($0.automationId, $0) }, uniquingKeysWith: { _, latest in latest })
+    var forwardedCount = 0
+    for run in latestRuns.values.sorted(by: { $0.automationId < $1.automationId }) {
+        let currentState = try stores.state.load()
+        guard let route = currentState.automationRoutes?.first(where: { $0.automationId == run.automationId }) else { continue }
+        guard route.lastDeliveredSessionId != run.sessionId else { continue }
+        _ = try await replySink.sendReply(recipient: route.recipient, service: route.service, text: run.message)
+        let deliveredAt = run.completedAt ?? DateCodec.iso(now)
+        try stores.state.update { state in
+            state.markAutomationRouteDelivered(automationId: run.automationId, sessionId: run.sessionId, deliveredAt: deliveredAt)
+        }
+        forwardedCount += 1
+    }
+
+    return CodexAutomationForwardingResult(scan: scan, forwardedCount: forwardedCount)
 }
 
 public func completedCodexAutomationRunScan(in sessionsDir: URL, routes: [CodexAutomationRoute], options: CodexAutomationScanOptions? = nil) -> CodexAutomationScanResult {

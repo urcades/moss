@@ -48,12 +48,35 @@ public func migrateTrustedSenders(_ config: inout BridgeConfig) {
     }
 }
 
+public enum LaunchAgentLoadState: Equatable, Sendable {
+    case loaded
+    case notLoaded
+    case error(String)
+
+    public var isLoaded: Bool {
+        self == .loaded
+    }
+
+    public var statusText: String {
+        switch self {
+        case .loaded:
+            return "loaded"
+        case .notLoaded:
+            return "not loaded"
+        case .error(let detail):
+            return "error: \(detail)"
+        }
+    }
+}
+
 public final class ServiceLifecycle {
     private let paths: RuntimePaths
+    private let launchctlCommand: String
     private let runner = ProcessRunner()
 
-    public init(paths: RuntimePaths = .current()) {
+    public init(paths: RuntimePaths = .current(), launchctlCommand: String = "/bin/launchctl") {
         self.paths = paths
+        self.launchctlCommand = launchctlCommand
     }
 
     public func installHelperLaunchAgent(helperExecutable: URL? = nil) throws {
@@ -84,10 +107,10 @@ public final class ServiceLifecycle {
         try installApplicationBundle(sourceAppPath: appBundle)
         try installHelperLaunchAgent()
         try installPermissionBrokerLaunchAgent()
-        _ = try await runner.run("/bin/launchctl", ["bootstrap", "gui/\(getuid())", paths.helperLaunchAgentPath.path])
-        _ = try? await runner.run("/bin/launchctl", ["kickstart", "-k", "gui/\(getuid())/\(BridgeConstants.helperLaunchAgentLabel)"])
-        _ = try await runner.run("/bin/launchctl", ["bootstrap", "gui/\(getuid())", paths.permissionBrokerLaunchAgentPath.path])
-        _ = try? await runner.run("/bin/launchctl", ["kickstart", "-k", "gui/\(getuid())/\(BridgeConstants.permissionBrokerLaunchAgentLabel)"])
+        _ = try await runner.run(launchctlCommand, ["bootstrap", "gui/\(getuid())", paths.helperLaunchAgentPath.path], timeoutMs: 10_000)
+        _ = try? await runner.run(launchctlCommand, ["kickstart", "-k", "gui/\(getuid())/\(BridgeConstants.helperLaunchAgentLabel)"], timeoutMs: 10_000)
+        _ = try await runner.run(launchctlCommand, ["bootstrap", "gui/\(getuid())", paths.permissionBrokerLaunchAgentPath.path], timeoutMs: 10_000)
+        _ = try? await runner.run(launchctlCommand, ["kickstart", "-k", "gui/\(getuid())/\(BridgeConstants.permissionBrokerLaunchAgentLabel)"], timeoutMs: 10_000)
     }
 
     public func startPermissionBrokerLaunchAgent() async throws {
@@ -96,8 +119,8 @@ public final class ServiceLifecycle {
             try installApplicationBundle()
         }
         try installPermissionBrokerLaunchAgent()
-        _ = try await runner.run("/bin/launchctl", ["bootstrap", "gui/\(getuid())", paths.permissionBrokerLaunchAgentPath.path])
-        _ = try? await runner.run("/bin/launchctl", ["kickstart", "-k", "gui/\(getuid())/\(BridgeConstants.permissionBrokerLaunchAgentLabel)"])
+        _ = try await runner.run(launchctlCommand, ["bootstrap", "gui/\(getuid())", paths.permissionBrokerLaunchAgentPath.path], timeoutMs: 10_000)
+        _ = try? await runner.run(launchctlCommand, ["kickstart", "-k", "gui/\(getuid())/\(BridgeConstants.permissionBrokerLaunchAgentLabel)"], timeoutMs: 10_000)
     }
 
     public func installApplicationBundle(sourceAppPath: URL? = nil) throws {
@@ -116,38 +139,48 @@ public final class ServiceLifecycle {
     }
 
     public func stopHelperLaunchAgent(removePlist: Bool = false) async {
-        _ = try? await runner.run("/bin/launchctl", ["bootout", "gui/\(getuid())", paths.helperLaunchAgentPath.path])
-        _ = try? await runner.run("/bin/launchctl", ["remove", BridgeConstants.helperLaunchAgentLabel])
+        _ = try? await runner.run(launchctlCommand, ["bootout", "gui/\(getuid())", paths.helperLaunchAgentPath.path], timeoutMs: 10_000)
+        _ = try? await runner.run(launchctlCommand, ["remove", BridgeConstants.helperLaunchAgentLabel], timeoutMs: 10_000)
         if removePlist {
             try? FileManager.default.removeItem(at: paths.helperLaunchAgentPath)
         }
     }
 
     public func stopPermissionBrokerLaunchAgent(removePlist: Bool = false) async {
-        _ = try? await runner.run("/bin/launchctl", ["bootout", "gui/\(getuid())", paths.permissionBrokerLaunchAgentPath.path])
-        _ = try? await runner.run("/bin/launchctl", ["remove", BridgeConstants.permissionBrokerLaunchAgentLabel])
+        _ = try? await runner.run(launchctlCommand, ["bootout", "gui/\(getuid())", paths.permissionBrokerLaunchAgentPath.path], timeoutMs: 10_000)
+        _ = try? await runner.run(launchctlCommand, ["remove", BridgeConstants.permissionBrokerLaunchAgentLabel], timeoutMs: 10_000)
         if removePlist {
             try? FileManager.default.removeItem(at: paths.permissionBrokerLaunchAgentPath)
         }
     }
 
     public func helperLaunchAgentLoaded() async -> Bool {
-        await launchAgentLoaded(label: BridgeConstants.helperLaunchAgentLabel)
+        (await helperLaunchAgentState()).isLoaded
     }
 
     public func permissionBrokerLaunchAgentLoaded() async -> Bool {
-        await launchAgentLoaded(label: BridgeConstants.permissionBrokerLaunchAgentLabel)
+        (await permissionBrokerLaunchAgentState()).isLoaded
     }
 
-    private func launchAgentLoaded(label: String) async -> Bool {
+    public func helperLaunchAgentState() async -> LaunchAgentLoadState {
+        await launchAgentState(label: BridgeConstants.helperLaunchAgentLabel)
+    }
+
+    public func permissionBrokerLaunchAgentState() async -> LaunchAgentLoadState {
+        await launchAgentState(label: BridgeConstants.permissionBrokerLaunchAgentLabel)
+    }
+
+    private func launchAgentState(label: String) async -> LaunchAgentLoadState {
         let domain = "gui/\(getuid())"
-        if (try? await runner.run("/bin/launchctl", ["print", "\(domain)/\(label)"])) != nil {
-            return true
+        if (try? await runner.run(launchctlCommand, ["print", "\(domain)/\(label)"], timeoutMs: 5_000)) != nil {
+            return .loaded
         }
-        guard let domainPrint = try? await runner.run("/bin/launchctl", ["print", domain]) else {
-            return false
+        do {
+            let domainPrint = try await runner.run(launchctlCommand, ["print", domain], timeoutMs: 5_000)
+            return domainPrint.stdout.contains(label) ? .loaded : .notLoaded
+        } catch {
+            return .error(String(describing: error))
         }
-        return domainPrint.stdout.contains(label)
     }
 }
 

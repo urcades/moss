@@ -43,6 +43,7 @@ public final class SQLiteMessageSource: MessageSource {
           AND (\(whereClause))
           AND (
             trim(replace(COALESCE(m.text, ''), char(65532), '')) != ''
+            OR length(COALESCE(m.attributedBody, x'')) > 0
             OR EXISTS (SELECT 1 FROM message_attachment_join maj WHERE maj.message_id = m.ROWID)
           )
         ORDER BY m.ROWID DESC
@@ -59,6 +60,7 @@ public final class SQLiteMessageSource: MessageSource {
           m.ROWID AS rowid,
           m.guid AS guid,
           m.text AS text,
+          hex(m.attributedBody) AS attributedBodyHex,
           CAST(m.date AS TEXT) AS rawDate,
           h.id AS handleId,
           COALESCE(m.service, h.service, 'iMessage') AS service,
@@ -114,7 +116,7 @@ public final class SQLiteMessageSource: MessageSource {
                 let message = MessageItem(
                     rowId: rowId,
                     guid: guid,
-                    text: cleanIncomingText(row.string("text")),
+                    text: cleanIncomingText(row.string("text"), attributedBodyHex: row.string("attributedBodyHex")),
                     handleId: row.string("handleId") ?? "",
                     service: row.string("service") ?? "iMessage",
                     receivedAt: appleTimestampToISO(row.string("rawDate")),
@@ -210,6 +212,9 @@ public func classifyAttachment(mimeType: String?, uti: String?, absolutePath: St
     let ext = absolutePath.map { URL(fileURLWithPath: $0).pathExtension.lowercased() } ?? ""
     if mime.hasPrefix("image/") || uti.hasPrefix("public.image") || ["jpg", "jpeg", "png", "gif", "webp", "heic", "heif"].contains(ext) {
         return "image"
+    }
+    if mime.hasPrefix("video/") || uti.hasPrefix("public.movie") || ["mov", "mp4", "m4v", "avi"].contains(ext) {
+        return "video"
     }
     if mime == "application/pdf" || uti == "com.adobe.pdf" || ext == "pdf" {
         return "pdf"

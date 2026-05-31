@@ -18,6 +18,7 @@ struct CodexMsgCtlSwift {
           codexmsgctl-swift install [--probe-computer-use]
           codexmsgctl-swift start
           codexmsgctl-swift stop [--remove-plist]
+          codexmsgctl-swift repair [--dry-run] [--no-replay] [--max-replay N]
           codexmsgctl-swift status
           codexmsgctl-swift configure --safety standard|permissive|preserve
           codexmsgctl-swift configure --preserve-safety
@@ -26,6 +27,7 @@ struct CodexMsgCtlSwift {
           codexmsgctl-swift trusted-gates [--runbook] [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift smoke text|attachment|bridge-attach|generated-image|edit-image-check|automation|app-server|app-server-callback|mcp-elicitation-callback|inbound-image-check|outbound-image-check|chrome|browser|computer-use [--recipient HANDLE] [--service iMessage|SMS]
           codexmsgctl-swift smoke automation --deactivate-active [--dry-run]
+          codexmsgctl-swift automation-forward once [--max-files N]
           codexmsgctl-swift broker start|stop|status|doctor|events|dry-run-scan
           codexmsgctl-swift reset
         """)
@@ -70,15 +72,18 @@ struct CodexMsgCtlSwift {
             await lifecycle.stopHelperLaunchAgent(removePlist: rest.contains("--remove-plist"))
             await lifecycle.stopPermissionBrokerLaunchAgent(removePlist: rest.contains("--remove-plist"))
             print("Swift helper and permission broker LaunchAgent stop requested.")
+        case "repair":
+            let report = try await runBridgeRepair(paths: paths, stores: stores, options: bridgeRepairOptions(rest))
+            print(report.summary)
         case "status":
             let state = try stores.state.load()
             let config = try stores.config.load()
             let lifecycle = ServiceLifecycle(paths: paths)
-            let helperLoaded = await lifecycle.helperLaunchAgentLoaded()
-            let brokerLoaded = await lifecycle.permissionBrokerLaunchAgentLoaded()
+            let helperState = await lifecycle.helperLaunchAgentState()
+            let brokerState = await lifecycle.permissionBrokerLaunchAgentState()
             print("Messages Codex Bridge Swift status:")
-            print("Swift helper LaunchAgent loaded: \(helperLoaded ? "yes" : "no")")
-            print("Permission broker LaunchAgent loaded: \(brokerLoaded ? "yes" : "no")")
+            print("Swift helper LaunchAgent loaded: \(helperState.statusText)")
+            print("Permission broker LaunchAgent loaded: \(brokerState.statusText)")
             print("Helper LaunchAgent path: \(paths.helperLaunchAgentPath.path)")
             print("Permission broker LaunchAgent path: \(paths.permissionBrokerLaunchAgentPath.path)")
             print("Installed app path: \(paths.installedAppPath.path)")
@@ -105,6 +110,7 @@ struct CodexMsgCtlSwift {
             print("Active job latest progress: \(state.activeJob?.lastObservedSummary ?? "none")")
             print("Active job Codex thread id: \(state.activeJob?.codexSessionId ?? "none")")
             print("Active job Codex turn id: \(state.activeJob?.codexTurnId ?? "none")")
+            print("Repair hint: \((state.activeJob != nil || !helperState.isLoaded || !brokerState.isLoaded) ? "run codexmsgctl-swift repair --dry-run" : "none")")
             print("Last outbound send: \(outboundSendStatusText(state.lastOutboundSend))")
             print("Recent media refs: \(recentMediaRefsStatusText(state.recentMediaRefs ?? []))")
             print("Live smoke results: \(liveSmokeResultsStatusText(state.liveSmokeResults ?? []))")
@@ -179,6 +185,8 @@ struct CodexMsgCtlSwift {
             print(formatTrustedGateEvidence(evidence))
         case "smoke":
             try await runSmokeCommand(rest, paths: paths, stores: stores)
+        case "automation-forward":
+            try await runAutomationForwardCommand(rest, paths: paths, stores: stores)
         case "reset":
             var state = try stores.state.load()
             if state.activeJob != nil {
@@ -246,6 +254,38 @@ struct CodexMsgCtlSwift {
         let valueIndex = args.index(after: index)
         guard valueIndex < args.endIndex else { return nil }
         return args[valueIndex]
+    }
+
+    private static func smokeOptionInt(_ name: String, in args: [String]) throws -> Int? {
+        guard let value = smokeOption(name, in: args) else { return nil }
+        guard let parsed = Int(value), parsed >= 0 else {
+            throw StoreError.validation("\(name) must be a non-negative integer.")
+        }
+        return parsed
+    }
+
+    private static func runAutomationForwardCommand(_ args: [String], paths: RuntimePaths, stores: RuntimeStores) async throws {
+        let subcommand = args.first ?? "help"
+        if subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
+            print("Usage: codexmsgctl-swift automation-forward once [--max-files N]")
+            return
+        }
+        guard subcommand == "once" else {
+            throw StoreError.validation("Unknown automation-forward command: \(subcommand)")
+        }
+        let config = try stores.config.load()
+        let sink = AppleMessagesReplySink(
+            osascriptCommand: config.osascriptCommand,
+            chunkSize: config.chunkSize,
+            messagesDbPath: config.messagesDbPath
+        )
+        let result = try await forwardCompletedAutomationRunsOnce(
+            paths: paths,
+            stores: stores,
+            replySink: sink,
+            maximumFilesToRead: try smokeOptionInt("--max-files", in: args) ?? 25
+        )
+        print("Automation forward once: forwarded \(result.forwardedCount); scanned \(result.scan.readFileCount)/\(result.scan.candidateFileCount) candidate file(s), skipped \(result.scan.skippedFileCount).")
     }
 
     private static func hasUsableRecentMedia(direction: String, recipient: String, service: String, state: BridgeState) -> Bool {
@@ -831,6 +871,23 @@ struct CodexMsgCtlSwift {
         let broker = config.effectivePermissionBroker
         print("Permission broker auto-clicking: \(broker.enabled ? "on" : "off"), mode: \(broker.mode)")
         print("Trusted senders: \(config.effectiveTrustedSenders.isEmpty ? "none" : config.effectiveTrustedSenders.joined(separator: ", "))")
+    }
+
+    private static func bridgeRepairOptions(_ args: [String]) throws -> BridgeRepairOptions {
+        var maxReplay = 50
+        if let index = args.firstIndex(of: "--max-replay") {
+            let valueIndex = args.index(after: index)
+            guard valueIndex < args.endIndex, let value = Int(args[valueIndex]), value >= 0 else {
+                throw StoreError.validation("--max-replay requires a non-negative integer.")
+            }
+            maxReplay = value
+        }
+        return BridgeRepairOptions(
+            dryRun: args.contains("--dry-run"),
+            replay: !args.contains("--no-replay"),
+            maxReplay: maxReplay,
+            reloadLaunchAgents: !args.contains("--dry-run")
+        )
     }
 
     private static func configureSafetyProfile(_ args: [String]) throws -> SafetyProfile {

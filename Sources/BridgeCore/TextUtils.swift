@@ -4,6 +4,68 @@ public func cleanIncomingText(_ text: String?) -> String {
     (text ?? "").replacingOccurrences(of: "\u{fffc}", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
+public func cleanIncomingText(_ text: String?, attributedBodyHex: String?) -> String {
+    let plain = cleanIncomingText(text)
+    guard plain.isEmpty else { return plain }
+    return cleanIncomingAttributedBodyText(hex: attributedBodyHex)
+}
+
+public func cleanIncomingAttributedBodyText(hex: String?) -> String {
+    guard let data = dataFromHexString(hex), !data.isEmpty else { return "" }
+    let decoded = String(decoding: data, as: UTF8.self)
+    let parts = decoded
+        .split { scalar in
+            guard let value = scalar.unicodeScalars.first?.value else { return true }
+            return value < 32 || value == 127
+        }
+        .map { cleanAttributedBodyCandidate(String($0)) }
+        .filter { !$0.isEmpty && !isAttributedBodyMetadata($0) }
+    return parts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func dataFromHexString(_ hex: String?) -> Data? {
+    guard let hex, !hex.isEmpty, hex.count.isMultiple(of: 2) else { return nil }
+    var data = Data()
+    var index = hex.startIndex
+    while index < hex.endIndex {
+        let next = hex.index(index, offsetBy: 2)
+        guard let byte = UInt8(hex[index..<next], radix: 16) else { return nil }
+        data.append(byte)
+        index = next
+    }
+    return data
+}
+
+private func cleanAttributedBodyCandidate(_ value: String) -> String {
+    let allowedLeading = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "/@#*_\"'([{$"))
+    var trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    while let first = trimmed.unicodeScalars.first, !allowedLeading.contains(first) {
+        trimmed.removeFirst()
+    }
+    return trimmed
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func isAttributedBodyMetadata(_ value: String) -> Bool {
+    let lower = value.lowercased()
+    let exact: Set<String> = [
+        "streamtyped",
+        "nsmutableattributedstring",
+        "nsattributedstring",
+        "nsmutablestring",
+        "nsstring",
+        "nsobject",
+        "nsdictionary",
+        "nsnumber",
+        "nsvalue",
+        "nsurl",
+        "nsdata"
+    ]
+    if exact.contains(lower) { return true }
+    let prefixes = ["__kim", "nskeyedarchiver", "bplist", "$version", "$archiver", "$objects", "x$"]
+    return prefixes.contains { lower.hasPrefix($0) }
+}
+
 public func stripANSI(_ text: String) -> String {
     text.replacingOccurrences(of: #"\u001B\[[0-9;]*[A-Za-z]"#, with: "", options: .regularExpression)
 }

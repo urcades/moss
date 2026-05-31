@@ -9,6 +9,8 @@ public final class BridgeService: @unchecked Sendable {
     private let makeReplySink: (BridgeConfig) -> ReplySink
     private let makeCodex: (BridgeConfig) -> any CodexBackend
     private let makeDefaultCodex: BridgeDefaultCodexFactory
+    private let streamPublisher: StreamPublisherRunner
+    private let resolveStreamPublisherNPM: StreamPublishNPMResolver
     private let useDefaultCodexBackend: Bool
     private let now: () -> Date
     private let stateBox: BridgeStateBox
@@ -27,6 +29,8 @@ public final class BridgeService: @unchecked Sendable {
         makeReplySink: @escaping (BridgeConfig) -> ReplySink,
         makeCodex: @escaping (BridgeConfig) -> any CodexBackend,
         makeDefaultCodex: BridgeDefaultCodexFactory? = nil,
+        streamPublisher: @escaping StreamPublisherRunner = runStreamPublisherProcess,
+        resolveStreamPublisherNPM: @escaping StreamPublishNPMResolver = resolveStreamPublisherNPMPath,
         useDefaultCodexBackend: Bool = false,
         now: @escaping () -> Date = Date.init
     ) {
@@ -38,6 +42,8 @@ public final class BridgeService: @unchecked Sendable {
         self.makeDefaultCodex = makeDefaultCodex ?? { config, responder in
             CodexAppServerBackend(config: config, paths: paths, interactiveCallbackResponder: responder)
         }
+        self.streamPublisher = streamPublisher
+        self.resolveStreamPublisherNPM = resolveStreamPublisherNPM
         self.useDefaultCodexBackend = useDefaultCodexBackend
         self.now = now
         self.stateBox = BridgeStateBox(defaultBridgeState())
@@ -84,10 +90,26 @@ public final class BridgeService: @unchecked Sendable {
     public func tick() async throws {
         let config = try stores.config.load()
         try await expirePendingInteractiveCallbackIfNeeded(config: config)
+        try await expirePendingStreamPublishMediaIfNeeded(config: config)
         try await recoverDetachedActiveJobIfNeeded(config: config)
-        try await deliverCompletedAutomationRuns(config: config)
         let messages = try await makeSource(config).fetchNewMessages(afterRowId: state.lastProcessedRowId)
         for message in messages {
+            if isStreamPublishWaitingForMediaText(message.text) {
+                try await claimStreamPublishWaitingForMedia(message, config: config)
+                continue
+            }
+            if !message.attachments.isEmpty {
+                if shouldDeferForMissingAttachments(message, now: now()) {
+                    break
+                }
+                if try claimAndEnqueuePendingStreamPublishMedia(message) {
+                    continue
+                }
+            }
+            if isStreamPublishMessageText(message.text) {
+                try claimAndEnqueueStreamPublish(message)
+                continue
+            }
             if shouldDeferForMissingAttachments(message, now: now()) {
                 break
             }
@@ -108,6 +130,9 @@ public final class BridgeService: @unchecked Sendable {
             jobQueue.enqueueInteractiveCallbackReply(message)
             return
         }
+        if state.activeJob == nil, replayLastRecoverableBatchIfRequested(message) {
+            return
+        }
         if state.activeJob != nil {
             if let command = localCommandName(message.text), message.attachments.isEmpty {
                 jobQueue.enqueueLocalCommand(command, message)
@@ -122,6 +147,17 @@ public final class BridgeService: @unchecked Sendable {
             return
         }
         appendToPendingBatch(config: config, message: message)
+    }
+
+    private func replayLastRecoverableBatchIfRequested(_ message: MessageItem) -> Bool {
+        guard message.attachments.isEmpty, isRetryLastPromptText(message.text) else { return false }
+        let batch = stateBox.mutate { state -> PendingBatch? in
+            state.takeLastRecoverablePromptBatch(for: message)
+        }
+        guard let batch else { return false }
+        try? saveStateSnapshot()
+        jobQueue.enqueuePromptBatch(batch)
+        return true
     }
 
     private func shouldDeferForMissingAttachments(_ message: MessageItem, now: Date) -> Bool {
@@ -164,6 +200,10 @@ public final class BridgeService: @unchecked Sendable {
                 try await handleLocalCommand(command, message: message)
             case .interactiveCallbackReply(let message):
                 try await handleInteractiveCallbackReply(message)
+            case .streamPublish(let message):
+                if state.activeJob == nil {
+                    try await handleStreamPublish(message)
+                }
             case .promptBatch(let batch):
                 if state.activeJob == nil {
                     try await startPromptBatch(batch)
@@ -367,6 +407,273 @@ public final class BridgeService: @unchecked Sendable {
             : runLocalCommand(message.text)
         try await sendReplyRecording(makeReplySink(config), recipient: message.handleId, service: message.service, text: text)
         try stores.state.save(state)
+    }
+
+    private func claimAndEnqueueStreamPublish(_ message: MessageItem) throws {
+        let eventPaths = streamPublishEventPaths(paths: paths, guid: message.guid)
+        let claimedAt = DateCodec.iso(now())
+        let shouldEnqueue = stateBox.mutate { state -> Bool in
+            state.lastProcessedGuid = message.guid
+            state.lastProcessedRowId = max(state.lastProcessedRowId, message.rowId)
+            var ledger = state.streamPublishLedger ?? [:]
+            if ledger[message.guid] != nil {
+                state.streamPublishLedger = ledger
+                return false
+            }
+            ledger[message.guid] = StreamPublishRecord(
+                rowId: message.rowId,
+                guid: message.guid,
+                receivedAt: message.receivedAt ?? claimedAt,
+                rawTextHash: streamPublishRawTextHash(message.text),
+                attachmentIds: message.attachments.map(\.attachmentId),
+                eventJsonPath: eventPaths.eventJson.path,
+                resultJsonPath: eventPaths.resultJson.path,
+                status: StreamPublishStatus.claimed,
+                startedAt: nil,
+                finishedAt: nil,
+                exitCode: nil,
+                stdoutTail: nil,
+                stderrTail: nil,
+                publicUrl: nil,
+                commitHash: nil,
+                failureReason: nil,
+                rawText: message.text,
+                sender: message.handleId,
+                service: message.service,
+                mediaWaitExpiresAt: nil,
+                eventId: message.guid
+            )
+            state.streamPublishLedger = ledger
+            return true
+        }
+        try saveStateSnapshot()
+        if shouldEnqueue {
+            jobQueue.enqueueStreamPublish(message)
+        }
+    }
+
+    private func claimStreamPublishWaitingForMedia(_ message: MessageItem, config: BridgeConfig) async throws {
+        let claimedAt = DateCodec.iso(now())
+        let expiresAt = DateCodec.iso(now().addingTimeInterval(streamPublishPendingMediaTimeoutSeconds))
+        let shouldReply = try mutateStateAndSave { state -> Bool in
+            state.lastProcessedGuid = message.guid
+            state.lastProcessedRowId = max(state.lastProcessedRowId, message.rowId)
+            var ledger = state.streamPublishLedger ?? [:]
+            if ledger[message.guid] != nil {
+                state.streamPublishLedger = ledger
+                return false
+            }
+            let eventPaths = streamPublishEventPaths(paths: paths, guid: message.guid)
+            ledger[message.guid] = StreamPublishRecord(
+                rowId: message.rowId,
+                guid: message.guid,
+                receivedAt: message.receivedAt ?? claimedAt,
+                rawTextHash: streamPublishRawTextHash(message.text),
+                attachmentIds: [],
+                eventJsonPath: eventPaths.eventJson.path,
+                resultJsonPath: eventPaths.resultJson.path,
+                status: StreamPublishStatus.waitingMedia,
+                startedAt: nil,
+                finishedAt: nil,
+                exitCode: nil,
+                stdoutTail: nil,
+                stderrTail: nil,
+                publicUrl: nil,
+                commitHash: nil,
+                failureReason: nil,
+                rawText: message.text,
+                sender: message.handleId,
+                service: message.service,
+                mediaWaitExpiresAt: expiresAt,
+                eventId: message.guid
+            )
+            state.streamPublishLedger = ledger
+            return true
+        }
+        if shouldReply {
+            let displayText = streamPublishDisplayText(message.text)
+            try await sendReplyRecording(makeReplySink(config), recipient: message.handleId, service: message.service, text: "Waiting for media for: \(displayText)")
+        }
+    }
+
+    private func claimAndEnqueuePendingStreamPublishMedia(_ mediaMessage: MessageItem) throws -> Bool {
+        let pending = state.streamPublishLedger?
+            .filter { _, record in
+                record.status == StreamPublishStatus.waitingMedia
+                    && record.sender == mediaMessage.handleId
+                    && record.service == mediaMessage.service
+                    && record.finishedAt == nil
+            }
+            .min { lhs, rhs in
+                lhs.value.rowId < rhs.value.rowId
+            }
+        guard let pending else { return false }
+        let ledgerGuid = pending.key
+        let record = pending.value
+        let eventId = streamPublishCombinedEventId(textGuid: record.guid, mediaMessage: mediaMessage)
+        let eventPaths = streamPublishEventPaths(paths: paths, guid: eventId)
+        let syntheticMessage = MessageItem(
+            rowId: record.rowId,
+            guid: ledgerGuid,
+            text: record.rawText ?? mediaMessage.text,
+            handleId: record.sender ?? mediaMessage.handleId,
+            service: record.service ?? mediaMessage.service,
+            receivedAt: record.receivedAt,
+            attachments: mediaMessage.attachments
+        )
+        try mutateStateAndSave { state in
+            state.lastProcessedGuid = mediaMessage.guid
+            state.lastProcessedRowId = max(state.lastProcessedRowId, mediaMessage.rowId)
+            var ledger = state.streamPublishLedger ?? [:]
+            guard var existing = ledger[ledgerGuid] else { return }
+            existing.attachmentIds = mediaMessage.attachments.map(\.attachmentId)
+            existing.eventJsonPath = eventPaths.eventJson.path
+            existing.resultJsonPath = eventPaths.resultJson.path
+            existing.eventId = eventId
+            existing.mediaWaitExpiresAt = nil
+            existing.status = StreamPublishStatus.claimed
+            if existing.rawText == nil {
+                existing.rawText = syntheticMessage.text
+            }
+            if existing.sender == nil {
+                existing.sender = syntheticMessage.handleId
+            }
+            if existing.service == nil {
+                existing.service = syntheticMessage.service
+            }
+            ledger[ledgerGuid] = existing
+            state.streamPublishLedger = ledger
+        }
+        recordInboundMediaRefs(mediaMessage)
+        jobQueue.enqueueStreamPublish(syntheticMessage)
+        return true
+    }
+
+    private func handleStreamPublish(_ message: MessageItem) async throws {
+        let config = try stores.config.load()
+        let replySink = makeReplySink(config)
+        if !message.attachments.isEmpty {
+            try updateStreamPublishRecord(guid: message.guid) { record in
+                record.status = StreamPublishStatus.waitingMedia
+            }
+        }
+        let mediaResult = await waitForStableStreamPublishMedia(attachments: message.attachments)
+        let media: [StreamPublishEventMedia]
+        switch mediaResult {
+        case .success(let readyMedia):
+            media = readyMedia
+        case .failure(let reason):
+            try await failStreamPublish(message: message, phase: "media", reason: reason, processResult: nil, replySink: replySink)
+            return
+        }
+
+        guard let record = state.streamPublishLedger?[message.guid],
+              let eventJsonPath = record.eventJsonPath,
+              let resultJsonPath = record.resultJsonPath else {
+            try await sendReplyRecording(replySink, recipient: message.handleId, service: message.service, text: "Publish failed during state: missing stream publish ledger record.")
+            return
+        }
+
+        do {
+            try writeStreamPublishEvent(message: message, media: media, eventJson: URL(fileURLWithPath: eventJsonPath), eventId: record.eventId ?? message.guid)
+        } catch {
+            try await failStreamPublish(message: message, phase: "event_json", reason: String(describing: error), processResult: nil, replySink: replySink)
+            return
+        }
+
+        let npmPath: String
+        switch await resolveStreamPublisherNPM() {
+        case .success(let resolvedPath):
+            npmPath = resolvedPath
+        case .failure(let reason):
+            try await failStreamPublish(message: message, phase: "wrapper", reason: "Could not resolve npm: \(reason)", processResult: nil, replySink: replySink)
+            return
+        }
+
+        let invocation = streamPublishInvocation(eventJsonPath: eventJsonPath, resultJsonPath: resultJsonPath, npmPath: npmPath)
+        let startedAt = DateCodec.iso(now())
+        try updateStreamPublishRecord(guid: message.guid) { record in
+            record.status = StreamPublishStatus.running
+            record.startedAt = startedAt
+            record.eventJsonPath = eventJsonPath
+            record.resultJsonPath = resultJsonPath
+        }
+        let processResult = await streamPublisher(invocation)
+        let summary = parseStreamPublishResult(resultJsonPath: resultJsonPath, processResult: processResult)
+        if summary.success, let publicUrl = summary.publicUrl {
+            let finishedAt = DateCodec.iso(now())
+            try updateStreamPublishRecord(guid: message.guid) { record in
+                record.status = StreamPublishStatus.succeeded
+                record.finishedAt = finishedAt
+                record.exitCode = processResult.exitCode
+                record.stdoutTail = sanitizedTail(processResult.stdout)
+                record.stderrTail = sanitizedTail(processResult.stderr)
+                record.publicUrl = publicUrl
+                record.commitHash = summary.commitHash
+                record.failureReason = nil
+            }
+            let commit = summary.commitHash.map(shortCommitHash) ?? "unknown"
+            let crosspostLine = summary.crosspostSummary.map { "\n\($0)" } ?? ""
+            try await sendReplyRecording(replySink, recipient: message.handleId, service: message.service, text: "Published: \(publicUrl)\nCommit: \(commit)\(crosspostLine)")
+            return
+        }
+        let reason = summary.errorSummary ?? "Publisher failed without an error message."
+        try await failStreamPublish(message: message, phase: summary.phase, reason: reason, processResult: processResult, replySink: replySink)
+    }
+
+    private func failStreamPublish(message: MessageItem, phase: String, reason: String, processResult: StreamPublishProcessResult?, replySink: ReplySink) async throws {
+        let sanitizedReason = sanitizedTail(reason)
+        let finishedAt = DateCodec.iso(now())
+        try updateStreamPublishRecord(guid: message.guid) { record in
+            record.status = StreamPublishStatus.failed
+            record.finishedAt = finishedAt
+            record.exitCode = processResult?.exitCode
+            record.stdoutTail = processResult.map { sanitizedTail($0.stdout) }
+            record.stderrTail = processResult.map { sanitizedTail($0.stderr) }
+            record.failureReason = "\(phase): \(sanitizedReason)"
+        }
+        try await sendReplyRecording(replySink, recipient: message.handleId, service: message.service, text: "Publish failed during \(phase): \(sanitizedReason)")
+    }
+
+    private func expirePendingStreamPublishMediaIfNeeded(config: BridgeConfig) async throws {
+        let nowDate = now()
+        let nowString = DateCodec.iso(nowDate)
+        var expired: [StreamPublishRecord] = []
+        try mutateStateAndSave { state in
+            var ledger = state.streamPublishLedger ?? [:]
+            for (guid, record) in ledger where record.status == StreamPublishStatus.waitingMedia {
+                guard let expiresAt = record.mediaWaitExpiresAt,
+                      let deadline = DateCodec.parse(expiresAt),
+                      deadline <= nowDate else {
+                    continue
+                }
+                var failed = record
+                let displayText = streamPublishDisplayText(record.rawText ?? "")
+                failed.status = StreamPublishStatus.failed
+                failed.finishedAt = nowString
+                failed.failureReason = "media: Timed out waiting for media for: \(displayText)"
+                failed.mediaWaitExpiresAt = nil
+                ledger[guid] = failed
+                expired.append(failed)
+            }
+            state.streamPublishLedger = ledger
+        }
+        let replySink = makeReplySink(config)
+        for record in expired {
+            guard let sender = record.sender, let service = record.service else { continue }
+            let displayText = streamPublishDisplayText(record.rawText ?? "")
+            try await sendReplyRecording(replySink, recipient: sender, service: service, text: "Publish failed during media: Timed out waiting for media for: \(displayText)")
+        }
+    }
+
+    private func updateStreamPublishRecord(guid: String, update: (inout StreamPublishRecord) -> Void) throws {
+        try mutateStateAndSave { state in
+            var ledger = state.streamPublishLedger ?? [:]
+            guard var record = ledger[guid] else { return }
+            update(&record)
+            ledger[guid] = record
+            state.streamPublishLedger = ledger
+        }
     }
 
     private func saveStateSnapshot() throws {
@@ -1012,6 +1319,7 @@ public final class BridgeService: @unchecked Sendable {
             "Latest Codex progress at: \(state.activeJob?.lastProgressAt ?? "none")",
             "Active job thread: \(state.activeJob?.codexSessionId ?? state.codexSession.sessionId ?? "none")",
             "Active job turn: \(state.activeJob?.codexTurnId ?? "none")",
+            "Repair status: \(repairStatusText())",
             "Active approval: \(activeApprovalStatusText())",
             "Pending interactive callback: \(pendingInteractiveCallbackStatusText())",
             "Last outbound send: \(lastOutboundSendStatusText())",
@@ -1033,6 +1341,7 @@ public final class BridgeService: @unchecked Sendable {
             "Codex bridge status:",
             """
             Active job: \(state.activeJob?.status ?? "none")
+            Repair: \(repairStatusText())
             Pending callback: \(pendingInteractiveCallbackStatusText())
             Thread: \(state.codexSession.sessionId ?? "none")
             """,
@@ -1068,6 +1377,18 @@ public final class BridgeService: @unchecked Sendable {
         default:
             return "none"
         }
+    }
+
+    private func repairStatusText() -> String {
+        var parts: [String] = []
+        if state.activeJob != nil {
+            parts.append("active job present")
+        }
+        if let batch = state.lastRecoverablePromptBatch {
+            parts.append("recoverable batch rows \(batch.items.map(\.rowId).map(String.init).joined(separator: ","))")
+        }
+        guard !parts.isEmpty else { return "none" }
+        return "\(parts.joined(separator: "; ")); run codexmsgctl-swift repair --dry-run"
     }
 
     private func pendingInteractiveCallbackStatusText() -> String {
@@ -1192,6 +1513,7 @@ public final class BridgeService: @unchecked Sendable {
             Active job: \(state.activeJob?.promptPreview ?? "none")
             Active job status: \(state.activeJob?.status ?? "none")
             Active job last update: \(state.activeJob?.lastObservedSummary ?? "none")
+            Repair status: \(repairStatusText())
             Pending interactive callback: \(pendingInteractiveCallbackStatusText())
             Last outbound send: \(lastOutboundSendStatusText())
             Queued next batch: \(state.pendingBatch.map { "\($0.items.count) item(s)" } ?? "none")
@@ -1214,10 +1536,6 @@ public final class BridgeService: @unchecked Sendable {
                 service: batch.service,
                 text: "Please send the image you want me to modify, then tell me the edit you want."
             )
-            return
-        }
-        if shouldCreateCodexAutomation(from: batch.items.map(\.text).joined(separator: "\n\n")) {
-            try await createAutomationFromMessagesBatch(batch, config: config, replySink: replySink)
             return
         }
         let jobStartedAt = now()
@@ -1244,7 +1562,8 @@ public final class BridgeService: @unchecked Sendable {
             lastObservedSummary: "Starting.",
             permissionRecoveryAttempts: 0,
             waitingForPermissionSince: nil,
-            lastPermissionEventId: nil
+            lastPermissionEventId: nil,
+            recoverableBatch: batch
         )
         let request = try mutateStateAndSave { state -> PromptRequest in
             var session = state.codexSession
@@ -1260,6 +1579,9 @@ public final class BridgeService: @unchecked Sendable {
 
         if longTask, effectiveConfig.effectiveActiveJobAckEnabled {
             try? await sendReplyRecording(replySink, recipient: batch.handleId, service: batch.service, text: effectiveConfig.effectiveActiveJobAckText)
+            updateActiveJob(jobId: jobId) { job in
+                job.lastUserUpdateAt = DateCodec.iso(now())
+            }
         }
 
         activeCodexTask = Task { [weak self] in
@@ -1362,24 +1684,6 @@ public final class BridgeService: @unchecked Sendable {
         }
     }
 
-    private func deliverCompletedAutomationRuns(config: BridgeConfig) async throws {
-        let routes = state.automationRoutes ?? []
-        guard !routes.isEmpty else { return }
-        let runs = completedCodexAutomationRuns(in: paths.codexSessionsDir, routes: routes)
-        guard !runs.isEmpty else { return }
-        let replySink = makeReplySink(config)
-        let latestRuns = Dictionary(runs.map { ($0.automationId, $0) }, uniquingKeysWith: { _, latest in latest })
-        for run in latestRuns.values.sorted(by: { $0.automationId < $1.automationId }) {
-            guard let route = state.automationRoutes?.first(where: { $0.automationId == run.automationId }) else { continue }
-            guard route.lastDeliveredSessionId != run.sessionId else { continue }
-            try await sendReplyRecording(replySink, recipient: route.recipient, service: route.service, text: run.message)
-            let deliveredAt = run.completedAt ?? DateCodec.iso(now())
-            try mutateStateAndSave { state in
-                state.markAutomationRouteDelivered(automationId: run.automationId, sessionId: run.sessionId, deliveredAt: deliveredAt)
-            }
-        }
-    }
-
     private func sessionIsExpired(config: BridgeConfig) -> Bool {
         guard let sessionId = state.codexSession.sessionId, !sessionId.isEmpty else { return true }
         guard let expiresAt = DateCodec.parse(state.codexSession.expiresAt) else { return false }
@@ -1388,30 +1692,10 @@ public final class BridgeService: @unchecked Sendable {
 
     private func runActiveCodexJob(jobId: String, config: BridgeConfig, request: PromptRequest, batch: PendingBatch) async {
         let replySink = makeReplySink(config)
-        var currentRequest = request
-        var recoveryAttempts = 0
         do {
-            while true {
-                do {
-                    let response = try await invokeCodexWithRecovery(config: config, request: currentRequest, jobId: jobId, replySink: replySink, recipient: batch.handleId, service: batch.service)
-                    try await sendOutgoingReply(response, replySink: replySink, recipient: batch.handleId, service: batch.service, config: config, request: currentRequest)
-                    recordMessagesSmokeFinalResultIfNeeded(request: currentRequest, responseText: response, jobId: jobId)
-                    break
-                } catch let error as CodexBackendFailure where shouldAttemptPermissionRecovery(error, config: config, attempts: recoveryAttempts) {
-                    recoveryAttempts += 1
-                    let recovered = await waitForPermissionBrokerRecovery(
-                        error: error,
-                        jobId: jobId,
-                        config: config,
-                        replySink: replySink,
-                        recipient: batch.handleId,
-                        service: batch.service,
-                        attempt: recoveryAttempts
-                    )
-                    guard recovered else { throw error }
-                    currentRequest = currentRequest.withPermissionRecoveryInstructions()
-                }
-            }
+            let response = try await invokeCodexWithRecovery(config: config, request: request, jobId: jobId, replySink: replySink, recipient: batch.handleId, service: batch.service)
+            try await sendOutgoingReply(response, replySink: replySink, recipient: batch.handleId, service: batch.service, config: config, request: request)
+            recordMessagesSmokeFinalResultIfNeeded(request: request, responseText: response, jobId: jobId)
             updateActiveJob(jobId: jobId) { job in
                 job.status = "completed"
                 job.lastObservedSummary = "Completed."
@@ -1432,7 +1716,7 @@ public final class BridgeService: @unchecked Sendable {
                 job.status = "failed"
                 job.lastObservedSummary = error.blockedText ?? error.message
             }
-            recordMessagesSmokeFinalResultIfNeeded(request: currentRequest, responseText: error.blockedText ?? error.message, jobId: jobId, forcedStatus: "failed")
+            recordMessagesSmokeFinalResultIfNeeded(request: request, responseText: error.blockedText ?? error.message, jobId: jobId, forcedStatus: "failed")
             try? await sendReplyRecording(replySink, recipient: batch.handleId, service: batch.service, text: failureText(error))
         } catch {
             if activeJobStatus(jobId: jobId) == "canceling" {
@@ -1447,7 +1731,7 @@ public final class BridgeService: @unchecked Sendable {
                 job.status = "failed"
                 job.lastObservedSummary = detail
             }
-            recordMessagesSmokeFinalResultIfNeeded(request: currentRequest, responseText: detail, jobId: jobId, forcedStatus: "failed")
+            recordMessagesSmokeFinalResultIfNeeded(request: request, responseText: detail, jobId: jobId, forcedStatus: "failed")
             try? await sendReplyRecording(replySink, recipient: batch.handleId, service: batch.service, text: "I hit an error while working on that:\n\(detail)")
         }
         clearActiveJob(jobId: jobId)
@@ -1458,15 +1742,7 @@ public final class BridgeService: @unchecked Sendable {
         if expired {
             resetCodexSession(config: config)
         }
-        do {
-            return try await invokeCodex(config: config, request: request, sessionId: expired ? nil : state.codexSession.sessionId, jobId: jobId, replySink: replySink, recipient: recipient, service: service)
-        } catch let error as CodexBackendFailure {
-            if error.blockedText != nil || expired || state.codexSession.sessionId == nil {
-                throw error
-            }
-            resetCodexSession(config: config)
-            return try await invokeCodex(config: config, request: request, sessionId: nil, jobId: jobId, replySink: replySink, recipient: recipient, service: service)
-        }
+        return try await invokeCodex(config: config, request: request, sessionId: expired ? nil : state.codexSession.sessionId, jobId: jobId, replySink: replySink, recipient: recipient, service: service)
     }
 
     private func invokeCodex(config: BridgeConfig, request: PromptRequest, sessionId: String?, jobId: String, replySink: ReplySink, recipient: String, service: String) async throws -> String {
@@ -1692,57 +1968,6 @@ public final class BridgeService: @unchecked Sendable {
         }) == true
     }
 
-    private func shouldAttemptPermissionRecovery(_ error: CodexBackendFailure, config: BridgeConfig, attempts: Int) -> Bool {
-        let broker = config.effectivePermissionBroker
-        guard broker.enabled, attempts < broker.maxRecoveryAttempts else { return false }
-        guard let blocked = error.blockedText ?? Optional(error.message) else { return false }
-        return isRecoverablePermissionBlock(blocked)
-    }
-
-    private func waitForPermissionBrokerRecovery(error: CodexBackendFailure, jobId: String, config: BridgeConfig, replySink: ReplySink, recipient: String, service: String, attempt: Int) async -> Bool {
-        let start = now()
-        let blocked = error.blockedText ?? error.message
-        updateActiveJob(jobId: jobId) { job in
-            job.status = "waitingForPermission"
-            job.permissionRecoveryAttempts = attempt
-            job.waitingForPermissionSince = DateCodec.iso(start)
-            job.lastObservedSummary = blocked
-        }
-        try? await sendReplyRecording(
-            replySink,
-            recipient: recipient,
-            service: service,
-            text: "A macOS permission prompt appears to be blocking this job. I’m letting the permission broker handle it, then I’ll retry automatically.\n\(blocked)"
-        )
-
-        let timeout = Double(config.effectivePermissionBroker.recoveryTimeoutMs) / 1000
-        var lastEventId: String?
-        while now().timeIntervalSince(start) < timeout {
-            if activeJobStatus(jobId: jobId) == "canceling" { return false }
-            let events = recentPermissionBrokerEvents(paths: paths, limit: 10)
-            if let event = events.reversed().first(where: { event in
-                DateCodec.parse(event.timestamp).map { $0 >= start } == true && ["clicked", "wouldClick"].contains(event.kind)
-            }) {
-                lastEventId = event.eventId
-                updateActiveJob(jobId: jobId) { job in
-                    job.status = "running"
-                    job.lastPermissionEventId = event.eventId
-                    job.lastObservedSummary = "Permission broker \(event.actionResult). Retrying."
-                    job.waitingForPermissionSince = nil
-                }
-                try? await sendReplyRecording(replySink, recipient: recipient, service: service, text: "The permission broker handled a macOS prompt. I’m retrying the job now.")
-                return true
-            }
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-        }
-        updateActiveJob(jobId: jobId) { job in
-            job.status = "failed"
-            job.lastPermissionEventId = lastEventId
-            job.lastObservedSummary = "Timed out waiting for the permission broker."
-        }
-        return false
-    }
-
     private func handleCodexStreamEvent(_ event: CodexStreamEvent, jobId: String, config: BridgeConfig, replySink: ReplySink, recipient: String, service: String) {
         let message: String?
         let immediate: Bool
@@ -1806,7 +2031,16 @@ public final class BridgeService: @unchecked Sendable {
     }
 
     private func shouldSendProgress(jobId: String, config: BridgeConfig, immediate: Bool) -> Bool {
-        immediate
+        if immediate { return true }
+        guard config.effectiveLongTaskProgressIntervalMs >= 0 else { return false }
+        let snapshot = stateBox.snapshot()
+        guard let job = snapshot.activeJob, job.jobId == jobId else { return false }
+        let anchor = DateCodec.parse(job.lastUserUpdateAt)
+            ?? DateCodec.parse(job.lastProgressAt)
+            ?? DateCodec.parse(job.startedAt)
+            ?? now()
+        let interval = TimeInterval(config.effectiveLongTaskProgressIntervalMs) / 1000
+        return now().timeIntervalSince(anchor) >= interval
     }
 
     private func shouldSendMilestone(jobId: String, config: BridgeConfig) -> Bool {
@@ -1929,14 +2163,18 @@ public final class BridgeService: @unchecked Sendable {
         guard now().timeIntervalSince(lastActivity) >= 30 else { return }
         job.status = "failed"
         job.lastObservedSummary = "The active Codex process is no longer running."
-        state.activeJob = nil
-        try stores.state.save(state)
+        let recoverableBatch = job.recoverableBatch
+        try mutateStateAndSave { state in
+            state.activeJob = nil
+            state.setLastRecoverablePromptBatch(recoverableBatch)
+        }
         if let recipient = job.recipient, let service = job.service {
+            let retryHint = recoverableBatch == nil ? "Please send the request again." : "Reply \"try again\" to rerun the original request."
             try? await sendReplyRecording(
                 makeReplySink(config),
                 recipient: recipient,
                 service: service,
-                text: "That active job stopped before it could finish, so I cleared it. Please send the request again."
+                text: "That active job stopped before it could finish, so I cleared it. \(retryHint)"
             )
         }
     }
@@ -2245,6 +2483,28 @@ private func failureText(_ error: CodexBackendFailure) -> String {
         return "I hit the bridge timeout while working on that. Please try again."
     }
     return "I hit an error while working on that. Please try again."
+}
+
+private func isRetryLastPromptText(_ text: String) -> Bool {
+    let normalized = canonicalPromptText(text)
+    let exact = [
+        "again",
+        "retry",
+        "try again",
+        "ok try again",
+        "okay try again",
+        "please try again",
+        "please retry",
+        "retry that",
+        "try that again",
+        "rerun that",
+        "run that again"
+    ]
+    return exact.contains(normalized)
+}
+
+private func shortCommitHash(_ hash: String) -> String {
+    String(hash.prefix(7))
 }
 
 public func configForPrompt(_ config: BridgeConfig, request: PromptRequest) -> BridgeConfig {

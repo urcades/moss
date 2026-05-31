@@ -3,12 +3,15 @@ import Foundation
 public enum BridgeJob: Sendable {
     case localCommand(String, MessageItem)
     case interactiveCallbackReply(MessageItem)
+    case streamPublish(MessageItem)
     case promptBatch(PendingBatch)
 
     var canRunDuringActiveJob: Bool {
         switch self {
         case .localCommand, .interactiveCallbackReply:
             return true
+        case .streamPublish:
+            return false
         case .promptBatch:
             return false
         }
@@ -33,6 +36,10 @@ public final class BridgeJobQueue: @unchecked Sendable {
 
     public func enqueueInteractiveCallbackReply(_ message: MessageItem) {
         enqueue(.interactiveCallbackReply(message))
+    }
+
+    public func enqueueStreamPublish(_ message: MessageItem) {
+        enqueue(.streamPublish(message))
     }
 
     public func enqueuePromptBatch(_ batch: PendingBatch) {

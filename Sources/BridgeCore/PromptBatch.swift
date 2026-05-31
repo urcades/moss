@@ -133,14 +133,6 @@ public func buildPromptRequest(from batch: PendingBatch, recentMediaRefs: [Recen
         attachments.append(attachment)
     }
 
-    if promptLooksLikeCodexAutomationRequest(batch.items.map(\.text).joined(separator: "\n")) {
-        lines.insert("""
-        Bridge routing guard:
-        This user is asking Codex to use an automation, reminder, scheduling, monitoring, or follow-up capability on this Mac. Do not implement, modify, inspect, or continue any Messages bridge scheduler or daily digest code. Do not use memory entries about bridge daily digest scaffolds as instructions. If a Codex automation tool is available, use it. If no such tool is available in this Messages-launched turn, reply plainly that the automation cannot be created from here.
-
-        """, at: 0)
-    }
-
     return PromptRequest(promptText: lines.joined(separator: "\n"), attachments: attachments, threadName: buildBatchPreview(batch))
 }
 
@@ -186,15 +178,4 @@ private func describeAttachment(_ attachment: AttachmentRef) -> String {
     if attachment.kind == "unsupported" { notes.append("unsupported attachment type") }
     if !attachment.exists { notes.append("file missing on disk") }
     return "- \(displayName) (\(mimeLabel)) at \(location)\(notes.isEmpty ? "" : " [\(notes.joined(separator: "; "))]")"
-}
-
-public extension PromptRequest {
-    func withPermissionRecoveryInstructions() -> PromptRequest {
-        var copy = self
-        copy.promptText += """
-
-        Bridge note: a local macOS permission prompt was handled after the previous attempt stopped. Continue the original task from where it left off. If the same permission prompt is still blocking you, report the exact blocker once using BRIDGE_BLOCKED:.
-        """
-        return copy
-    }
 }

@@ -40,6 +40,21 @@ extension BridgeState {
         return batch
     }
 
+    mutating func takeLastRecoverablePromptBatch(for message: MessageItem) -> PendingBatch? {
+        guard let batch = lastRecoverablePromptBatch,
+              batch.handleId == message.handleId,
+              batch.service == message.service else {
+            return nil
+        }
+        lastRecoverablePromptBatch = nil
+        pendingBatch = nil
+        return batch
+    }
+
+    mutating func setLastRecoverablePromptBatch(_ batch: PendingBatch?) {
+        lastRecoverablePromptBatch = batch
+    }
+
     mutating func setPendingInteractiveCallback(_ callback: PendingInteractiveCallback) {
         pendingInteractiveCallback = callback
     }

@@ -14,7 +14,7 @@ public enum BridgeConstants {
     public static let defaultAckDelayMs = 0
     public static let defaultTimeoutMs = 15 * 60 * 1_000
     public static let defaultSessionTtlMs = 4 * 60 * 60 * 1_000
-    public static let defaultLongTaskProgressIntervalMs = 120_000
+    public static let defaultLongTaskProgressIntervalMs = 30_000
     public static let defaultLongTaskMilestoneMinIntervalMs = 30_000
     public static let defaultPermissionBrokerScanIntervalMs = 500
     public static let defaultPermissionBrokerRecoveryTimeoutMs = 120_000
@@ -23,15 +23,12 @@ public enum BridgeConstants {
     public static let localCommands: Set<String> = ["/status", "/cancel", "/reset", "/new", "/help", "/permissions", "/codex"]
     public static let baseBridgeInstructions = """
     You are replying through Apple Messages on a Mac.
-    Apple Messages is a remote control surface for Codex running on this Mac.
     Return plain text only.
     Do not include ANSI color codes.
     Avoid heavy markdown, code fences, and tables unless the user explicitly asks for them.
-    Treat requests to create, update, list, delete, watch, monitor, remind, follow up, or otherwise schedule automations as requests to use Codex automation tools when those tools are available.
-    If Codex automation tools are unavailable, say that clearly; do not implement a replacement inside the Messages bridge unless the user explicitly asks you to change the bridge.
-    Treat requests that name plugins, skills, apps, or tools as requests to invoke the relevant Codex capability when available.
-    Do not modify the Messages bridge itself unless the user explicitly asks to change the bridge.
     When you create or save an image, screenshot, PDF, document, archive, or other file artifact that should be sent to the user, include a separate line `BRIDGE_ATTACH: /absolute/path/to/file`.
+    For long work, send concise user-visible heartbeat updates by including a separate line `BRIDGE_PROGRESS: brief status`.
+    You are running inside the Apple Messages bridge helper. Do not stop, restart, kickstart, bootout, unload, reinstall, or replace the Messages bridge helper or permission broker from a Messages-triggered turn. Do not run `codexmsgctl-swift start`, `launchctl kickstart`, `launchctl bootout`, or similar lifecycle commands for this bridge from inside the turn; report that a manual or out-of-band helper restart is needed instead.
     Output only the text that should be sent back as the message reply.
     """
     public static let defaultStylePrompt = """
@@ -149,6 +146,7 @@ public struct ActiveJob: Codable, Equatable, Sendable {
     public var permissionRecoveryAttempts: Int?
     public var waitingForPermissionSince: String?
     public var lastPermissionEventId: String?
+    public var recoverableBatch: PendingBatch?
 
     public init(
         jobId: String?,
@@ -172,7 +170,8 @@ public struct ActiveJob: Codable, Equatable, Sendable {
         lastObservedSummary: String?,
         permissionRecoveryAttempts: Int?,
         waitingForPermissionSince: String?,
-        lastPermissionEventId: String?
+        lastPermissionEventId: String?,
+        recoverableBatch: PendingBatch? = nil
     ) {
         self.jobId = jobId
         self.guid = guid
@@ -196,6 +195,7 @@ public struct ActiveJob: Codable, Equatable, Sendable {
         self.permissionRecoveryAttempts = permissionRecoveryAttempts
         self.waitingForPermissionSince = waitingForPermissionSince
         self.lastPermissionEventId = lastPermissionEventId
+        self.recoverableBatch = recoverableBatch
     }
 }
 
@@ -278,6 +278,84 @@ public struct AttachmentRef: Codable, Equatable, Sendable {
         self.absolutePath = absolutePath
         self.kind = kind
         self.exists = exists
+    }
+}
+
+public enum StreamPublishStatus {
+    public static let claimed = "claimed"
+    public static let waitingMedia = "waiting_media"
+    public static let running = "running"
+    public static let succeeded = "succeeded"
+    public static let failed = "failed"
+}
+
+public struct StreamPublishRecord: Codable, Equatable, Sendable {
+    public var rowId: Int64
+    public var guid: String
+    public var receivedAt: String
+    public var rawTextHash: String
+    public var attachmentIds: [Int64]
+    public var eventJsonPath: String?
+    public var resultJsonPath: String?
+    public var status: String
+    public var startedAt: String?
+    public var finishedAt: String?
+    public var exitCode: Int32?
+    public var stdoutTail: String?
+    public var stderrTail: String?
+    public var publicUrl: String?
+    public var commitHash: String?
+    public var failureReason: String?
+    public var rawText: String?
+    public var sender: String?
+    public var service: String?
+    public var mediaWaitExpiresAt: String?
+    public var eventId: String?
+
+    public init(
+        rowId: Int64,
+        guid: String,
+        receivedAt: String,
+        rawTextHash: String,
+        attachmentIds: [Int64],
+        eventJsonPath: String?,
+        resultJsonPath: String?,
+        status: String,
+        startedAt: String?,
+        finishedAt: String?,
+        exitCode: Int32?,
+        stdoutTail: String?,
+        stderrTail: String?,
+        publicUrl: String?,
+        commitHash: String?,
+        failureReason: String?,
+        rawText: String? = nil,
+        sender: String? = nil,
+        service: String? = nil,
+        mediaWaitExpiresAt: String? = nil,
+        eventId: String? = nil
+    ) {
+        self.rowId = rowId
+        self.guid = guid
+        self.receivedAt = receivedAt
+        self.rawTextHash = rawTextHash
+        self.attachmentIds = attachmentIds
+        self.eventJsonPath = eventJsonPath
+        self.resultJsonPath = resultJsonPath
+        self.status = status
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.exitCode = exitCode
+        self.stdoutTail = stdoutTail
+        self.stderrTail = stderrTail
+        self.publicUrl = publicUrl
+        self.commitHash = commitHash
+        self.failureReason = failureReason
+        self.rawText = rawText
+        self.sender = sender
+        self.service = service
+        self.mediaWaitExpiresAt = mediaWaitExpiresAt
+        self.eventId = eventId
     }
 }
 
@@ -533,8 +611,10 @@ public struct BridgeState: Codable, Equatable, Sendable {
     public var liveSmokeResults: [LiveSmokeResult]?
     public var automationCreationStatus: AutomationCreationStatus?
     public var pendingInteractiveCallback: PendingInteractiveCallback?
+    public var lastRecoverablePromptBatch: PendingBatch?
+    public var streamPublishLedger: [String: StreamPublishRecord]?
 
-    public init(lastProcessedGuid: String?, lastProcessedRowId: Int64, pendingBatch: PendingBatch?, activeJob: ActiveJob?, codexSession: CodexSessionState, automationRoutes: [CodexAutomationRoute]? = nil, lastOutboundSend: OutboundSendRecord? = nil, recentMediaRefs: [RecentMediaRef]? = nil, liveSmokeResults: [LiveSmokeResult]? = nil, automationCreationStatus: AutomationCreationStatus? = nil, pendingInteractiveCallback: PendingInteractiveCallback? = nil) {
+    public init(lastProcessedGuid: String?, lastProcessedRowId: Int64, pendingBatch: PendingBatch?, activeJob: ActiveJob?, codexSession: CodexSessionState, automationRoutes: [CodexAutomationRoute]? = nil, lastOutboundSend: OutboundSendRecord? = nil, recentMediaRefs: [RecentMediaRef]? = nil, liveSmokeResults: [LiveSmokeResult]? = nil, automationCreationStatus: AutomationCreationStatus? = nil, pendingInteractiveCallback: PendingInteractiveCallback? = nil, lastRecoverablePromptBatch: PendingBatch? = nil, streamPublishLedger: [String: StreamPublishRecord]? = nil) {
         self.lastProcessedGuid = lastProcessedGuid
         self.lastProcessedRowId = lastProcessedRowId
         self.pendingBatch = pendingBatch
@@ -546,6 +626,8 @@ public struct BridgeState: Codable, Equatable, Sendable {
         self.liveSmokeResults = liveSmokeResults
         self.automationCreationStatus = automationCreationStatus
         self.pendingInteractiveCallback = pendingInteractiveCallback
+        self.lastRecoverablePromptBatch = lastRecoverablePromptBatch
+        self.streamPublishLedger = streamPublishLedger
     }
 }
 
@@ -558,16 +640,6 @@ public struct PromptRequest: Equatable, Sendable {
         self.promptText = promptText
         self.attachments = attachments
         self.threadName = threadName
-    }
-}
-
-public struct CodexMentionRef: Codable, Equatable, Sendable {
-    public var name: String
-    public var path: String
-
-    public init(name: String, path: String) {
-        self.name = name
-        self.path = path
     }
 }
 

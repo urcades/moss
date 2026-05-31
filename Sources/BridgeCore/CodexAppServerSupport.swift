@@ -906,10 +906,7 @@ private func appServerTurnStartParams(config: BridgeConfig, request: PromptReque
     ]
 }
 
-private func appServerSandboxPolicy(for request: PromptRequest) -> [String: Any] {
-    if promptLooksLikeCodexAutomationRequest(request.promptText) {
-        return ["type": "readOnly"]
-    }
+private func appServerSandboxPolicy(for _: PromptRequest) -> [String: Any] {
     return ["type": "dangerFullAccess"]
 }
 
@@ -921,13 +918,6 @@ private func appServerInputItems(from request: PromptRequest) -> [[String: Any]]
             "text_elements": []
         ]
     ]
-    for mention in extractCodexMentionRefs(from: request.promptText) {
-        items.append([
-            "type": "mention",
-            "name": mention.name,
-            "path": mention.path
-        ])
-    }
     for attachment in request.attachments where attachment.kind == "image" && attachment.exists {
         if let path = attachment.absolutePath {
             items.append(["type": "localImage", "path": path])
@@ -948,125 +938,9 @@ private func cleanThreadNameCandidate(_ value: String) -> String? {
     return truncateForMessages(text, limit: 80)
 }
 
-private func bridgeDeveloperInstructions(config: BridgeConfig, paths: RuntimePaths) -> String? {
-    let text = [BridgeConstants.baseBridgeInstructions, config.codex.stylePrompt, cachedCodexCapabilityPromptContext(paths: paths)]
-        .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-        .filter { !$0.isEmpty }
-        .joined(separator: "\n\n")
+private func bridgeDeveloperInstructions(config _: BridgeConfig, paths _: RuntimePaths) -> String? {
+    let text = BridgeConstants.baseBridgeInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
     return text.isEmpty ? nil : text
-}
-
-private func cachedCodexCapabilityPromptContext(paths: RuntimePaths) -> String? {
-    guard let snapshot = loadCachedCodexCapabilities(paths: paths, now: Date(), ttlMs: Int.max),
-          let inventory = snapshot.capabilities.inventory else {
-        return nil
-    }
-    let accessibleApps = inventory.apps.filter(\.isAccessible).map(\.name)
-    let enabledSkills = inventory.skills.filter(\.enabled).map(\.name)
-    let invocationLines = capabilityInvocationStatusLines(for: inventory)
-    return """
-    Current Codex capability inventory from app-server cache:
-    - Enabled skills: \(inventory.enabledSkillCount)\(sampleSuffix(enabledSkills, limit: 12))
-    - Accessible apps/connectors: \(inventory.accessibleAppCount)\(sampleSuffix(accessibleApps, limit: 12))
-    - MCP servers: \(inventory.mcpServers.count), MCP tools: \(inventory.mcpToolCount)\(sampleSuffix(inventory.mcpServers.map(\.name), limit: 12))
-    - Invocation status: \(invocationLines.joined(separator: "; "))
-    Use these as Codex capabilities when the app-server exposes them during the turn. Treat "discovered" as awareness, not callability; if a named capability is not callable in this Messages-launched turn, say that specific limitation plainly.
-    """
-}
-
-public let defaultCodexMentionAliases: [String: String] = [
-    "Chrome": "plugin://chrome@openai-bundled",
-    "Browser": "plugin://browser@openai-bundled",
-    "Computer Use": "plugin://computer-use@openai-bundled"
-]
-
-public func extractCodexMentionRefs(from text: String, aliases: [String: String] = defaultCodexMentionAliases) -> [CodexMentionRef] {
-    let source = text
-    var mentions: [CodexMentionRef] = []
-    var seen = Set<String>()
-
-    for match in regexMatches(#"\[([^\]]+)\]\((plugin://[^\s),.;]+|app://[^\s),.;]+)\)"#, in: source, options: [.caseInsensitive]) {
-        guard match.count == 3 else { continue }
-        appendMention(name: normalizeMentionName(match[1]), path: match[2], mentions: &mentions, seen: &seen)
-    }
-
-    for match in regexMatches(#"(?<![A-Za-z0-9_])(plugin://[^\s),.;]+|app://[^\s),.;]+)"#, in: source, options: [.caseInsensitive]) {
-        guard match.count == 2 else { continue }
-        appendMention(name: mentionName(fromPath: match[1]), path: match[1], mentions: &mentions, seen: &seen)
-    }
-
-    for (name, path) in aliases {
-        if hasBareAliasMention(source, alias: name) || hasNaturalLanguageAliasMention(source, alias: name, path: path) {
-            appendMention(name: name, path: path, mentions: &mentions, seen: &seen)
-        }
-    }
-
-    return mentions
-}
-
-private func regexMatches(_ pattern: String, in text: String, options: NSRegularExpression.Options = []) -> [[String]] {
-    guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return [] }
-    let nsText = text as NSString
-    let range = NSRange(location: 0, length: nsText.length)
-    return regex.matches(in: text, range: range).map { match in
-        (0..<match.numberOfRanges).map { index in
-            let matchRange = match.range(at: index)
-            guard matchRange.location != NSNotFound else { return "" }
-            return nsText.substring(with: matchRange)
-        }
-    }
-}
-
-private func appendMention(name: String, path: String, mentions: inout [CodexMentionRef], seen: inout Set<String>) {
-    let normalizedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard normalizedPath.hasPrefix("plugin://") || normalizedPath.hasPrefix("app://") else { return }
-    let normalizedName = normalizeMentionName(name)
-    guard !normalizedName.isEmpty else { return }
-    let key = normalizedPath.lowercased()
-    guard seen.insert(key).inserted else { return }
-    mentions.append(CodexMentionRef(name: normalizedName, path: normalizedPath))
-}
-
-private func normalizeMentionName(_ name: String) -> String {
-    var text = name.trimmingCharacters(in: .whitespacesAndNewlines)
-    while text.hasPrefix("@") {
-        text.removeFirst()
-    }
-    return text
-        .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-}
-
-private func mentionName(fromPath path: String) -> String {
-    let normalized = path.trimmingCharacters(in: .whitespacesAndNewlines)
-    if normalized.hasPrefix("plugin://") {
-        let body = String(normalized.dropFirst("plugin://".count))
-        let plugin = body.split(separator: "@", maxSplits: 1, omittingEmptySubsequences: true).first.map(String.init) ?? body
-        return plugin
-            .split(separator: "-")
-            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-            .joined(separator: " ")
-    }
-    if normalized.hasPrefix("app://") {
-        let body = String(normalized.dropFirst("app://".count))
-        return body.isEmpty ? "App" : body
-    }
-    return normalized
-}
-
-private func hasBareAliasMention(_ text: String, alias: String) -> Bool {
-    let escaped = NSRegularExpression.escapedPattern(for: alias)
-    return text.range(of: #"(?<![A-Za-z0-9_])@\#(escaped)(?![A-Za-z0-9_])"#, options: [.regularExpression, .caseInsensitive]) != nil
-}
-
-private func hasNaturalLanguageAliasMention(_ text: String, alias: String, path: String) -> Bool {
-    let normalized = normalizeMentionName(alias)
-    guard !normalized.isEmpty else { return false }
-    if text.localizedCaseInsensitiveContains("[@\(normalized)](\(path))") {
-        return true
-    }
-    let escaped = NSRegularExpression.escapedPattern(for: normalized)
-    return text.range(of: #"(?<![A-Za-z0-9_])use\s+\#(escaped)(?![A-Za-z0-9_])"#, options: [.regularExpression, .caseInsensitive]) != nil
 }
 
 public func capabilityInvocations(for inventory: CodexToolInventory) -> [CodexCapabilityInvocation] {
@@ -1539,6 +1413,18 @@ private func codexItemSummary(prefix: String, params: [String: Any]) -> String? 
     if (item["status"] as? String)?.lowercased() == "failed" {
         return nil
     }
+    if item["type"] as? String == "agentMessage" {
+        let phase = (item["phase"] as? String ?? "").lowercased()
+        if phase == "final" || phase == "final_answer" {
+            return nil
+        }
+        if let text = textValue(in: item, keys: ["text", "message", "content"]) {
+            let clean = cleanPlainText(text)
+            if !clean.isEmpty {
+                return bridgeProgressText(from: clean) ?? truncateForMessages(clean, limit: 240)
+            }
+        }
+    }
     let name = item["tool"] as? String ??
         item["name"] as? String ??
         item["command"] as? String ??
@@ -1546,6 +1432,15 @@ private func codexItemSummary(prefix: String, params: [String: Any]) -> String? 
         "Codex item"
     let status = item["status"] as? String
     return [prefix, name, status.map { "(\($0))" }].compactMap { $0 }.joined(separator: " ")
+}
+
+private func bridgeProgressText(from text: String) -> String? {
+    markerEvents(in: text).compactMap { event in
+        if case .progress(let value) = event {
+            return value
+        }
+        return nil
+    }.first
 }
 
 private func codexThreadTurnSummary(_ turn: [String: Any]) -> CodexThreadTurnSummary {

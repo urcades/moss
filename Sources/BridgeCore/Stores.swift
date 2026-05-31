@@ -289,6 +289,8 @@ private func mergeBridgeStateForConcurrentSave(incoming: BridgeState, existing: 
     merged.recentMediaRefs = mediaRefs.isEmpty ? nil : mediaRefs
     let liveSmokeResults = mergeLiveSmokeResults(incoming: incoming.liveSmokeResults ?? [], existing: existing.liveSmokeResults ?? [])
     merged.liveSmokeResults = liveSmokeResults.isEmpty ? nil : liveSmokeResults
+    let streamPublishLedger = mergeStreamPublishLedger(incoming: incoming.streamPublishLedger ?? [:], existing: existing.streamPublishLedger ?? [:])
+    merged.streamPublishLedger = streamPublishLedger.isEmpty ? nil : streamPublishLedger
     merged.automationCreationStatus = latestAutomationCreationStatus(
         incoming: incoming.automationCreationStatus,
         existing: existing.automationCreationStatus
@@ -297,6 +299,7 @@ private func mergeBridgeStateForConcurrentSave(incoming: BridgeState, existing: 
         incoming: incoming.pendingInteractiveCallback,
         existing: existing.pendingInteractiveCallback
     )
+    merged.lastRecoverablePromptBatch = incoming.lastRecoverablePromptBatch
     merged.lastOutboundSend = mergeLastOutboundSend(
         incoming: incoming.lastOutboundSend,
         existing: existing.lastOutboundSend
@@ -306,6 +309,39 @@ private func mergeBridgeStateForConcurrentSave(incoming: BridgeState, existing: 
         existing: existing.activeJob
     )
     return merged
+}
+
+private func mergeStreamPublishLedger(incoming: [String: StreamPublishRecord], existing: [String: StreamPublishRecord]) -> [String: StreamPublishRecord] {
+    var merged = existing
+    for (guid, record) in incoming {
+        merged[guid] = latestStreamPublishRecord(incoming: record, existing: existing[guid])
+    }
+    return merged
+}
+
+private func latestStreamPublishRecord(incoming: StreamPublishRecord, existing: StreamPublishRecord?) -> StreamPublishRecord {
+    guard let existing else { return incoming }
+    let incomingRank = streamPublishStatusRank(incoming.status)
+    let existingRank = streamPublishStatusRank(existing.status)
+    if incomingRank != existingRank {
+        return incomingRank > existingRank ? incoming : existing
+    }
+    let incomingTime = incoming.finishedAt ?? incoming.startedAt ?? incoming.receivedAt
+    let existingTime = existing.finishedAt ?? existing.startedAt ?? existing.receivedAt
+    if incomingTime == existingTime {
+        return streamPublishStatusRank(incoming.status) >= streamPublishStatusRank(existing.status) ? incoming : existing
+    }
+    return incomingTime >= existingTime ? incoming : existing
+}
+
+private func streamPublishStatusRank(_ status: String) -> Int {
+    switch status {
+    case StreamPublishStatus.failed, StreamPublishStatus.succeeded: return 4
+    case StreamPublishStatus.running: return 3
+    case StreamPublishStatus.waitingMedia: return 2
+    case StreamPublishStatus.claimed: return 1
+    default: return 0
+    }
 }
 
 private func mergeAutomationRoutes(incoming: [CodexAutomationRoute], existing: [CodexAutomationRoute]) -> [CodexAutomationRoute] {
@@ -423,6 +459,7 @@ private func mergeActiveJob(incoming: ActiveJob?, existing: ActiveJob?) -> Activ
     incoming.permissionRecoveryAttempts = max(incoming.permissionRecoveryAttempts ?? 0, existing.permissionRecoveryAttempts ?? 0)
     incoming.waitingForPermissionSince = incoming.waitingForPermissionSince ?? existing.waitingForPermissionSince
     incoming.lastPermissionEventId = incoming.lastPermissionEventId ?? existing.lastPermissionEventId
+    incoming.recoverableBatch = incoming.recoverableBatch ?? existing.recoverableBatch
     return incoming
 }
 
