@@ -216,45 +216,87 @@ public func waitForStableStreamPublishMedia(
 
 public func runStreamPublisherProcess(_ invocation: StreamPublishInvocation) async -> StreamPublishProcessResult {
     await Task.detached {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: invocation.executable)
-        process.arguments = invocation.arguments
-        process.currentDirectoryURL = URL(fileURLWithPath: invocation.cwd)
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        do {
-            try process.run()
-        } catch {
-            return StreamPublishProcessResult(stdout: "", stderr: "Failed to start \(invocation.executable): \(error.localizedDescription)", exitCode: 127)
-        }
-        process.waitUntilExit()
-        let stdoutText = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let stderrText = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        return StreamPublishProcessResult(stdout: stdoutText, stderr: stderrText, exitCode: process.terminationStatus)
+        runStreamPublisherProcessBlocking(
+            executable: invocation.executable,
+            arguments: invocation.arguments,
+            cwd: invocation.cwd
+        )
     }.value
 }
 
 private func runStreamPublisherResolverCommand(executable: String, arguments: [String]) async -> StreamPublishProcessResult {
     await Task.detached {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        do {
-            try process.run()
-        } catch {
-            return StreamPublishProcessResult(stdout: "", stderr: "Failed to start \(executable): \(error.localizedDescription)", exitCode: 127)
-        }
-        process.waitUntilExit()
-        let stdoutText = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let stderrText = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        return StreamPublishProcessResult(stdout: stdoutText, stderr: stderrText, exitCode: process.terminationStatus)
+        runStreamPublisherProcessBlocking(
+            executable: executable,
+            arguments: arguments,
+            cwd: nil
+        )
     }.value
+}
+
+private func runStreamPublisherProcessBlocking(executable: String, arguments: [String], cwd: String?) -> StreamPublishProcessResult {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+    if let cwd {
+        process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+    }
+    let stdout = Pipe()
+    let stderr = Pipe()
+    process.standardOutput = stdout
+    process.standardError = stderr
+    let output = StreamPublisherOutputBuffer()
+    stdout.fileHandleForReading.readabilityHandler = { handle in
+        output.appendStdout(handle.availableData)
+    }
+    stderr.fileHandleForReading.readabilityHandler = { handle in
+        output.appendStderr(handle.availableData)
+    }
+    do {
+        try process.run()
+    } catch {
+        stdout.fileHandleForReading.readabilityHandler = nil
+        stderr.fileHandleForReading.readabilityHandler = nil
+        return StreamPublishProcessResult(stdout: "", stderr: "Failed to start \(executable): \(error.localizedDescription)", exitCode: 127)
+    }
+    process.waitUntilExit()
+    stdout.fileHandleForReading.readabilityHandler = nil
+    stderr.fileHandleForReading.readabilityHandler = nil
+    output.appendStdout(stdout.fileHandleForReading.readDataToEndOfFile())
+    output.appendStderr(stderr.fileHandleForReading.readDataToEndOfFile())
+    return StreamPublishProcessResult(stdout: output.stdout(), stderr: output.stderr(), exitCode: process.terminationStatus)
+}
+
+private final class StreamPublisherOutputBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stdoutData = Data()
+    private var stderrData = Data()
+
+    func appendStdout(_ data: Data) {
+        guard !data.isEmpty else { return }
+        lock.lock()
+        stdoutData.append(data)
+        lock.unlock()
+    }
+
+    func appendStderr(_ data: Data) {
+        guard !data.isEmpty else { return }
+        lock.lock()
+        stderrData.append(data)
+        lock.unlock()
+    }
+
+    func stdout() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return String(data: stdoutData, encoding: .utf8) ?? ""
+    }
+
+    func stderr() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return String(data: stderrData, encoding: .utf8) ?? ""
+    }
 }
 
 public func parseStreamPublishResult(resultJsonPath: String, processResult: StreamPublishProcessResult) -> StreamPublishResultSummary {

@@ -20,6 +20,7 @@ struct BridgeCoreFocusedTests {
         try testPromptBatchPreservesPluginIntentAndOrder()
         try await testRecentMissingAttachmentDefersCursorUntilFileExists()
         try testStreamPublishInvocationUsesAbsoluteNPMAndPathParent()
+        try await testStreamPublisherProcessDrainsLargeStdoutAndStderr()
         try testStreamPublishCrosspostSummaryFormatsAllTargetsOK()
         try testStreamPublishCrosspostSummaryFormatsFailedTarget()
         try testStreamPublishCrosspostSummaryFormatsSkippedTarget()
@@ -311,6 +312,42 @@ struct BridgeCoreFocusedTests {
             "--event", "/tmp/event.json",
             "--result-json", "/tmp/result.json"
         ], "stream publish invocation uses absolute npm and PATH with npm parent first")
+    }
+
+    private static func testStreamPublisherProcessDrainsLargeStdoutAndStderr() async throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let script = paths.tmpDir.appendingPathComponent("noisy-stream-publisher.py")
+        let payloadSize = 2 * 1024 * 1024
+        let scriptText = """
+        import signal
+        import sys
+
+        def fail_fast(signum, frame):
+            sys.exit(86)
+
+        signal.signal(signal.SIGALRM, fail_fast)
+        signal.alarm(2)
+        sys.stdout.write("O" * \(payloadSize))
+        sys.stdout.flush()
+        sys.stderr.write("E" * \(payloadSize))
+        sys.stderr.flush()
+        signal.alarm(0)
+        """
+        try Data(scriptText.utf8).write(to: script)
+        let invocation = StreamPublishInvocation(
+            cwd: paths.tmpDir.path,
+            executable: "/usr/bin/python3",
+            arguments: [script.path],
+            eventJsonPath: paths.tmpDir.appendingPathComponent("event.json").path,
+            resultJsonPath: paths.tmpDir.appendingPathComponent("result.json").path
+        )
+
+        let result = await runStreamPublisherProcess(invocation)
+
+        try expect(result.exitCode == 0, "noisy stream publisher exits successfully")
+        try expect(result.stdout.count == payloadSize, "captures full stdout without pipe backpressure")
+        try expect(result.stderr.count == payloadSize, "captures full stderr without pipe backpressure")
     }
 
     private static func testStreamPublishCrosspostSummaryFormatsAllTargetsOK() throws {
