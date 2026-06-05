@@ -151,21 +151,24 @@ public func completedCodexAutomationRunScan(in sessionsDir: URL, routes: [CodexA
         scanOptions.sessionIdLowerBound = sessionIdLowerBound(from: routes)
     }
     let files = codexSessionFiles(in: sessionsDir)
+    var filesToRead: [URL] = []
     var skippedFileCount = 0
-    var readFileCount = 0
-    var runs: [CodexAutomationRunResult] = []
     for file in files {
         if let sessionIdLowerBound = scanOptions.sessionIdLowerBound,
            let sessionId = rolloutSessionId(from: file),
-           sessionId <= sessionIdLowerBound {
+           sessionId < sessionIdLowerBound {
             skippedFileCount += 1
             continue
         }
-        if let maximumFilesToRead = scanOptions.maximumFilesToRead, readFileCount >= maximumFilesToRead {
-            skippedFileCount += 1
-            continue
-        }
-        readFileCount += 1
+        filesToRead.append(file)
+    }
+    if let maximumFilesToRead = scanOptions.maximumFilesToRead, filesToRead.count > maximumFilesToRead {
+        skippedFileCount += filesToRead.count - maximumFilesToRead
+        filesToRead = Array(filesToRead.suffix(maximumFilesToRead))
+    }
+
+    var runs: [CodexAutomationRunResult] = []
+    for file in filesToRead {
         if let run = completedCodexAutomationRun(in: file, routeIds: routeIds) {
             runs.append(run)
         }
@@ -174,7 +177,7 @@ public func completedCodexAutomationRunScan(in sessionsDir: URL, routes: [CodexA
         runs: runs.sorted { $0.completedAt ?? "" < $1.completedAt ?? "" },
         candidateFileCount: files.count,
         skippedFileCount: skippedFileCount,
-        readFileCount: readFileCount
+        readFileCount: filesToRead.count
     )
 }
 
@@ -182,38 +185,49 @@ public func completedCodexAutomationRun(in file: URL, routeIds: Set<String>) -> 
     guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
     defer { try? handle.close() }
 
-    var automationId: String?
     var sessionId: String?
-    var completedAt: String?
-    var finalMessage: String?
+    var pendingAutomationId: String?
+    var runs: [CodexAutomationRunResult] = []
 
     let data = handle.readDataToEndOfFile()
     guard let text = String(data: data, encoding: .utf8) else { return nil }
     for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
         guard let object = jsonObject(from: String(line)) else { continue }
         let type = object["type"] as? String
-        let timestamp = object["timestamp"] as? String
         let payload = object["payload"] as? [String: Any]
         if type == "session_meta" {
             sessionId = payload?["id"] as? String ?? sessionId
             continue
         }
-        if automationId == nil {
-            let candidate = automationIdInObject(object, routeIds: routeIds)
-            if let candidate {
-                automationId = candidate
-            }
+        if isCodexUserMessageObject(object) {
+            pendingAutomationId = automationIdInUserMessageObject(object, routeIds: routeIds)
+            continue
         }
-        if (type == "task_complete" || (type == "event_msg" && payload?["type"] as? String == "task_complete")), let payload {
-            finalMessage = payload["last_agent_message"] as? String ?? finalMessage
-            completedAt = timestamp ?? completedAt
+        guard let taskPayload = taskCompletePayload(in: object),
+              let automationId = pendingAutomationId,
+              let sessionId else {
+            continue
         }
+        pendingAutomationId = nil
+        guard let finalMessage = taskPayload["last_agent_message"] as? String else { continue }
+        let cleaned = sanitizedAutomationMessage(finalMessage)
+        guard !cleaned.isEmpty else { continue }
+        let runSessionId: String
+        if let turnId = taskPayload["turn_id"] as? String, !turnId.isEmpty {
+            runSessionId = "\(sessionId)#\(turnId)"
+        } else {
+            runSessionId = sessionId
+        }
+        runs.append(CodexAutomationRunResult(
+            automationId: automationId,
+            sessionId: runSessionId,
+            completedAt: object["timestamp"] as? String,
+            message: cleaned,
+            path: file.path
+        ))
     }
 
-    guard let automationId, let sessionId, routeIds.contains(automationId), let finalMessage else { return nil }
-    let cleaned = sanitizedAutomationMessage(finalMessage)
-    guard !cleaned.isEmpty else { return nil }
-    return CodexAutomationRunResult(automationId: automationId, sessionId: sessionId, completedAt: completedAt, message: cleaned, path: file.path)
+    return runs.sorted { $0.completedAt ?? "" < $1.completedAt ?? "" }.last
 }
 
 public func automationMetadata(at url: URL) -> (id: String, name: String, createdAt: String?)? {
@@ -343,9 +357,13 @@ private func automationTomlSettingStatusInactive(_ text: String) -> String {
 }
 
 private func sessionIdLowerBound(from routes: [CodexAutomationRoute]) -> String? {
-    let deliveredSessionIds = routes.compactMap(\.lastDeliveredSessionId)
+    let deliveredSessionIds = routes.compactMap(\.lastDeliveredSessionId).map(baseSessionId)
     guard deliveredSessionIds.count == routes.count else { return nil }
     return deliveredSessionIds.min()
+}
+
+private func baseSessionId(_ deliveryId: String) -> String {
+    String(deliveryId.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? Substring(deliveryId))
 }
 
 private func rolloutSessionId(from file: URL) -> String? {
@@ -361,6 +379,37 @@ private func rolloutSessionId(from file: URL) -> String? {
 private func jsonObject(from line: String) -> [String: Any]? {
     guard let data = line.data(using: .utf8) else { return nil }
     return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+}
+
+private func isCodexUserMessageObject(_ object: [String: Any]) -> Bool {
+    let type = object["type"] as? String
+    let payload = object["payload"] as? [String: Any]
+    if type == "event_msg", payload?["type"] as? String == "user_message" {
+        return true
+    }
+    return type == "response_item" &&
+        payload?["type"] as? String == "message" &&
+        payload?["role"] as? String == "user"
+}
+
+private func automationIdInUserMessageObject(_ object: [String: Any], routeIds: Set<String>) -> String? {
+    let payload = object["payload"] as? [String: Any]
+    if object["type"] as? String == "event_msg" {
+        return automationIdInObject(payload?["message"] ?? "", routeIds: routeIds)
+    }
+    return automationIdInObject(payload?["content"] ?? "", routeIds: routeIds)
+}
+
+private func taskCompletePayload(in object: [String: Any]) -> [String: Any]? {
+    let type = object["type"] as? String
+    let payload = object["payload"] as? [String: Any]
+    if type == "task_complete" {
+        return payload
+    }
+    if type == "event_msg", payload?["type"] as? String == "task_complete" {
+        return payload
+    }
+    return nil
 }
 
 private func automationIdInObject(_ value: Any, routeIds: Set<String>) -> String? {

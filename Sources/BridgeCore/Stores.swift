@@ -384,7 +384,14 @@ private func recentMediaRefKey(_ ref: RecentMediaRef) -> String {
 }
 
 private func mergeAutomationRoute(incoming: CodexAutomationRoute, existing: CodexAutomationRoute) -> CodexAutomationRoute {
-    CodexAutomationRoute(
+    let incomingDeliveryIsLatest = latestNonNilTimestamp(incoming.lastDeliveredAt, existing.lastDeliveredAt) == incoming.lastDeliveredAt
+    let lastSeenSessionId = incomingDeliveryIsLatest
+        ? (incoming.lastSeenSessionId ?? incoming.lastDeliveredSessionId ?? existing.lastSeenSessionId)
+        : (existing.lastSeenSessionId ?? incoming.lastSeenSessionId)
+    let lastDeliveredSessionId = incomingDeliveryIsLatest
+        ? (incoming.lastDeliveredSessionId ?? existing.lastDeliveredSessionId)
+        : (existing.lastDeliveredSessionId ?? incoming.lastDeliveredSessionId)
+    return CodexAutomationRoute(
         automationId: incoming.automationId,
         name: incoming.name,
         recipient: incoming.recipient,
@@ -392,8 +399,8 @@ private func mergeAutomationRoute(incoming: CodexAutomationRoute, existing: Code
         createdFromGuid: incoming.createdFromGuid ?? existing.createdFromGuid,
         createdFromRowId: incoming.createdFromRowId ?? existing.createdFromRowId,
         createdAt: min(incoming.createdAt, existing.createdAt),
-        lastSeenSessionId: incoming.lastSeenSessionId ?? existing.lastSeenSessionId,
-        lastDeliveredSessionId: incoming.lastDeliveredSessionId ?? existing.lastDeliveredSessionId,
+        lastSeenSessionId: lastSeenSessionId,
+        lastDeliveredSessionId: lastDeliveredSessionId,
         lastDeliveredAt: latestNonNilTimestamp(incoming.lastDeliveredAt, existing.lastDeliveredAt)
     )
 }

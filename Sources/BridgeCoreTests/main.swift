@@ -71,6 +71,7 @@ struct BridgeCoreFocusedTests {
         try await testCodexAutomationsReportsCreationInProgress()
         try await testCodexAutomationsReportsConfirmedCreationEvidence()
         try testBridgeStateSavePreservesConcurrentAutomationFields()
+        try testBridgeStateSaveKeepsAutomationDeliveryCursorPaired()
         try testBridgeStateSaveMergesSameActiveJobDetails()
         try testBridgeStateUpdateSerializesSeparateStoreInstances()
         try testBridgeStateBoxSerializesConcurrentMutations()
@@ -145,8 +146,9 @@ struct BridgeCoreFocusedTests {
         try testBridgeGateStrictReportAcceptsCapabilityBlockersWithEvidence()
         try await testAutomationRequestStartsNormalCodexJob()
         try await testCodexAutomationsReportsCreationInProgress()
-        try await testNormalTickDoesNotForwardCompletedAutomationSessions()
+        try await testNormalTickForwardsCompletedAutomationSessions()
         try await testAutomationForwardOnceSidecar()
+        try testHeartbeatAutomationScanIgnoresLaterNormalTurns()
         try testCompletedAutomationScanUsesDeliveredSessionLowerBound()
         try testTerminateProcessTreeIncludesRoot()
         try await testOrdinaryTextDuringActiveJobQueuesNextBatchWhileCodexStatusCutsThrough()
@@ -1989,6 +1991,50 @@ struct BridgeCoreFocusedTests {
         try stores.state.save(staleSendUpdate)
         let preservedOutbound = try stores.state.load()
         try expect(preservedOutbound.lastOutboundSend?.status == "dbObserved", "stale outbound send update cannot downgrade completed evidence")
+    }
+
+    private static func testBridgeStateSaveKeepsAutomationDeliveryCursorPaired() throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let stores = RuntimeStores(paths: paths)
+        var existing = defaultBridgeState()
+        existing.automationRoutes = [
+            CodexAutomationRoute(
+                automationId: "morning-news-and-weather-digest",
+                name: "Morning News and Weather Digest",
+                recipient: "+1",
+                service: "iMessage",
+                createdFromGuid: nil,
+                createdFromRowId: nil,
+                createdAt: "2026-05-13T00:00:00.000Z",
+                lastSeenSessionId: "old-session",
+                lastDeliveredSessionId: "old-session",
+                lastDeliveredAt: "2026-05-22T11:00:00.000Z"
+            )
+        ]
+        try stores.state.save(existing)
+
+        var incoming = defaultBridgeState()
+        incoming.automationRoutes = [
+            CodexAutomationRoute(
+                automationId: "morning-news-and-weather-digest",
+                name: "Morning News and Weather Digest",
+                recipient: "+1",
+                service: "iMessage",
+                createdFromGuid: nil,
+                createdFromRowId: nil,
+                createdAt: "2026-05-13T00:00:00.000Z",
+                lastSeenSessionId: "new-session#turn",
+                lastDeliveredSessionId: "new-session#turn",
+                lastDeliveredAt: "2026-06-04T11:01:36.527Z"
+            )
+        ]
+        try stores.state.save(incoming)
+
+        let route = try expectRoute(stores.state.load().automationRoutes?.first)
+        try expect(route.lastDeliveredAt == "2026-06-04T11:01:36.527Z", "automation route keeps latest delivered timestamp")
+        try expect(route.lastDeliveredSessionId == "new-session#turn", "automation route keeps session id paired with latest timestamp")
+        try expect(route.lastSeenSessionId == "new-session#turn", "automation route keeps seen id paired with latest timestamp")
     }
 
     private static func testBridgeStateSaveMergesSameActiveJobDetails() throws {
@@ -4266,7 +4312,7 @@ struct BridgeCoreFocusedTests {
         try expect(text.contains("Codex automation routes:"), "/codex automations still lists routes")
     }
 
-    private static func testNormalTickDoesNotForwardCompletedAutomationSessions() async throws {
+    private static func testNormalTickForwardsCompletedAutomationSessions() async throws {
         let paths = testPaths()
         try ensureRuntimeDirectories(paths)
         let stores = RuntimeStores(paths: paths)
@@ -4307,11 +4353,11 @@ struct BridgeCoreFocusedTests {
         try await service.tick()
 
         let replies = await sink.repliesSnapshot()
-        try expect(replies.isEmpty, "normal tick does not forward completed automation sessions")
+        try expect(replies.map(\.text) == ["Morning Digest\nBring an umbrella."], "normal tick forwards completed routed automation sessions")
         let state = try stores.state.load()
         let route = try expectRoute(state.automationRoutes?.first)
-        try expect(route.lastSeenSessionId == nil, "normal tick does not scan automation sessions")
-        try expect(route.lastDeliveredSessionId == nil, "normal tick does not mark automation sessions delivered")
+        try expect(route.lastSeenSessionId == "019e20ff-4dca-7571-9425-0713bddb0d73", "normal tick records seen automation session")
+        try expect(route.lastDeliveredSessionId == "019e20ff-4dca-7571-9425-0713bddb0d73", "normal tick records delivered automation session")
     }
 
     private static func testAutomationForwardOnceSidecar() async throws {
@@ -4445,6 +4491,65 @@ struct BridgeCoreFocusedTests {
         try expect(scan.readFileCount == 1, "scan reads only the new session inside the read budget")
         try expect(scan.runs.map(\.sessionId) == [newSessionId], "scan finds new automation result after lower bound")
         try expect(scan.runs.first?.message == "Fresh digest", "scan parses fresh automation message")
+    }
+
+    private static func testHeartbeatAutomationScanIgnoresLaterNormalTurns() throws {
+        let paths = testPaths()
+        try ensureRuntimeDirectories(paths)
+        let route = CodexAutomationRoute(
+            automationId: "morning-news-and-weather-digest",
+            name: "Morning News and Weather Digest",
+            recipient: "+1",
+            service: "iMessage",
+            createdFromGuid: nil,
+            createdFromRowId: nil,
+            createdAt: "2026-06-04T00:00:00.000Z"
+        )
+        let sessionId = "019e93e4-8d75-7ad3-aef7-0d7610c25fdf"
+        let dir = paths.codexSessionsDir.appendingPathComponent("2026/06/04")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("rollout-2026-06-04T14-28-09-\(sessionId).jsonl")
+        let data = Data("""
+        {"timestamp":"2026-06-04T18:00:00.000Z","type":"session_meta","payload":{"id":"\(sessionId)"}}
+        {"timestamp":"2026-06-04T18:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"Can you change the automation?"}}
+        {"timestamp":"2026-06-04T18:00:02.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-normal-before","last_agent_message":"Normal setup reply"}}
+        {"timestamp":"2026-06-04T18:01:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"Automation: Morning News and Weather Digest\\nAutomation ID: morning-news-and-weather-digest"}}
+        {"timestamp":"2026-06-04T18:01:02.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-digest","last_agent_message":"Morning Digest\\nBring sunglasses.\\n::inbox-item{title=\\"Morning digest\\" summary=\\"Review highlights\\"}"}}
+        {"timestamp":"2026-06-04T18:02:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"Thanks, and one more normal question."}}
+        {"timestamp":"2026-06-04T18:02:02.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-normal-after","last_agent_message":"Normal follow-up reply"}}
+
+        """.utf8)
+        try data.write(to: file, options: .atomic)
+
+        let scan = completedCodexAutomationRunScan(
+            in: paths.codexSessionsDir,
+            routes: [route],
+            options: CodexAutomationScanOptions(maximumFilesToRead: 10)
+        )
+
+        try expect(scan.runs.count == 1, "heartbeat scan finds only the automation turn")
+        try expect(scan.runs.first?.sessionId == "\(sessionId)#turn-digest", "heartbeat scan records a turn-scoped delivery id")
+        try expect(scan.runs.first?.message == "Morning Digest\nBring sunglasses.", "heartbeat scan forwards the digest text only")
+
+        let deliveredRoute = CodexAutomationRoute(
+            automationId: "morning-news-and-weather-digest",
+            name: "Morning News and Weather Digest",
+            recipient: "+1",
+            service: "iMessage",
+            createdFromGuid: nil,
+            createdFromRowId: nil,
+            createdAt: "2026-06-04T00:00:00.000Z",
+            lastSeenSessionId: "\(sessionId)#turn-previous",
+            lastDeliveredSessionId: "\(sessionId)#turn-previous",
+            lastDeliveredAt: "2026-06-03T11:00:00.000Z"
+        )
+        let scanAfterSameSessionDelivery = completedCodexAutomationRunScan(
+            in: paths.codexSessionsDir,
+            routes: [deliveredRoute],
+            options: CodexAutomationScanOptions(maximumFilesToRead: 1)
+        )
+        try expect(scanAfterSameSessionDelivery.readFileCount == 1, "heartbeat scan rereads current session after a prior turn delivery")
+        try expect(scanAfterSameSessionDelivery.runs.first?.sessionId == "\(sessionId)#turn-digest", "heartbeat scan can find a later turn in the same session")
     }
 
     private static func testTerminateProcessTreeIncludesRoot() throws {

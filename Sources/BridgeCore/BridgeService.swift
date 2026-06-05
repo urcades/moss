@@ -122,6 +122,13 @@ public final class BridgeService: @unchecked Sendable {
         }
         try await syncPendingBatch(config: config)
         try await drainQueue()
+        _ = try? await forwardCompletedAutomationRunsOnce(
+            paths: paths,
+            stores: stores,
+            replySink: makeReplySink(config),
+            now: now(),
+            maximumFilesToRead: 50
+        )
         try saveStateSnapshot()
     }
 
